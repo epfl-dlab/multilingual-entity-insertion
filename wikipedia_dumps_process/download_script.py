@@ -3,6 +3,7 @@ import requests
 import urllib.request
 from tqdm import tqdm
 import os
+import tarfile
 
 # code taken from https://stackoverflow.com/questions/15644964/python-progress-bar-and-downloads
 class DownloadProgressBar(tqdm):
@@ -22,6 +23,9 @@ if __name__ == '__main__':
     parser.add_argument('--date', type=str, required=True, help='date of the wikipedia dump in the format YYYYMMDD')
     parser.add_argument('--namespace', type=str, default='0', help='namespace of the wikipedia dump')
     parser.add_argument('--output_dir', type=str, required=True, help='output directory')
+    parser.add_argument('--untar', dest='untar', action='store_true', help='untar the downloaded file')
+    parser.add_argument('--delete_tar', dest='delete_tar', action='store_true', help='delete the tar file after untarring')
+    parser.set_defaults(untar=False, delete_tar=False)
     args = parser.parse_args()
     
     # check if output directory exists
@@ -32,3 +36,9 @@ if __name__ == '__main__':
     output_path = f"{args.output_dir}/{args.lang}wiki-NS{args.namespace}-{args.date}-ENTERPRISE-HTML.json.tar.gz"
     
     download_url(url, output_path)
+    
+    if args.untar:
+        with tarfile.open(output_path, 'r:gz') as tar:
+            tar.extractall(f"{args.output_dir}/raw_data")
+        if args.delete_tar:
+            os.remove(output_path)
