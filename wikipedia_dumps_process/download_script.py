@@ -2,6 +2,7 @@ import argparse
 import requests
 import urllib.request
 from tqdm import tqdm
+import os
 
 # code taken from https://stackoverflow.com/questions/15644964/python-progress-bar-and-downloads
 class DownloadProgressBar(tqdm):
@@ -21,8 +22,11 @@ if __name__ == '__main__':
     parser.add_argument('--date', type=str, required=True, help='date of the wikipedia dump in the format YYYYMMDD')
     parser.add_argument('--namespace', type=str, default='0', help='namespace of the wikipedia dump')
     parser.add_argument('--output_dir', type=str, required=True, help='output directory')
-    
     args = parser.parse_args()
+    
+    # check if output directory exists
+    if not os.path.exists(args.output_dir):
+        os.makedirs(args.output_dir)
     
     url = f"https://dumps.wikimedia.org/other/enterprise_html/runs/{args.date}/{args.lang}wiki-NS{args.namespace}-{args.date}-ENTERPRISE-HTML.json.tar.gz"
     output_path = f"{args.output_dir}/{args.lang}wiki-NS{args.namespace}-{args.date}-ENTERPRISE-HTML.json.tar.gz"
