@@ -85,4 +85,5 @@ if __name__ == '__main__':
     df.to_parquet(f"{args.output_dir}/simple_pages.parquet")
     # create dataframe from redirect map
     df = pd.DataFrame.from_dict(redirect_map, orient='index')
+    df.columns = ['redirect_target']
     df.to_parquet(f"{args.output_dir}/redirect_map.parquet")
