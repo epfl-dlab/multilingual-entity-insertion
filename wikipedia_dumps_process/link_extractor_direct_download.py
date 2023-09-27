@@ -16,8 +16,10 @@ def process_title(title):
 
 
 def extract_links(source_page, page_ids, redirect_map):
+    print(source_page)
     raw_html = source_page['HTML']
     parsed_html = BeautifulSoup(raw_html, 'lxml')
+    print(raw_html)
 
     node = {}
     links = []
@@ -222,6 +224,8 @@ if __name__ == '__main__':
 
     # Read all input pages
     files = glob(f"{args.input_dir}/*.parquet")
+    # remove the page_ids and redirect_map files if they are present
+    files = [file for file in files if args.page_ids not in file and args.redirect_map not in file]
     for i, file in tqdm(enumerate(files)):
         df = pd.read_parquet(file)
         df = df.reset_index(drop=True)
@@ -229,7 +233,7 @@ if __name__ == '__main__':
         extra_columns = []
         links = []
         for i in range(len(df)):
-            node, page_links = extract_links(df[i], page_ids, redirect_map)
+            node, page_links = extract_links(df.iloc[i], page_ids, redirect_map)
             extra_columns.append(node)
             links.extend(page_links)
         # Add extra columns to the dataframe
