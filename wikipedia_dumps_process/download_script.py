@@ -38,7 +38,7 @@ if __name__ == '__main__':
     download_url(url, output_path)
     
     if args.untar:
-        with tarfile.open(output_path, 'r:gz') as tar:
-            tar.extractall(f"{args.output_dir}/raw_data")
+        with tarfile.open(output_path, "r:gz") as tar:
+            tar.extractall(path=args.output_dir)
         if args.delete_tar:
             os.remove(output_path)
