@@ -1,9 +1,8 @@
 import argparse
 import json
 import os
+import tarfile
 import urllib.parse
-from glob import glob
-from multiprocessing import Pool, cpu_count
 
 import pandas as pd
 from tqdm import tqdm
@@ -25,14 +24,12 @@ def extract_dump(data):
     page_info['ID'] = data['identifier']
     page_info['language'] = data['language']
     page_info['version'] = f"https://{data['language']}.wikipedia.org/w/index.php?title={page_info['title']}&oldid={data['version']['identifier']}"
-    if not pd.isna(data['main_entity']):
+    page_info['HTML'] = data['article_body']['html']
+    if 'main_entity' in data:
         page_info['QID'] = data['main_entity']['identifier']
     else:
         page_info['QID'] = None
-    page_info['HTML'] = data['article_body']['html']
-    
-    # get the redirects
-    if type(pd.isna(data['redirects'])) != bool:
+    if 'redirects' in data:
         for redirect in data['redirects']:
             redirect_map[process_title(
                 redirect['name'])] = page_info['title']
@@ -42,63 +39,46 @@ def extract_dump(data):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--input_dir', type=str,
-                        required=True, help='Path to the data folder')
+    parser.add_argument('--input_file', type=str,
+                        required=True, help='Path to the compressed data file')
     parser.add_argument('--language', type=str,
                         required=True, help='Language version of the Wikipedia dump')
     parser.add_argument('--output_dir', type=str,
                         required=True, help='Path to the output folder')
-    parser.add_argument('--chunksize', type=int, default=10_000,
-                        help='Chunksize for reading the json files')
-    parser.add_argument('--processes', type=int, default=1,
-                        help='Number of processes to use for multiprocessing')
     args = parser.parse_args()
 
-    # check if input dir exists
-    if not os.path.exists(args.input_dir):
-        raise ValueError(f"Input directory {args.input_dir} does not exist")
+    # check if input file exists
+    if not os.path.exists(args.input_file):
+        raise ValueError(f"Input file {args.input_file} does not exist")
     # check if output dir exists
     # if it doesn't exist, create it
     if not os.path.exists(args.output_dir):
         os.makedirs(args.output_dir)
-    # check if chunksize is positive
-    if args.chunksize <= 0:
-        raise ValueError(f"Chunksize must be positive, got {args.chunksize}")
 
-    # Read all json files
-    files = glob(f"{args.input_dir}/*.ndjson")
-    files.sort()
     simple_pages = {}
     redirect_map = {}
     found_names = set([])
     counter = 0
-    for file in tqdm(files):
-        print(f"Processing {file}")
-        df = pd.read_json(file, chunksize=args.chunksize, lines=True)
-        
-        for chunk in tqdm(df):
-            full_pages = []
-            list_data = []
-            for i in range(len(chunk)):
-                data_dict = chunk.iloc[i].to_dict()
-                if data_dict['name'] in found_names:
-                    continue
-                found_names.add(data_dict['name'])
-                list_data.append(chunk.iloc[i].to_dict())
-                list_data[-1]['language'] = args.language
-            # use list data with pooling
-            pool = Pool(min(cpu_count(), args.processes))
-            for page, partial_redirect in pool.imap_unordered(extract_dump, list_data):
-                full_pages.append(page)
-                simple_pages[page['title']] = {'ID': page['ID'], 'QID': page['QID']}
-                redirect_map.update(partial_redirect)
-            # terminate pool
-            pool.terminate()
-            pool.join()
-            # create dataframe from full_pages
-            df = pd.DataFrame(full_pages)
-            df.to_parquet(f"{args.output_dir}/pages_{counter}.parquet")
-            counter += 1
+
+    with tarfile.open(args.input_file, 'r:gz') as tar:
+        # iterate through files in tar
+        for member in tqdm(tar):
+            if member.name.endswith('json'):
+                full_pages = []
+                file_content = tar.extractfile(member.name).readlines()
+                for line in file_content:
+                    entry = json.loads(line)
+                    entry['language'] = args.language
+                    page, partial_redirect = extract_dump(entry)
+                    full_pages.append(page)
+                    simple_pages[page['title']] = {
+                        'ID': page['ID'], 'QID': page['QID']}
+                    redirect_map.update(partial_redirect)
+                # create dataframe from full_pages
+                df = pd.DataFrame(full_pages)
+                df.to_parquet(f"{args.output_dir}/pages_{counter}.parquet")
+                counter += 1
+
     # create dataframe from simple pages
     df = pd.DataFrame.from_dict(simple_pages, orient='index')
     df.to_parquet(f"{args.output_dir}/simple_pages.parquet")
