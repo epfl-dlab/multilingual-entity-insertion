@@ -193,7 +193,7 @@ def extract_links(source_page):
                         end_index += 1
                     search_index_link = end_index
                     link_data['link_start_index'] = index
-                    link_data['link_end_index'] = end_index
+                    link_data['link_end_index'] = end_index + 1
                     while len(sentences) > 1 and sentences[1]['start_index'] < index:
                         sentences.pop(0)
 
@@ -270,7 +270,7 @@ if __name__ == '__main__':
         file for file in files if args.page_ids not in file and args.redirect_map not in file]
     files.sort()
 
-    for i, file in tqdm(enumerate(files)):
+    for i, file in tqdm(enumerate(files), total=len(files)):
         df = pd.read_parquet(file)
         list_data = []
         for j in range(len(df)):
@@ -279,12 +279,20 @@ if __name__ == '__main__':
         links = []
 
         pool = Pool(min(cpu_count(), args.processes), initializer=initializer)
-        for node, page_links in tqdm(pool.imap(extract_links, list_data), total=len(list_data)):
+        for node, page_links in pool.imap(extract_links, list_data):
             extra_columns.append(node)
-            links.extend(page_links)
-
+            for link in page_links:
+                links.append(link)
+        pool.close()
+        pool.join()
+        
         df = df.join(pd.DataFrame(extra_columns))
         df.to_parquet(f"{args.output_dir}/{os.path.basename(file)}")
         df_links = pd.DataFrame(links)
-        print(df_links.head())
         df_links.to_parquet(f"{args.output_dir}/links_{i}.parquet")
+
+    # save page_ids and redirect_map to the final output directory
+    df = pd.read_parquet(args.page_ids)
+    df.to_parquet(f"{args.output_dir}/page_ids.parquet")
+    df = pd.read_parquet(args.redirect_map)
+    df.to_parquet(f"{args.output_dir}/redirect_map.parquet")
