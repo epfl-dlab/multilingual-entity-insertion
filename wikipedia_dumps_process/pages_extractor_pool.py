@@ -25,6 +25,11 @@ def extract_dump(data):
     page_info['language'] = data['language']
     page_info['version'] = f"https://{data['language']}.wikipedia.org/w/index.php?title={page_info['title']}&oldid={data['version']['identifier']}"
     page_info['HTML'] = data['article_body']['html']
+    page_info['page_length'] = len(data['article_body']['html'])
+    if 'abstract' in data:
+        page_info['lead_paragraph'] = data['abstract']
+    else:
+        page_info['lead_paragraph'] = ''
     if 'main_entity' in data:
         page_info['QID'] = data['main_entity']['identifier']
     else:

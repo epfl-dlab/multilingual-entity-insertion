@@ -39,26 +39,20 @@ then
     exit 1
 fi
 
-# define directory for intermediate storage
-inter=$output"_inter"
-
 # Run the python scripts
 echo "Extracting information about all the pages..."
 python pages_extractor_pool.py \
     --input_file $input \
     --language $language \
-    --output_dir $inter
+    --output_dir $output
 
 echo "Extracting information about all the links..."
 python link_extractor_pool.py \
-    --input_dir $inter \
-    --page_ids $inter"/simple_pages.parquet" \
-    --redirect_map $inter"/redirect_map.parquet" \
+    --input_dir $output \
+    --page_ids $output"/simple_pages.parquet" \
+    --redirect_map $output"/redirect_map.parquet" \
     --output_dir $output \
     --processes $processes
-
-# Remove the intermediate directory
-rm -rf $inter
 
 # Print the time taken
 end=`date +%s`

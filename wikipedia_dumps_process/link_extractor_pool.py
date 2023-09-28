@@ -3,13 +3,16 @@ import json
 import os
 import re
 import urllib.parse
+import warnings
 from glob import glob
 from multiprocessing import Pool, cpu_count
 
 import lxml
 import pandas as pd
-from bs4 import BeautifulSoup, Comment, NavigableString
+from bs4 import BeautifulSoup, Comment, NavigableString, MarkupResemblesLocatorWarning
 from tqdm import tqdm
+
+warnings.filterwarnings("ignore", category=MarkupResemblesLocatorWarning)
 
 
 def process_title(title):
@@ -25,7 +28,6 @@ def extract_links(source_page):
     raw_html = source_page['HTML']
     parsed_html = BeautifulSoup(raw_html, 'lxml')
 
-    node = {}
     found_links = []
     # find body
     content = parsed_html.find("body")
@@ -55,8 +57,7 @@ def extract_links(source_page):
         # split by <p> or </p>
         for part in re.split('(<p>|</p>)', sentence):
             end_index += len(part)
-            sentences.append(
-                {'sentence': part, 'start_index': start_index, 'end_index': end_index})
+            sentences.append({'sentence': part, 'start_index': start_index, 'end_index': end_index})
             start_index = end_index
 
     sections = ["Lead"]
@@ -171,12 +172,14 @@ def extract_links(source_page):
                     try:
                         if "\"" in full_title:
                             try:
-                                fixed_title = full_title.replace('\'', '&apos;')
+                                fixed_title = full_title.replace(
+                                    '\'', '&apos;')
                                 index = raw_html.index(
                                     f"./{fixed_title}", search_index_link)
                                 full_title = fixed_title
                             except:
-                                fixed_title = full_title.replace('\"', '&quot;')
+                                fixed_title = full_title.replace(
+                                    '\"', '&quot;')
                                 index = raw_html.index(
                                     f"./{fixed_title}", search_index_link)
                                 full_title = fixed_title
@@ -184,7 +187,8 @@ def extract_links(source_page):
                             index = raw_html.index(
                                 f"./{full_title}", search_index_link)
                     except:
-                        print(full_title.encode('utf-8'), source_page['title'].encode('utf-8'))
+                        print(full_title.encode('utf-8'),
+                              source_page['title'].encode('utf-8'))
                         raise ValueError()
                     while raw_html[index] != '<':
                         index -= 1
@@ -206,24 +210,23 @@ def extract_links(source_page):
                         # if the link is present in the sentence
                         if f"./{full_title}" in sentence['sentence']:
                             # get the start and end index of the link in the sentence
-                            link_data['sentence'] = sentence['sentence']
+                            parsed_sentence = BeautifulSoup(sentence['sentence'], 'html.parser')
+                            link_data['sentence'] = parsed_sentence.text
                             link_data['sentence_start_index'] = sentence['start_index']
                             link_data['sentence_end_index'] = sentence['end_index']
                             break
                         elif j == len(sentences) - 1:
-                            print(full_title.encode('utf-8'), source_page['title'].encode('utf-8'))
+                            print(full_title.encode('utf-8'),
+                                  source_page['title'].encode('utf-8'))
                             print('Not found')
                             print(sentences[0]['sentence'])
                     link_data['page_length'] = len(raw_html)
 
                     sentences = sentences[j:]
 
-                    # add the link to the node
                     found_links.append(link_data)
-    node["page_length"] = len(raw_html)
-    node["lead_paragraph"] = lead_paragraph
-
-    return node, found_links
+    
+    return found_links
 
 
 if __name__ == '__main__':
@@ -279,20 +282,11 @@ if __name__ == '__main__':
         links = []
 
         pool = Pool(min(cpu_count(), args.processes), initializer=initializer)
-        for node, page_links in pool.imap(extract_links, list_data):
-            extra_columns.append(node)
+        for page_links in pool.imap(extract_links, list_data):
             for link in page_links:
                 links.append(link)
         pool.close()
         pool.join()
-        
-        df = df.join(pd.DataFrame(extra_columns))
-        df.to_parquet(f"{args.output_dir}/{os.path.basename(file)}")
+
         df_links = pd.DataFrame(links)
         df_links.to_parquet(f"{args.output_dir}/links_{i}.parquet")
-
-    # save page_ids and redirect_map to the final output directory
-    df = pd.read_parquet(args.page_ids)
-    df.to_parquet(f"{args.output_dir}/page_ids.parquet")
-    df = pd.read_parquet(args.redirect_map)
-    df.to_parquet(f"{args.output_dir}/redirect_map.parquet")
