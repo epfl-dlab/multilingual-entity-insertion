@@ -67,22 +67,28 @@ if __name__ == '__main__':
 
     # Read all json files
     files = glob(f"{args.input_dir}/*.ndjson")
+    files.sort()
     simple_pages = {}
-    full_pages = []
     redirect_map = {}
+    found_names = set([])
     counter = 0
     for file in tqdm(files):
         print(f"Processing {file}")
         df = pd.read_json(file, chunksize=args.chunksize, lines=True)
         
         for chunk in tqdm(df):
+            full_pages = []
             list_data = []
             for i in range(len(chunk)):
+                data_dict = chunk.iloc[i].to_dict()
+                if data_dict['name'] in found_names:
+                    continue
+                found_names.add(data_dict['name'])
                 list_data.append(chunk.iloc[i].to_dict())
                 list_data[-1]['language'] = args.language
             # use list data with pooling
             pool = Pool(min(cpu_count(), args.processes))
-            for page, partial_redirect in tqdm(pool.imap_unordered(extract_dump, list_data), total=len(list_data)):
+            for page, partial_redirect in pool.imap_unordered(extract_dump, list_data):
                 full_pages.append(page)
                 simple_pages[page['title']] = {'ID': page['ID'], 'QID': page['QID']}
                 redirect_map.update(partial_redirect)
