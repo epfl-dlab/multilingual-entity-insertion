@@ -67,11 +67,13 @@ if __name__ == '__main__':
 
     with tarfile.open(args.input_file, 'r:gz') as tar:
         # iterate through files in tar
-        for member in tqdm(tar):
+        for member in (pbar := tqdm(tar)):
             if member.name.endswith('json'):
                 full_pages = []
                 file_content = tar.extractfile(member.name).readlines()
-                for line in file_content:
+                for i, line in enumerate(file_content):
+                    if i % 1000 == 0:
+                        pbar.set_description(f"Processing file {member.name} at line {i}/{len(file_content)}")
                     entry = json.loads(line)
                     entry['language'] = args.language
                     page, partial_redirect = extract_dump(entry)
