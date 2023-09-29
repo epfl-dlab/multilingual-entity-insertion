@@ -60,8 +60,9 @@ def extract_links(source_page):
             sentences.append({'sentence': part, 'start_index': start_index, 'end_index': end_index})
             start_index = end_index
 
+    depth = [0, 0, 0]
     sections = ["Lead"]
-    lead_paragraph = ''
+    section_text = {'.': source_page['title']}
     search_index_link = 0
     # iterate through all tags
     for section in content.children:
@@ -75,26 +76,35 @@ def extract_links(source_page):
                 # update section, add or trim section list
                 if tag.name == 'h2':
                     sections = [re.sub(r'\[.*?\]', '', tag.text).strip()]
+                    if sections[0] not in section_text:
+                        section_text[sections[0]] = ''
+                    depth[0] += 1
+                    depth[1] = 0
+                    depth[2] = 0
                 elif tag.name == 'h3':
                     sections = sections[:1] + \
                         [re.sub(r'\[.*?\]', '', tag.text).strip()]
+                    depth[1] += 1
+                    depth[2] = 0
                 elif tag.name == 'h4':
                     sections = sections[:2] + \
                         [re.sub(r'\[.*?\]', '', tag.text).strip()]
+                    depth[2] += 1
                 if sections in [["Notes"], ["References"], ["External links"], ["Further reading"], ["Other websites"]]:
                     break
 
             # find all p and li tags
-            if sections == ["Lead"]:
-                if tag.name == 'p' or tag.name == ['li']:
-                    lead_paragraph += tag.text
-                else:
-                    tags = tag.find_all(['p', 'li'])
-                    for t in tags:
-                        if tag.name == 'p':
-                            lead_paragraph += t.text
-                        else:
-                            lead_paragraph += t.text + '\n'
+            if tag.name == 'p':
+                section_text[sections[0]] += tag.text
+            elif tag.name == 'li':
+                section_text[sections[0]] += tag.text + '\n'
+            else:
+                tags = tag.find_all(['p', 'li'])
+                for t in tags:
+                    if tag.name == 'p':
+                        section_text[sections[0]] += t.text
+                    else:
+                        section_text[sections[0]] += t.text + '\n'
 
             # find links
             links = tag.find_all('a')
@@ -220,13 +230,14 @@ def extract_links(source_page):
                                   source_page['title'].encode('utf-8'))
                             print('Not found')
                             print(sentences[0]['sentence'])
-                    link_data['page_length'] = len(raw_html)
+                    link_data['source_page_length'] = len(raw_html)
+                    link_data['link_section_depth'] = f"{depth[0]}.{depth[1]}.{depth[2]}"
 
                     sentences = sentences[j:]
 
                     found_links.append(link_data)
     
-    return found_links
+    return found_links, section_text
 
 
 if __name__ == '__main__':
@@ -278,15 +289,21 @@ if __name__ == '__main__':
         list_data = []
         for j in range(len(df)):
             list_data.append(df.iloc[j].to_dict())
-        extra_columns = []
         links = []
+        sections = []
 
         pool = Pool(min(cpu_count(), args.processes), initializer=initializer)
-        for page_links in pool.imap(extract_links, list_data):
+        for page_links, section_text in pool.imap(extract_links, list_data):
             for link in page_links:
                 links.append(link)
+            for section in section_text:
+                sections.append({'section': section, 'text': section_text[section], 'title': section_text['.']})
+            
         pool.close()
         pool.join()
 
         df_links = pd.DataFrame(links)
         df_links.to_parquet(f"{args.output_dir}/links_{i}.parquet")
+
+        df_sections = pd.DataFrame(sections)
+        df_sections.to_parquet(f"{args.output_dir}/sections_{i}.parquet")
