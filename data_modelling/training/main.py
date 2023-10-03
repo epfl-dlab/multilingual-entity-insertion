@@ -250,7 +250,5 @@ if __name__ == '__main__':
 
     # close logger
     logger.info("Training finished")
-    logger.removeHandler(fh)
-    logger.removeHandler(console)
-    fh.close()
-    console.close()
+    writer.close()
+    
