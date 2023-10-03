@@ -2,17 +2,21 @@
 
 start=`date +%s`
 
-while getopts "i:l:p:o:" opt
+while getopts ":x:s:t:l:p:o:" opt;
 do
     case $opt in
-        i) input=$OPTARG ;;
+        x) input_xml=$OPTARG ;;
+        s) input_sql=$OPTARG ;;
+        t) input_tar=$OPTARG ;;
         l) language=$OPTARG ;;
         p) processes=$OPTARG ;;
         o) output=$OPTARG ;;
         ?) echo "Invalid option: -$OPTARG"
-           echo "Usage: $0 [-i <input>] [-l <language>] [-p <processes>] [-o <output>]"
+           echo "Usage: $0 [-x <input_xml>] [-s <input_sql>] [-t <input_tar>] [-l <language>] [-p <processes>] [-o <output>]"
            echo "Options:"
-           echo "i: input compressed file"
+           echo "x: input xml file"
+           echo "s: input sql file"
+           echo "t: input tar file"
            echo "l: language of the wikipedia dump"
            echo "p: number of processes"
            echo "o: output directory"
@@ -21,18 +25,22 @@ do
     esac
 done
 
-echo "Input directory: $input"
+echo "Input xml file: $input_xml"
+echo "Input sql file: $input_sql"
+echo "Input tar file: $input_tar"
 echo "Language: $language"
 echo "Number of processes: $processes"
 echo "Output directory: $output"
 
 # Check if all arguments are provided
-if [ -z "$input" ] || [ -z "$language" ] || [ -z "$processes" ] || [ -z "$output" ]
+if [ -z "$input_xml" ] || [ -z "$input_sql" ] || [ -z "$input_tar" ] || [ -z "$language" ] || [ -z "$processes" ] || [ -z "$output" ]
 then
     echo "Missing arguments!"
-    echo "Usage: $0 [-i <input>] [-l <language>] [-p <processes>] [-o <output>]"
+    echo "Usage: $0 [-x <input_xml>] [-s <input_sql>] [-t <input_tar>] [-l <language>] [-p <processes>] [-o <output>]"
     echo "Options:"
-    echo "i: input compressed file"
+    echo "x: input xml file"
+    echo "s: input sql file"
+    echo "t: input tar file"
     echo "l: language of the wikipedia dump"
     echo "p: number of processes"
     echo "o: output directory"
@@ -41,8 +49,10 @@ fi
 
 # Run the python scripts
 echo "Extracting information about all the pages..."
-python pages_extractor_pool.py \
-    --input_file $input \
+python pages_extractor.py \
+    --input_xml $input_xml \
+    --input_sql $input_sql \
+    --input_tar $input_tar \
     --language $language \
     --output_dir $output
 

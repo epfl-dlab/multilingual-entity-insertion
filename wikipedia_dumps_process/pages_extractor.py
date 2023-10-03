@@ -20,7 +20,7 @@ def process_title(title):
     return title
 
 
-def process_xml_articles(path, language):
+def process_xml_data(path, language):
     # process xml
     tree = ET.parse(path)
     root = tree.getroot()
@@ -51,9 +51,7 @@ def process_xml_articles(path, language):
                         page_info['version'] = greatgrandchild.text
                         break
             if tag == 'redirect':
-                redirect['redirect'] = grandchild.attrib['title']
-        if '1589' in page_info['title']:
-            print(page_info)
+                redirect['redirect'] = process_title(grandchild.attrib['title'])
         if 'redirect' in redirect:
             redirects.append(redirect)
         elif valid:
@@ -86,7 +84,6 @@ def process_sql_data(path):
 
 
 def process_tar_data(data):
-    redirect_map = {}
     page_info = {}
     page_info['title'] = process_title(data['name'])
     page_info['ID'] = data['identifier']
@@ -102,12 +99,8 @@ def process_tar_data(data):
         page_info['QID'] = data['main_entity']['identifier']
     else:
         page_info['QID'] = None
-    if 'redirects' in data:
-        for redirect in data['redirects']:
-            redirect_map[process_title(
-                redirect['name'])] = page_info['title']
-
-    return page_info, redirect_map
+    
+    return page_info
 
 
 if __name__ == '__main__':
@@ -138,7 +131,7 @@ if __name__ == '__main__':
 
     # extract pages from xml dump
     print(f"Parsing xml dump {args.input_xml}")
-    pages_xml, redirects = process_xml_articles(args.input_xml, args.language)
+    pages_xml, redirects = process_xml_data(args.input_xml, args.language)
     # extract pages from sql dump
     print(f"Parsing sql dump {args.input_sql}")
     pages_sql = process_sql_data(args.input_sql)
@@ -148,13 +141,48 @@ if __name__ == '__main__':
     df_xml = pd.DataFrame(pages_xml).set_index('ID')
     df_sql = pd.DataFrame(pages_sql).set_index('ID')
 
-    pages = df_xml.merge(df_sql, left_index=True,
-                         right_index=True, how='inner')
+    # merge the xml and sql dataframes
+    # use the ID as index, if the ID is not in sql use Nan
+    pages = pd.merge(df_xml, df_sql, how='left', left_index=True, right_index=True)
     pages.reset_index(level=0, inplace=True)
-    pages = pages.rename(columns={'index': 'ID'})
+    pages = pages.rename(columns={'index': 'title'})
+
+    print(f'Processing tar dump {args.input_tar}')
+    full_pages = {}
+    with tarfile.open(args.input_tar, 'r:gz') as tar:
+        # iterate through files in tar
+        for member in (pbar := tqdm(tar)):
+            if member.name.endswith('json'):
+                file_content = tar.extractfile(member.name).readlines()
+                for i, line in enumerate(file_content):
+                    if i % 1000 == 0:
+                        pbar.set_description(
+                            f"Processing file {member.name} at line {i}/{len(file_content)}")
+                    entry = json.loads(line)
+                    entry['language'] = args.language
+                    page = process_tar_data(entry)
+                    full_pages[page['title']] = page
+    
+    language, html, page_length, lead_paragraph = [], [], [], []
+    for title in pages['title']:
+        if title in full_pages:
+            language.append(args.language)
+            html.append(full_pages[title]['HTML'])
+            page_length.append(full_pages[title]['page_length'])
+            lead_paragraph.append(full_pages[title]['lead_paragraph'])
+        else:
+            language.append(args.language)
+            html.append('')
+            page_length.append(0)
+            lead_paragraph.append('')
+    pages['language'] = language
+    pages['HTML'] = html
+    pages['page_length'] = page_length
+    pages['lead_paragraph'] = lead_paragraph        
+    
 
     # create copy of pages with reduced information
-    simple_pages = pages[['ID', 'title']]
+    simple_pages = pages[['ID', 'title', 'QID']]
     simple_pages = simple_pages.set_index('title')
 
     # create dataframe for redirects
@@ -168,33 +196,10 @@ if __name__ == '__main__':
     simple_pages.to_parquet(f"{args.output_dir}/simple_pages.parquet")
     df_redirects.to_parquet(f"{args.output_dir}/redirect_map.parquet")
 
-    print(f'Processing tar dump {args.input_tar}')
-    with tarfile.open(args.input_file, 'r:gz') as tar:
-        # iterate through files in tar
-        for member in (pbar := tqdm(tar)):
-            if member.name.endswith('json'):
-                full_pages = []
-                file_content = tar.extractfile(member.name).readlines()
-                for i, line in enumerate(file_content):
-                    if i % 1000 == 0:
-                        pbar.set_description(
-                            f"Processing file {member.name} at line {i}/{len(file_content)}")
-                    entry = json.loads(line)
-                    entry['language'] = args.language
-                    page, partial_redirect = extract_dump(entry)
-                    full_pages.append(page)
-                    simple_pages[page['title']] = {
-                        'ID': page['ID'], 'QID': page['QID']}
-                    redirect_map.update(partial_redirect)
-                # create dataframe from full_pages
-                df = pd.DataFrame(full_pages)
-                df.to_parquet(f"{args.output_dir}/pages_{counter}.parquet")
-                counter += 1
-
-    # create dataframe from simple pages
-    df = pd.DataFrame.from_dict(simple_pages, orient='index')
-    df.to_parquet(f"{args.output_dir}/simple_pages.parquet")
-    # create dataframe from redirect map
-    df = pd.DataFrame.from_dict(redirect_map, orient='index')
-    df.columns = ['redirect_target']
-    df.to_parquet(f"{args.output_dir}/redirect_map.parquet")
+    # # create dataframe from simple pages
+    # df = pd.DataFrame.from_dict(simple_pages, orient='index')
+    # df.to_parquet(f"{args.output_dir}/simple_pages.parquet")
+    # # create dataframe from redirect map
+    # df = pd.DataFrame.from_dict(redirect_map, orient='index')
+    # df.columns = ['redirect_target']
+    # df.to_parquet(f"{args.output_dir}/redirect_map.parquet")

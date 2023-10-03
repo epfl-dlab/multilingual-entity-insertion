@@ -26,12 +26,14 @@ def process_title(title):
 
 def extract_links(source_page):
     raw_html = source_page['HTML']
+    if raw_html == '':
+        return [], {}
     parsed_html = BeautifulSoup(raw_html, 'lxml')
 
     found_links = []
     # find body
     content = parsed_html.find("body")
-
+    
     # define the sentences
     # split by punctuation if the puctuation is not followed by a letter
     temp_sentences = []
@@ -62,7 +64,7 @@ def extract_links(source_page):
 
     depth = [0, 0, 0]
     sections = ["Lead"]
-    section_text = {'.': source_page['title']}
+    section_text = {'.': source_page['title'], 'Lead': ''}
     search_index_link = 0
     # iterate through all tags
     for section in content.children:
@@ -157,11 +159,11 @@ def extract_links(source_page):
                         link_data['target_title'] = redirect_map[link_data['target_title']]
                     link_data['source_title'] = source_page['title']
 
-                    if 'redlink' in link_data['target_title']:
+                    if 'redlink' in link_data['target_title'] or link.get("class") == ["new"]:
                         continue
                     if link_data['target_title'] not in page_ids:
                         # print(
-                        #     f"Couldn't find page {link_data['target_title']} in {source_page['title']}")
+                        #     f"Couldn't find page {link_data['target_title'].encode('utf-8')} in {source_page['title'].encode('utf-8')}")
                         continue
 
                     link_data['target_ID'] = page_ids[link_data['target_title']]['ID']
@@ -278,13 +280,13 @@ if __name__ == '__main__':
         page_ids = page_ids.to_dict(orient='index')
 
     # Read all input pages
-    files = glob(f"{args.input_dir}/*.parquet")
+    files = glob(f"{args.input_dir}/pages*.parquet")
     # remove the page_ids and redirect_map files if they are present
     files = [
         file for file in files if args.page_ids not in file and args.redirect_map not in file]
     files.sort()
 
-    for i, file in tqdm(enumerate(files), total=len(files)):
+    for i, file in (pbar := tqdm(enumerate(files), total=len(files))):
         df = pd.read_parquet(file)
         list_data = []
         for j in range(len(df)):
@@ -293,7 +295,10 @@ if __name__ == '__main__':
         sections = []
 
         pool = Pool(min(cpu_count(), args.processes), initializer=initializer)
-        for page_links, section_text in pool.imap(extract_links, list_data):
+        for j, (page_links, section_text) in enumerate(pool.imap(extract_links, list_data)):
+            if j % 1000 == 0:
+                pbar.set_description(
+                    f"Processing file {file} at element {j}/{len(df)}")
             for link in page_links:
                 links.append(link)
             for section in section_text:
