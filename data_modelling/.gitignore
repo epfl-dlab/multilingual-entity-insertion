@@ -1,0 +1,4 @@
+training/datasets/*
+!training/datasets/.gitkeep
+
+training/output/*
