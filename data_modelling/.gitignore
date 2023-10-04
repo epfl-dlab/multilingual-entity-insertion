@@ -1,4 +1,7 @@
 training/datasets/*
 !training/datasets/.gitkeep
+!training/datasets/dummy_generator.ipynb
 
 training/output/*
+
+training/runs/*
