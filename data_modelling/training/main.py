@@ -1,18 +1,21 @@
 import argparse
+import logging
 import os
 import time
 
+import multiprocess
 import torch
 import torch.nn.functional as F
 import torch.optim as optim
-from accelerate.logging import get_logger
-import logging
 from accelerate import Accelerator
+from accelerate.logging import get_logger
 from data import WikiDataset
 from torch.optim.lr_scheduler import ExponentialLR
 from torch.utils.data import DataLoader
-from transformers import AutoModel, AutoTokenizer
 from torch.utils.tensorboard import SummaryWriter
+from transformers import AutoModel, AutoTokenizer
+
+multiprocess.set_start_method("spawn", force=True)
 
 
 def collator(input):
@@ -33,7 +36,8 @@ def collator(input):
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+    parser = argparse.ArgumentParser(
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument('--model_name', type=str,
                         default='bert-base-uncased', help='Model name or path to model')
     parser.add_argument('--data_dir', type=str,
@@ -61,7 +65,8 @@ if __name__ == '__main__':
                         help='Number of steps for gradient accumulation')
     parser.add_argument('--full_freeze_epochs', type=int, default=0,
                         help='Number of epochs to freeze all lazyers except classification head')
-    parser.add_argument('--freeze_layers', type=int, default=0, help='Number of initial layers to freeze')
+    parser.add_argument('--freeze_layers', type=int, default=0,
+                        help='Number of initial layers to freeze')
     parser.set_defaults(resume=False)
 
     args = parser.parse_args()
@@ -81,20 +86,20 @@ if __name__ == '__main__':
 
     # set-up tensorboard
     if not os.path.exists('runs'):
-        os.makedirs('runs')
+        os.makedirs('runs', exist_ok=True)
     date_time = time.strftime("%Y-%m-%d_%H-%M-%S")
     tb_dir = os.path.join('runs', date_time)
     if not os.path.exists(tb_dir):
-        os.makedirs(tb_dir)
+        os.makedirs(tb_dir, exist_ok=True)
     writer = SummaryWriter(tb_dir)
 
     # create directory for logs and checkpoints
     if not os.path.exists('output'):
-        os.makedirs('output')
+        os.makedirs('output', exist_ok=True)
 
     output_dir = os.path.join('output', date_time)
     if not os.path.exists(output_dir):
-        os.makedirs(output_dir)
+        os.makedirs(output_dir, exist_ok=True)
 
     # create logger
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s',
@@ -155,6 +160,10 @@ if __name__ == '__main__':
         tokenizer = AutoTokenizer.from_pretrained(args.model_name)
         tokenizer.save_pretrained(os.path.join(output_dir, 'tokenizer'))
 
+    # store model weights to keep track of model distance
+    model_weights = torch.cat([param.data.flatten()
+                              for param in model.parameters()])
+
     logger.info("Initializing optimizer")
     optimizer = optim.Adam(model.parameters(), lr=args.lr)
     scheduler = ExponentialLR(optimizer, gamma=args.gamma_lr)
@@ -164,18 +173,18 @@ if __name__ == '__main__':
         model, classification_head, optimizer, train_loader, val_loader, scheduler)
 
     if args.full_freeze_epochs > 0:
-        logger.info(f"Freezing all layers except classification head for {args.full_freeze_epochs} epochs")
+        logger.info(
+            f"Freezing all layers except classification head for {args.full_freeze_epochs} epochs")
         for param in model.parameters():
             param.requires_grad = False
         for param in classification_head.parameters():
             param.requires_grad = True
     else:
         logger.info(f"Freezing first {args.freeze_layers} layers")
-        for param in model.base_model.embeddings.parameters():  
+        for param in model.base_model.embeddings.parameters():
             param.requires_grad = False
         for param in model.base_model.encoder.layer[:args.freeze_layers].parameters():
             param.requires_grad = False
-
 
     logger.info("Starting training")
     step = 0
@@ -219,6 +228,12 @@ if __name__ == '__main__':
                 logger.info(f"Evaluating model at step {step}")
                 model.eval()
                 with torch.no_grad():
+                    # compare current model weights to initial model weights
+                    current_model_weights = torch.cat(
+                        [param.data.flatten() for param in model.parameters()])
+                    model_distance = torch.norm(
+                        current_model_weights - model_weights)
+
                     true_pos = 0
                     true_neg = 0
                     false_pos = 0
@@ -268,18 +283,21 @@ if __name__ == '__main__':
                     logger.info(f"Recall: {recall}")
                     logger.info(f"F1: {f1}")
                     logger.info(f"Validation loss: {running_val_loss}")
+                    logger.info(f"Model distance: {model_distance}")
                     writer.add_scalar('val/accuracy', accuracy, step)
                     writer.add_scalar('val/precision', precision, step)
                     writer.add_scalar('val/recall', recall, step)
                     writer.add_scalar('val/f1', f1, step)
                     writer.add_scalar('val/loss', running_val_loss, step)
+                    writer.add_scalar('model/distance', model_distance, step)
                 model.train()
 
         scheduler.step()
-        
+
         # unfreeze model if necessary
         if epoch + 1 == args.full_freeze_epochs:
-            logger.info(f"Unfreezing model except first {args.freeze_layers} layers")
+            logger.info(
+                f"Unfreezing model except first {args.freeze_layers} layers")
             for param in model.parameters():
                 param.requires_grad = True
             for param in model.base_model.embeddings.parameters():
