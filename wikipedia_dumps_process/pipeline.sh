@@ -2,22 +2,20 @@
 
 start=`date +%s`
 
-while getopts ":x:s:t:l:p:o:" opt;
+while getopts ":i:l:d:p:o:" opt;
 do
     case $opt in
-        x) input_xml=$OPTARG ;;
-        s) input_sql=$OPTARG ;;
-        t) input_tar=$OPTARG ;;
+        i) input_dir=$OPTARG ;;
         l) language=$OPTARG ;;
+        d) date=$OPTARG ;;
         p) processes=$OPTARG ;;
         o) output=$OPTARG ;;
         ?) echo "Invalid option: -$OPTARG"
-           echo "Usage: $0 [-x <input_xml>] [-s <input_sql>] [-t <input_tar>] [-l <language>] [-p <processes>] [-o <output>]"
+           echo "Usage: $0 [-i <input_dir>] [-l <language>] [-d <date>] [-p <processes>] [-o <output>]"
            echo "Options:"
-           echo "x: input xml file"
-           echo "s: input sql file"
-           echo "t: input tar file"
+           echo "i: input directory"
            echo "l: language of the wikipedia dump"
+           echo "d: date of the wikipedia dump"
            echo "p: number of processes"
            echo "o: output directory"
            exit 1
@@ -25,23 +23,21 @@ do
     esac
 done
 
-echo "Input xml file: $input_xml"
-echo "Input sql file: $input_sql"
-echo "Input tar file: $input_tar"
+echo "Input directory: $input_dir"
 echo "Language: $language"
+echo "Date: $date"
 echo "Number of processes: $processes"
 echo "Output directory: $output"
 
 # Check if all arguments are provided
-if [ -z "$input_xml" ] || [ -z "$input_sql" ] || [ -z "$input_tar" ] || [ -z "$language" ] || [ -z "$processes" ] || [ -z "$output" ]
+if [ -z "$input_dir" ] || [ -z "$language" ] || [ -z "$date" ] || [ -z "$processes" ] || [ -z "$output" ]
 then
     echo "Missing arguments!"
-    echo "Usage: $0 [-x <input_xml>] [-s <input_sql>] [-t <input_tar>] [-l <language>] [-p <processes>] [-o <output>]"
+    echo "Usage: $0 [-i <input_dir>] [-l <language>] [-d <date>] [-p <processes>] [-o <output>]"
     echo "Options:"
-    echo "x: input xml file"
-    echo "s: input sql file"
-    echo "t: input tar file"
+    echo "i: input directory"
     echo "l: language of the wikipedia dump"
+    echo "d: date of the wikipedia dump"
     echo "p: number of processes"
     echo "o: output directory"
     exit 1
@@ -50,10 +46,9 @@ fi
 # Run the python scripts
 echo "Extracting information about all the pages..."
 python pages_extractor.py \
-    --input_xml $input_xml \
-    --input_sql $input_sql \
-    --input_tar $input_tar \
+    --input_dir $input_dir \
     --language $language \
+    --date $date \
     --output_dir $output
 
 echo "Extracting information about all the links..."

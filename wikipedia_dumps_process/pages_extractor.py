@@ -1,8 +1,7 @@
 import argparse
-import bz2
-import gzip
 import json
 import os
+import re
 import tarfile
 import urllib.parse
 import xml.etree.ElementTree as ET
@@ -20,74 +19,99 @@ def process_title(title):
     return title
 
 
-def process_xml_data(path, language):
-    # process xml
-    tree = ET.parse(path)
-    root = tree.getroot()
+def process_sql_page(input, language):
+    with open(input) as f:
+        data = f.readlines()
+        data = [x for x in data if x.startswith('INSERT INTO')]
+
     pages = []
-    redirects = []
-    for child in tqdm(root):
-        page_info = {}
-        redirect = {}
-        valid = True
-        if 'siteinfo' in child.tag:
-            continue
-        for grandchild in child:
-            # get the tag name without the http://www.mediawiki.org/xml/export-0.10/ prefix
-            tag = grandchild.tag.split('}')[1]
-            if tag == 'ns' and grandchild.text != '0':
-                valid = False
-                break
-            if tag == 'title':
-                page_info['title'] = process_title(grandchild.text)
-                redirect['title'] = process_title(grandchild.text)
-            if tag == 'id':
-                page_info['ID'] = grandchild.text
-                redirect['ID'] = grandchild.text
-            if tag == 'revision':
-                for greatgrandchild in grandchild:
-                    tag = greatgrandchild.tag.split('}')[1]
-                    if tag == 'id':
-                        page_info['version'] = greatgrandchild.text
-                        break
-            if tag == 'redirect':
-                redirect['redirect'] = process_title(grandchild.attrib['title'])
-        if 'redirect' in redirect:
-            redirects.append(redirect)
-        elif valid:
-            page_info['version'] = f"https://{language}.wikipedia.org/w/index.php?title={page_info['title']}&oldid={page_info['version']}"
-            pages.append(page_info)
+    redirects = {}
+    for line in tqdm(data):
+        # remove the "INSERT INTO `page` VALUES (" part and the last semicolon
+        line = line.replace('INSERT INTO `page` VALUES (', '')
+        line = line.replace(');', '')
+
+        # split the line using the following rules:
+        # 1. "),(" is the separator between entries
+        # 2. After "),(" there are digits followed by ",", use a positive lookahead to split
+        elements = re.split("\),\((?=\d+,)", line)
+        for element in elements:
+            split_data = element.split(",")
+            id = split_data[0]
+            namespace = split_data[1]
+            title = ",".join(split_data[2:-9]).replace("\\'", "'")
+            is_redirect = split_data[-9]
+            if namespace != "0":
+                continue
+            if is_redirect == '1':
+                redirects[id] = {'title': process_title(title[1:-1])}
+                continue
+            pages.append({'ID': id, 'title': process_title(
+                title[1:-1]), 'language': language})
     return pages, redirects
 
 
-def process_sql_data(path):
-    pages = []
-    with open(path, 'r', encoding='latin-1') as f:
+def process_sql_redirects(input, redirects):
+    with open(input) as f:
         data = f.readlines()
-        for line in tqdm(data):
-            if not line.startswith('INSERT INTO'):
+        data = [x for x in data if x.startswith('INSERT INTO')]
+
+    for line in tqdm(data):
+        # remove the "INSERT INTO `redirect` VALUES (" part and the last semicolon
+        line = line.replace('INSERT INTO `redirect` VALUES (', '')
+        line = line.replace(');', '')
+
+        # split the line using the following rules:
+        # 1. "),(" is the separator between entries
+        # 2. After "),(" there are digits followed by ",", use a positive lookahead to split
+        elements = re.split("\),\((?=\d+,)", line)
+        for element in elements:
+            split_data = element.split(",")
+            if split_data[0] not in redirects or split_data[1] != '0':
                 continue
-            line = line.replace('INSERT INTO `page_props` VALUES ', '')
-            entries = line.split('),(')
-            entries[0] = entries[0].replace('(', '')
-            entries[-1] = entries[-1].replace(');', '')
-            for entry in entries:
-                try:
-                    id, category, qid, _ = entry.split(',', 3)
-                except:
-                    print(entry)
-                    continue
-                if category != "'wikibase_item'":
-                    continue
-                pages.append({'ID': id, 'QID': qid[1:-1]})
+            redirects[split_data[0]]['redirect'] = process_title(
+                ",".join(split_data[2:-2]).replace("\\'", "'")[1:-1])
+    return redirects
+
+
+def process_sql_page_props(input, pages):
+    with open(input, encoding='latin-1') as f:
+        data = f.readlines()
+        data = [x for x in data if x.startswith('INSERT INTO')]
+
+    qids_map = {}
+    for line in tqdm(data):
+        # remove the "INSERT INTO `page_props` VALUES (" part and the last semicolon
+        line = line.replace('INSERT INTO `page_props` VALUES (', '')
+        line = line.replace(');', '')
+
+        # split the line using the following rules:
+        # 1. "),(" is the separator between entries
+        # 2. After "),(" there are digits followed by ",", use a positive lookahead to split
+        elements = re.split("\),\((?=\d+,)", line)
+        for element in elements:
+            split_data = element.split(",")
+            id = split_data[0]
+            category = split_data[1]
+            qid = split_data[2][1:-1]
+            if category != "'wikibase_item'":
+                continue
+            qids_map[id] = qid
+    
+    qids = []
+    for id in pages['ID']:
+        if id in qids_map:
+            qids.append(qids_map[id])
+        else:
+            qids.append(None)
+    pages['QID'] = qids
     return pages
 
 
-def process_tar_data(data):
+def process_tar_html(data):
     page_info = {}
     page_info['title'] = process_title(data['name'])
     page_info['ID'] = data['identifier']
-    page_info['language'] = data['language']
     page_info['version'] = f"https://{data['language']}.wikipedia.org/w/index.php?title={page_info['title']}&oldid={data['version']['identifier']}"
     page_info['HTML'] = data['article_body']['html']
     page_info['page_length'] = len(data['article_body']['html'])
@@ -99,57 +123,60 @@ def process_tar_data(data):
         page_info['QID'] = data['main_entity']['identifier']
     else:
         page_info['QID'] = None
-    
+
     return page_info
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--input_xml', type=str,
-                        required=True, help='Path to the compressed xml input file')
-    parser.add_argument('--input_sql', type=str, required=True,
-                        help='Path to the compressed sql input file')
-    parser.add_argument('--input_tar', type=str, required=True,
-                        help='Path to the compressed tar input file')
+    parser.add_argument('--input_dir', type=str,
+                         required=True, help='Path to the input folder')
     parser.add_argument('--language', type=str,
                         required=True, help='Language version of the Wikipedia dump')
+    parser.add_argument('--date', type=str, required=True,
+                        help='Date of the Wikipedia dump in the format YYYYMMDD')
     parser.add_argument('--output_dir', type=str,
                         required=True, help='Path to the output folder')
     args = parser.parse_args()
 
-    # check if input files exist
-    if not os.path.exists(args.input_xml):
-        raise ValueError(f"Input file {args.input_xml} does not exist")
-    if not os.path.exists(args.input_sql):
-        raise ValueError(f"Input file {args.input_sql} does not exist")
-    if not os.path.exists(args.input_tar):
-        raise ValueError(f"Input file {args.input_tar} does not exist")
+    # check if input folder exists
+    if not os.path.exists(args.input_dir):
+        raise ValueError(f"Input folder {args.input_dir} does not exist")
+    # check if input folder contains the required files
+    sql_pages = os.path.join(args.input_dir, f"{args.language}wiki-{args.date}-page.sql")
+    sql_redirects = os.path.join(args.input_dir, f"{args.language}wiki-{args.date}-redirect.sql")
+    sql_page_props = os.path.join(args.input_dir, f"{args.language}wiki-{args.date}-page_props.sql")
+    tar_html = os.path.join(args.input_dir, f"{args.language}wiki-NS0-{args.date}-ENTERPRISE-HTML.json.tar.gz")
+    if not os.path.exists(sql_pages):
+        raise ValueError(
+            f"Missing file {sql_pages} from input folder. Please run the download script first.")
+    if not os.path.exists(sql_redirects):
+        raise ValueError(
+            f"Missing file {sql_redirects} from input folder. Please run the download script first.")
+    if not os.path.exists(sql_page_props):
+        raise ValueError(
+            f"Missing file {sql_page_props} from input folder. Please run the download script first.")
     # check if output dir exists
     # if it doesn't exist, create it
     if not os.path.exists(args.output_dir):
         os.makedirs(args.output_dir)
 
-    # extract pages from xml dump
-    print(f"Parsing xml dump {args.input_xml}")
-    pages_xml, redirects = process_xml_data(args.input_xml, args.language)
-    # extract pages from sql dump
-    print(f"Parsing sql dump {args.input_sql}")
-    pages_sql = process_sql_data(args.input_sql)
 
-    print("Saving DataFrames")
-    # create single dataframe for pages
-    df_xml = pd.DataFrame(pages_xml).set_index('ID')
-    df_sql = pd.DataFrame(pages_sql).set_index('ID')
+    print(f"Processing SQL pages information")
+    pages, redirects = process_sql_page(sql_pages, args.language)
+    print(f"Parsing SQL redirects information")
+    redirects = process_sql_redirects(sql_redirects, redirects)
 
-    # merge the xml and sql dataframes
-    # use the ID as index, if the ID is not in sql use Nan
-    pages = pd.merge(df_xml, df_sql, how='left', left_index=True, right_index=True)
-    pages.reset_index(level=0, inplace=True)
-    pages = pages.rename(columns={'index': 'title'})
+    redirects = [redirects[key] for key in redirects if 'redirect' in redirects[key] and redirects[key]['redirect'] != redirects[key]['title']]
+    redirects = pd.DataFrame(redirects).set_index('title')
+    pages = pd.DataFrame(pages)
 
-    print(f'Processing tar dump {args.input_tar}')
+    print("Processing SQL page properties information")
+    pages = process_sql_page_props(sql_page_props, pages)
+    
+    print(f'Processing tar HTML data')
     full_pages = {}
-    with tarfile.open(args.input_tar, 'r:gz') as tar:
+    with tarfile.open(tar_html, 'r:gz') as tar:
         # iterate through files in tar
         for member in (pbar := tqdm(tar)):
             if member.name.endswith('json'):
@@ -160,46 +187,32 @@ if __name__ == '__main__':
                             f"Processing file {member.name} at line {i}/{len(file_content)}")
                     entry = json.loads(line)
                     entry['language'] = args.language
-                    page = process_tar_data(entry)
+                    page = process_tar_html(entry)
                     full_pages[page['title']] = page
-    
-    language, html, page_length, lead_paragraph = [], [], [], []
+
+    html, page_length, lead_paragraph, version = [], [], [], []
     for title in pages['title']:
         if title in full_pages:
-            language.append(args.language)
             html.append(full_pages[title]['HTML'])
             page_length.append(full_pages[title]['page_length'])
             lead_paragraph.append(full_pages[title]['lead_paragraph'])
+            version.append(full_pages[title]['version'])
         else:
-            language.append(args.language)
-            html.append('')
-            page_length.append(0)
-            lead_paragraph.append('')
-    pages['language'] = language
+            html.append(None)
+            page_length.append(None)
+            lead_paragraph.append(None)
+            version.append(None)
     pages['HTML'] = html
     pages['page_length'] = page_length
-    pages['lead_paragraph'] = lead_paragraph        
-    
+    pages['lead_paragraph'] = lead_paragraph
+    pages['version'] = version
 
     # create copy of pages with reduced information
     simple_pages = pages[['ID', 'title', 'QID']]
     simple_pages = simple_pages.set_index('title')
 
-    # create dataframe for redirects
-    # use source page as index
-    df_redirects = pd.DataFrame(redirects).set_index('title')
-    # only keep the redirect column
-    df_redirects = df_redirects[['redirect']]
-
+    
     # save dataframes
     pages.to_parquet(f"{args.output_dir}/pages.parquet")
     simple_pages.to_parquet(f"{args.output_dir}/simple_pages.parquet")
-    df_redirects.to_parquet(f"{args.output_dir}/redirect_map.parquet")
-
-    # # create dataframe from simple pages
-    # df = pd.DataFrame.from_dict(simple_pages, orient='index')
-    # df.to_parquet(f"{args.output_dir}/simple_pages.parquet")
-    # # create dataframe from redirect map
-    # df = pd.DataFrame.from_dict(redirect_map, orient='index')
-    # df.columns = ['redirect_target']
-    # df.to_parquet(f"{args.output_dir}/redirect_map.parquet")
+    redirects.to_parquet(f"{args.output_dir}/redirect_map.parquet")

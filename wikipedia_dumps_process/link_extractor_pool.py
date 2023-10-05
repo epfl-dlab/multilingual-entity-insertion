@@ -9,7 +9,8 @@ from multiprocessing import Pool, cpu_count
 
 import lxml
 import pandas as pd
-from bs4 import BeautifulSoup, Comment, NavigableString, MarkupResemblesLocatorWarning
+from bs4 import (BeautifulSoup, MarkupResemblesLocatorWarning,
+                 NavigableString)
 from tqdm import tqdm
 
 warnings.filterwarnings("ignore", category=MarkupResemblesLocatorWarning)
@@ -26,21 +27,21 @@ def process_title(title):
 
 def extract_links(source_page):
     raw_html = source_page['HTML']
-    if raw_html == '':
+    if raw_html is None:
         return [], {}
     parsed_html = BeautifulSoup(raw_html, 'lxml')
 
     found_links = []
     # find body
     content = parsed_html.find("body")
-    
+
     # define the sentences
     # split by punctuation if the puctuation is not followed by a letter
     temp_sentences = []
     sentence = ''
     safe = False
     for i, char in enumerate(raw_html):
-        if not safe and char in ['.', '!', '?', '\n'] and (i > 1 and raw_html[i-2] != '.' and raw_html[i-2].isalnum()) and (i < len(raw_html) - 1 and not raw_html[i+1].isalnum() and raw_html[i+1] != '_'):
+        if (not safe) and (char in ['.', '!', '?', '\n']) and (i > 1 and raw_html[i-2] != '.' and raw_html[i-2].isalnum()) and (i < len(raw_html) - 1 and not raw_html[i+1].isalnum() and raw_html[i+1] != '_'):
             sentence += char
             temp_sentences.append(sentence)
             sentence = ''
@@ -59,7 +60,8 @@ def extract_links(source_page):
         # split by <p> or </p>
         for part in re.split('(<p>|</p>)', sentence):
             end_index += len(part)
-            sentences.append({'sentence': part, 'start_index': start_index, 'end_index': end_index})
+            sentences.append(
+                {'sentence': part, 'start_index': start_index, 'end_index': end_index})
             start_index = end_index
 
     depth = [0, 0, 0]
@@ -110,98 +112,102 @@ def extract_links(source_page):
 
             # find links
             links = tag.find_all('a')
-            # if there are links in the paragraph
-            if links:
-                # iterate through the links
-                for link in links:
-                    # if link has class "mw-file-description" then skip it
-                    if link.get("class") == ["mw-file-description"]:
-                        continue
-                    # if link has class "external text" then skip it
-                    if link.get("class") == ["external", "text"]:
-                        continue
-                    # if link has class "mw-selflink selflink" then skip it
-                    if link.get("class") == ["mw-selflink", "selflink"]:
-                        continue
-                    # if link has no href or if href does not start with "/wiki/" then skip it
-                    if not link.get("rel") or link["rel"] != ["mw:WikiLink"]:
-                        continue
-                    # if link has ':' in it then skip it
-                    if ':' in link["href"]:
-                        continue
-                    link_data = {}
+            # iterate through the links
+            for link in links:
+                # if link has class "mw-file-description" then skip it
+                if link.get("class") == ["mw-file-description"]:
+                    continue
+                # if link has class "external text" then skip it
+                if link.get("class") == ["external", "text"]:
+                    continue
+                # if link has class "mw-selflink selflink" then skip it
+                if link.get("class") == ["mw-selflink", "selflink"]:
+                    continue
+                # if link has no href or if href does not start with "/wiki/" then skip it
+                if not link.get("rel") or link["rel"] != ["mw:WikiLink"]:
+                    continue
+                # if link has ':' in it then skip it
+                if ':' in link["href"]:
+                    continue
+                link_data = {}
 
-                    # check if there are invalid elements in the tag parents
-                    # invalid elements are: table, figure, sup
-                    # also check if the parents have class "mw-editsection"
-                    invalid = False
-                    for parent in link.parents:
-                        if parent.name in ['table', 'figure', 'sup']:
-                            invalid = True
-                        if parent.get("class") == ["mw-editsection"]:
-                            invalid = True
-                            break
-                        if parent.get("class") == ["mw-editsection"]:
-                            invalid = True
-                            break
+                # check if there are invalid elements in the tag parents
+                # invalid elements are: table, figure, sup
+                # also check if the parents have class "mw-editsection"
+                invalid = False
+                for parent in link.parents:
+                    if parent.name in ['table', 'figure', 'sup']:
+                        invalid = True
+                        break
+                    if parent.get("class") == ["mw-editsection"]:
+                        invalid = True
+                        break
+                    if parent.get("class") == ["mw-editsection"]:
+                        invalid = True
+                        break
 
-                    # get the title of the link and the target anchor if it exists
-                    full_title = link["href"][2:]
-                    if "#" in full_title:
-                        link_data['target_title'] = full_title.split("#")[0]
-                        link_data['target_section'] = full_title.split("#")[1]
-                    else:
-                        link_data['target_title'] = full_title
-                        link_data['target_section'] = "Lead"
-                    link_data['target_title'] = process_title(
-                        link_data['target_title'])
-                    if link_data['target_title'] in redirect_map:
-                        link_data['target_title'] = redirect_map[link_data['target_title']]
-                    link_data['source_title'] = source_page['title']
+                # get the title of the link and the target anchor if it exists
+                full_title = link["href"][2:].strip()
+                if "#" in full_title:
+                    link_data['target_title'] = full_title.split(
+                        "#")[0].replace("\\'", "'")
+                    link_data['target_section'] = full_title.split(
+                        "#")[1].replace("\\'", "'")
+                else:
+                    link_data['target_title'] = full_title.replace("\\'", "'")
+                    link_data['target_section'] = "Lead".replace("\\'", "'")
+                link_data['target_title'] = process_title(
+                    link_data['target_title'])
+                if link_data['target_title'] in redirect_map:
+                    link_data['target_title'] = redirect_map[link_data['target_title']]
+                link_data['source_title'] = source_page['title']
 
-                    if 'redlink' in link_data['target_title'] or link.get("class") == ["new"]:
-                        continue
-                    if link_data['target_title'] not in page_ids:
-                        # print(
-                        #     f"Couldn't find page {link_data['target_title'].encode('utf-8')} in {source_page['title'].encode('utf-8')}")
-                        continue
+                if 'redlink' in link_data['target_title'] or link.get("class") == ["new"]:
+                    continue
 
+                if link_data['target_title'] not in page_ids:
+                    link_data['target_ID'] = None
+                    link_data['target_QID'] = None
+                else:
                     link_data['target_ID'] = page_ids[link_data['target_title']]['ID']
                     link_data['target_QID'] = page_ids[link_data['target_title']]['QID']
 
-                    link_data['source_ID'] = source_page['ID']
-                    link_data['source_QID'] = source_page['QID']
+                link_data['source_ID'] = source_page['ID']
+                link_data['source_QID'] = source_page['QID']
 
-                    # get the text of the link
-                    link_data['anchor'] = link.text
+                # get the text of the link
+                link_data['mention'] = link.text
 
-                    # get the source section of the link
-                    link_data['source_section'] = '<sep>'.join(sections)
+                # get the source section of the links
+                link_data['source_section'] = '<sep>'.join(sections)
 
-                    # get the start and end index of the link in the text
-                    if '&' in full_title:
-                        full_title = full_title.replace('&', '&amp;')
-                    try:
-                        if "\"" in full_title:
-                            try:
-                                fixed_title = full_title.replace(
-                                    '\'', '&apos;')
-                                index = raw_html.index(
-                                    f"./{fixed_title}", search_index_link)
-                                full_title = fixed_title
-                            except:
-                                fixed_title = full_title.replace(
-                                    '\"', '&quot;')
-                                index = raw_html.index(
-                                    f"./{fixed_title}", search_index_link)
-                                full_title = fixed_title
-                        else:
+                # get the start and end index of the link in the text
+                if '&' in full_title:
+                    full_title = full_title.replace('&', '&amp;')
+                try:
+                    if "\"" in full_title:
+                        try:
+                            fixed_title = full_title.replace(
+                                '\'', '&apos;')
                             index = raw_html.index(
-                                f"./{full_title}", search_index_link)
-                    except:
-                        print(full_title.encode('utf-8'),
-                              source_page['title'].encode('utf-8'))
-                        raise ValueError()
+                                f"./{fixed_title}", search_index_link)
+                            full_title = fixed_title
+                        except:
+                            fixed_title = full_title.replace(
+                                '\"', '&quot;')
+                            index = raw_html.index(
+                                f"./{fixed_title}", search_index_link)
+                            full_title = fixed_title
+                    else:
+                        index = raw_html.index(
+                            f"./{full_title}", search_index_link)
+                except:
+                    link_data['link_start_index'] = None
+                    link_data['link_end_index'] = None
+                    link_data['sentence'] = None
+                    link_data['sentence_start_index'] = None
+                    link_data['sentence_end_index'] = None
+                else:
                     while raw_html[index] != '<':
                         index -= 1
                     end_index = index
@@ -222,23 +228,27 @@ def extract_links(source_page):
                         # if the link is present in the sentence
                         if f"./{full_title}" in sentence['sentence']:
                             # get the start and end index of the link in the sentence
-                            parsed_sentence = BeautifulSoup(sentence['sentence'], 'html.parser')
+                            parsed_sentence = BeautifulSoup(
+                                sentence['sentence'], 'html.parser')
                             link_data['sentence'] = parsed_sentence.text
                             link_data['sentence_start_index'] = sentence['start_index']
                             link_data['sentence_end_index'] = sentence['end_index']
                             break
                         elif j == len(sentences) - 1:
+                            link_data['sentence'] = None
+                            link_data['sentence_start_index'] = None
+                            link_data['sentence_end_index'] = None
                             print(full_title.encode('utf-8'),
                                   source_page['title'].encode('utf-8'))
                             print('Not found')
                             print(sentences[0]['sentence'])
-                    link_data['source_page_length'] = len(raw_html)
-                    link_data['link_section_depth'] = f"{depth[0]}.{depth[1]}.{depth[2]}"
+                link_data['source_page_length'] = len(raw_html)
+                link_data['link_section_depth'] = f"{depth[0]}.{depth[1]}.{depth[2]}"
 
-                    sentences = sentences[j:]
+                sentences = sentences[j:]
 
-                    found_links.append(link_data)
-    
+                found_links.append(link_data)
+
     return found_links, section_text
 
 
@@ -302,8 +312,9 @@ if __name__ == '__main__':
             for link in page_links:
                 links.append(link)
             for section in section_text:
-                sections.append({'section': section, 'text': section_text[section], 'title': section_text['.']})
-            
+                sections.append(
+                    {'section': section, 'text': section_text[section], 'title': section_text['.']})
+
         pool.close()
         pool.join()
 
