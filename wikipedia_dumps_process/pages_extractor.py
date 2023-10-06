@@ -206,7 +206,7 @@ if __name__ == '__main__':
                             page['QID'] = pages[page['title']]['QID']
                         del pages[page['title']]
                     full_pages.append(page)
-                    if len(full_pages) >= 500_000:
+                    if len(full_pages) >= 200_000:
                         full_pages = pd.DataFrame(full_pages)
                         full_pages.to_parquet(
                             f"{args.output_dir}/pages_{counter}.parquet")
