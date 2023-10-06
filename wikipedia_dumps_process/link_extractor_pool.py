@@ -66,6 +66,7 @@ def extract_links(source_page):
 
     depth = [0, 0, 0]
     sections = ["Lead"]
+    section_links = []
     section_text = {'.': source_page['title'], 'Lead': ''}
     search_index_link = 0
     # iterate through all tags
@@ -79,6 +80,22 @@ def extract_links(source_page):
             if tag.name in ['h2', 'h3', 'h4']:
                 # update section, add or trim section list
                 if tag.name == 'h2':
+                    # save all the links from this section
+                    for link in section_links:
+                        if link['sentence'] is None:
+                            link['context'] = None
+                        else:
+                            current_text = section_text[sections[0]].strip()
+                            sentence = link['sentence'].strip()
+                            try:
+                                position = current_text.index(sentence)
+                            except:
+                                link['context'] = None
+                            else:
+                                link['context'] = current_text[max(0, position - 1_000):position] + current_text[position + len(
+                                    sentence):min(len(current_text), position + len(sentence) + 1_000)]
+                        found_links.append(link)
+                    section_links = []
                     sections = [re.sub(r'\[.*?\]', '', tag.text).strip()]
                     if sections[0] not in section_text:
                         section_text[sections[0]] = ''
@@ -98,17 +115,43 @@ def extract_links(source_page):
                     break
 
             # find all p and li tags
-            if tag.name == 'p':
-                section_text[sections[0]] += tag.text
-            elif tag.name == 'li':
-                section_text[sections[0]] += tag.text + '\n'
-            else:
-                tags = tag.find_all(['p', 'li'])
-                for t in tags:
-                    if tag.name == 'p':
-                        section_text[sections[0]] += t.text
-                    else:
-                        section_text[sections[0]] += t.text + '\n'
+            skip_text = False
+            test_elements = [parent for parent in tag.parents]
+            test_elements += [tag]
+            for parent in test_elements:
+                if parent.name in ['table', 'figure']:
+                    skip_text = True
+                    break
+                if parent.get("class") == ["mw-editsection"]:
+                    skip_text = True
+                    break
+                if parent.get("class") == ["mw-editsection"]:
+                    skip_text = True
+                    break
+                if parent.get("class") == ["side-box-text", "plainlist"]:
+                    skip_text = True
+                    break
+                if parent.get("class") == ["legend"]:
+                    skip_text = True
+                    break
+            if not skip_text:
+                if tag.name == 'p' or tag.name == 'div' or tag.name == 'dl':
+                    section_text[sections[0]] += tag.text
+                elif tag.name == 'li' or tag.name == 'span':
+                    section_text[sections[0]] += tag.text + '\n'
+                else:
+                    tags = tag.find_all(['p', 'li', 'span', 'div'])
+                    for t in tags:
+                        if tag.name == 'p':
+                            section_text[sections[0]] += t.text
+                        elif tag.name == 'div' or tag.name == 'dl':
+                            section_text[sections[0]] += t.text
+                            break
+                        elif tag.name == 'span':
+                            section_text[sections[0]] += t.text + '\n'
+                            break
+                        else:
+                            section_text[sections[0]] += t.text + '\n'
 
             # find links
             links = tag.find_all('a')
@@ -143,6 +186,12 @@ def extract_links(source_page):
                         invalid = True
                         break
                     if parent.get("class") == ["mw-editsection"]:
+                        invalid = True
+                        break
+                    if parent.get("class") == ["side-box-text", "plainlist"]:
+                        invalid = True
+                        break
+                    if parent.get("class") == ["legend"]:
                         invalid = True
                         break
 
@@ -228,9 +277,62 @@ def extract_links(source_page):
                         # if the link is present in the sentence
                         if f"./{full_title}" in sentence['sentence']:
                             # get the start and end index of the link in the sentence
+                            clean_sentence = sentence['sentence']
+                            if '</table>' in clean_sentence:
+                                clean_sentence = clean_sentence.split(
+                                    '</table>')[1]
+                            if '<table' in clean_sentence:
+                                clean_sentence = clean_sentence.split('<table')[
+                                    0]
+                            if '<body' in clean_sentence:
+                                clean_sentence = clean_sentence.split('<body')[
+                                    1]
+                            if '</body>' in clean_sentence:
+                                clean_sentence = clean_sentence.split(
+                                    '</body>')[0]
+                            if '</figure>' in clean_sentence:
+                                clean_sentence = clean_sentence.split(
+                                    '</figure>')[1]
+                            if '<figure' in clean_sentence:
+                                clean_sentence = clean_sentence.split('<figure')[
+                                    0]
+
+                            if '<h3' in clean_sentence and '</h3>' in clean_sentence:
+                                clean_sentence = clean_sentence.split(
+                                    '<h3')[0] + clean_sentence.split('</h3>')[1]
+                            elif '<h3' in clean_sentence:
+                                clean_sentence = clean_sentence.split('<h3')[0]
+                            elif '</h3>' in clean_sentence:
+                                clean_sentence = clean_sentence.split(
+                                    '</h3>')[1]
+
+                            if '<h4' in clean_sentence and '</h4>' in clean_sentence:
+                                clean_sentence = clean_sentence.split(
+                                    '<h4')[0] + clean_sentence.split('</h4>')[1]
+                            elif '<h4' in clean_sentence:
+                                clean_sentence = clean_sentence.split('<h4')[0]
+                            elif '</h4>' in clean_sentence:
+                                clean_sentence = clean_sentence.split(
+                                    '</h4>')[1]
+
+                            index_right_arrow_first = clean_sentence.find(
+                                '>') if clean_sentence.find('>') != -1 else len(clean_sentence)
+                            index_left_arrow_first = clean_sentence.find(
+                                '<') if clean_sentence.find('<') != -1 else len(clean_sentence)
+                            if index_right_arrow_first < index_left_arrow_first:
+                                clean_sentence = clean_sentence[index_right_arrow_first+1:]
+
+                            index_right_arrow_last = clean_sentence.rfind(
+                                '>') if clean_sentence.rfind('>') != -1 else 0
+                            index_left_arrow_last = clean_sentence.rfind(
+                                '<') if clean_sentence.rfind('<') != -1 else 0
+                            if index_right_arrow_last < index_left_arrow_last:
+                                clean_sentence = clean_sentence[:index_left_arrow_last]
+
                             parsed_sentence = BeautifulSoup(
-                                sentence['sentence'], 'html.parser')
+                                clean_sentence, 'html.parser')
                             link_data['sentence'] = parsed_sentence.text
+                            link_data['sentence_raw'] = clean_sentence
                             link_data['sentence_start_index'] = sentence['start_index']
                             link_data['sentence_end_index'] = sentence['end_index']
                             break
@@ -247,7 +349,23 @@ def extract_links(source_page):
 
                 sentences = sentences[j:]
 
-                found_links.append(link_data)
+                section_links.append(link_data)
+
+    # save the last remaining links
+    for link in section_links:
+        if link['sentence'] is None:
+            link['context'] = None
+        else:
+            current_text = section_text[sections[0]].strip()
+            sentence = link['sentence'].strip()
+            try:
+                position = current_text.index(sentence)
+            except:
+                link['context'] = None
+            else:
+                link['context'] = current_text[max(0, position - 1_000):position] + current_text[position + len(
+                    sentence):min(len(current_text), position + len(sentence) + 1_000)]
+        found_links.append(link)
 
     return found_links, section_text
 
