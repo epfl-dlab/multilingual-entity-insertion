@@ -97,24 +97,23 @@ def process_sql_page_props(input, pages):
             if category != "'wikibase_item'":
                 continue
             qids_map[id] = qid
-    
-    qids = []
-    for id in pages['ID']:
-        if id in qids_map:
-            qids.append(qids_map[id])
+
+    for i, page in enumerate(pages):
+        if page['ID'] in qids_map:
+            pages[i]['QID'] = qids_map[page['ID']]
         else:
-            qids.append(None)
-    pages['QID'] = qids
+            pages[i]['QID'] = None
     return pages
 
 
 def process_tar_html(data):
     page_info = {}
     page_info['title'] = process_title(data['name'])
-    page_info['ID'] = data['identifier']
+    page_info['ID'] = str(data['identifier'])
     page_info['version'] = f"https://{data['language']}.wikipedia.org/w/index.php?title={page_info['title']}&oldid={data['version']['identifier']}"
     page_info['HTML'] = data['article_body']['html']
     page_info['page_length'] = len(data['article_body']['html'])
+    page_info['language'] = data['language']
     if 'abstract' in data:
         page_info['lead_paragraph'] = data['abstract']
     else:
@@ -130,7 +129,7 @@ def process_tar_html(data):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--input_dir', type=str,
-                         required=True, help='Path to the input folder')
+                        required=True, help='Path to the input folder')
     parser.add_argument('--language', type=str,
                         required=True, help='Language version of the Wikipedia dump')
     parser.add_argument('--date', type=str, required=True,
@@ -143,10 +142,14 @@ if __name__ == '__main__':
     if not os.path.exists(args.input_dir):
         raise ValueError(f"Input folder {args.input_dir} does not exist")
     # check if input folder contains the required files
-    sql_pages = os.path.join(args.input_dir, f"{args.language}wiki-{args.date}-page.sql")
-    sql_redirects = os.path.join(args.input_dir, f"{args.language}wiki-{args.date}-redirect.sql")
-    sql_page_props = os.path.join(args.input_dir, f"{args.language}wiki-{args.date}-page_props.sql")
-    tar_html = os.path.join(args.input_dir, f"{args.language}wiki-NS0-{args.date}-ENTERPRISE-HTML.json.tar.gz")
+    sql_pages = os.path.join(
+        args.input_dir, f"{args.language}wiki-{args.date}-page.sql")
+    sql_redirects = os.path.join(
+        args.input_dir, f"{args.language}wiki-{args.date}-redirect.sql")
+    sql_page_props = os.path.join(
+        args.input_dir, f"{args.language}wiki-{args.date}-page_props.sql")
+    tar_html = os.path.join(
+        args.input_dir, f"{args.language}wiki-NS0-{args.date}-ENTERPRISE-HTML.json.tar.gz")
     if not os.path.exists(sql_pages):
         raise ValueError(
             f"Missing file {sql_pages} from input folder. Please run the download script first.")
@@ -161,21 +164,26 @@ if __name__ == '__main__':
     if not os.path.exists(args.output_dir):
         os.makedirs(args.output_dir)
 
-
     print(f"Processing SQL pages information")
     pages, redirects = process_sql_page(sql_pages, args.language)
     print(f"Parsing SQL redirects information")
     redirects = process_sql_redirects(sql_redirects, redirects)
 
-    redirects = [redirects[key] for key in redirects if 'redirect' in redirects[key] and redirects[key]['redirect'] != redirects[key]['title']]
-    redirects = pd.DataFrame(redirects).set_index('title')
-    pages = pd.DataFrame(pages)
+    redirects = [redirects[key] for key in redirects if 'redirect' in redirects[key]
+                 and redirects[key]['redirect'] != redirects[key]['title']]
+    redirect_map = {redirect['title']: redirect['redirect'] for redirect in redirects}
 
     print("Processing SQL page properties information")
     pages = process_sql_page_props(sql_page_props, pages)
-    
+    simple_pages = [{'ID': page['ID'], 'title': page['title'],
+                     'QID': page['QID']} for page in pages]
+    pages = {page['title']: page for page in pages}
+    print(f"{len(simple_pages)} pages found")
+
     print(f'Processing tar HTML data')
-    full_pages = {}
+    full_pages = []
+    used_titles = set()
+    counter = 0
     with tarfile.open(tar_html, 'r:gz') as tar:
         # iterate through files in tar
         for member in (pbar := tqdm(tar)):
@@ -188,31 +196,38 @@ if __name__ == '__main__':
                     entry = json.loads(line)
                     entry['language'] = args.language
                     page = process_tar_html(entry)
-                    full_pages[page['title']] = page
+                    if page['title'] in redirect_map:
+                        continue
+                    if page['title'] in used_titles:
+                        continue
+                    used_titles.add(page['title'])
+                    if page['title'] in pages:
+                        if page['QID'] is None and pages[page['title']]['QID'] is not None:
+                            page['QID'] = pages[page['title']]['QID']
+                        del pages[page['title']]
+                    full_pages.append(page)
+                    if len(full_pages) >= 500_000:
+                        full_pages = pd.DataFrame(full_pages)
+                        full_pages.to_parquet(
+                            f"{args.output_dir}/pages_{counter}.parquet")
+                        full_pages = []
+                        counter += 1
 
-    html, page_length, lead_paragraph, version = [], [], [], []
-    for title in pages['title']:
-        if title in full_pages:
-            html.append(full_pages[title]['HTML'])
-            page_length.append(full_pages[title]['page_length'])
-            lead_paragraph.append(full_pages[title]['lead_paragraph'])
-            version.append(full_pages[title]['version'])
-        else:
-            html.append(None)
-            page_length.append(None)
-            lead_paragraph.append(None)
-            version.append(None)
-    pages['HTML'] = html
-    pages['page_length'] = page_length
-    pages['lead_paragraph'] = lead_paragraph
-    pages['version'] = version
+    # create a dataframe with the remaining titles
+    for title in pages:
+        full_pages.append(pages[title])
+        full_pages[-1]['HTML'] = None
+        full_pages[-1]['page_length'] = None
+        full_pages[-1]['lead_paragraph'] = None
+        full_pages[-1]['version'] = None
+    full_pages = pd.DataFrame(full_pages)
+    full_pages.to_parquet(f"{args.output_dir}/pages_{counter}.parquet")
 
     # create copy of pages with reduced information
-    simple_pages = pages[['ID', 'title', 'QID']]
+    simple_pages = pd.DataFrame(simple_pages)
     simple_pages = simple_pages.set_index('title')
-
-    
-    # save dataframes
-    pages.to_parquet(f"{args.output_dir}/pages.parquet")
     simple_pages.to_parquet(f"{args.output_dir}/simple_pages.parquet")
+
+    # save redirects
+    redirects = pd.DataFrame(redirects).set_index('title')
     redirects.to_parquet(f"{args.output_dir}/redirect_map.parquet")
