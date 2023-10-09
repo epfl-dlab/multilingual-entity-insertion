@@ -18,23 +18,6 @@ from transformers import AutoModel, AutoTokenizer
 multiprocess.set_start_method("spawn", force=True)
 
 
-def collator(input):
-    sentences_1, sentences_2, sentences_3 = [], [], []
-    labels = []
-    for item in input:
-        sentences_1.append(item['source'])
-        sentences_2.append(item['context'])
-        sentences_3.append(item['target'])
-        labels.append(item['label'])
-    sentences_1 = tokenizer(sentences_1, padding=True,
-                            truncation=True, return_tensors='pt')
-    sentences_2 = tokenizer(sentences_2, padding=True,
-                            truncation=True, return_tensors='pt')
-    sentences_3 = tokenizer(sentences_3, padding=True,
-                            truncation=True, return_tensors='pt')
-    return {'inputs': [sentences_1, sentences_2, sentences_3], 'labels': torch.tensor(labels)}
-
-
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(
         formatter_class=argparse.ArgumentDefaultsHelpFormatter)
@@ -118,20 +101,6 @@ if __name__ == '__main__':
     logger.info(f"Train set size: {len(train_set)}")
     logger.info(f"Validation set size: {len(val_set)}")
 
-    logger.info("Creating dataloaders")
-    train_loader = DataLoader(train_set,
-                              batch_size=args.batch_size,
-                              shuffle=True,
-                              num_workers=args.num_workers,
-                              drop_last=True,
-                              collate_fn=collator)
-    val_loader = DataLoader(val_set,
-                            batch_size=args.batch_size,
-                            shuffle=False,
-                            num_workers=args.num_workers,
-                            drop_last=True,
-                            collate_fn=collator)
-
     if args.resume:
         logger.info("Loading model")
         try:
@@ -157,8 +126,8 @@ if __name__ == '__main__':
         logger.info("Initializing model")
         model = AutoModel.from_pretrained(args.model_name)
         classification_head = torch.nn.Linear(model.config.hidden_size * 3, 2)
-        tokenizer = AutoTokenizer.from_pretrained(args.model_name)
-        tokenizer.save_pretrained(os.path.join(output_dir, 'tokenizer'))
+
+    tokenizer = AutoTokenizer.from_pretrained(args.model_name)
 
     # store model weights to keep track of model distance
     model_weights = torch.cat([param.data.flatten()
@@ -167,6 +136,40 @@ if __name__ == '__main__':
     logger.info("Initializing optimizer")
     optimizer = optim.Adam(model.parameters(), lr=args.lr)
     scheduler = ExponentialLR(optimizer, gamma=args.gamma_lr)
+
+    def collator(input):
+        sources, contexts, targets = [], [], []
+        labels = []
+        for item in input:
+            source_input = f"{item['source_title']}{tokenizer.sep_token}{item['source_lead']}"
+            context_input = f"{item['link_context']}"
+            target_input = f"{item['target_title']}{tokenizer.sep_token}{item['target_lead']}"
+
+            sources.append(source_input)
+            contexts.append(context_input)
+            targets.append(target_input)
+            labels.append(item['label'])
+        sources = tokenizer(sources, padding=True,
+                            truncation=True, return_tensors='pt')
+        contexts = tokenizer(contexts, padding=True,
+                             truncation=True, return_tensors='pt')
+        targets = tokenizer(targets, padding=True,
+                            truncation=True, return_tensors='pt')
+        return {'sources': sources, 'contexts': contexts, 'targets': targets, 'labels': labels}
+
+    logger.info("Creating dataloaders")
+    train_loader = DataLoader(train_set,
+                              batch_size=args.batch_size,
+                              shuffle=True,
+                              num_workers=args.num_workers,
+                              drop_last=True,
+                              collate_fn=collator)
+    val_loader = DataLoader(val_set,
+                            batch_size=args.batch_size,
+                            shuffle=False,
+                            num_workers=args.num_workers,
+                            drop_last=True,
+                            collate_fn=collator)
 
     # prepare all objects with accelerator
     model, classification_head, optimizer, train_loader, val_loader, scheduler = accelerator.prepare(
@@ -194,8 +197,8 @@ if __name__ == '__main__':
             with accelerator.accumulate(model):
                 step += 1
                 embeddings = []
-                for input in data['inputs']:
-                    output = model(input['input_ids'], input['attention_mask'])
+                for input in ['sources', 'contexts', 'targets']:
+                    output = model(data[input], data[input])
                     embeddings.append(output['last_hidden_state'][:, 0, :])
                 embeddings = torch.cat(embeddings, dim=1)
                 logits = classification_head(embeddings)
@@ -242,9 +245,9 @@ if __name__ == '__main__':
                     running_val_loss = 0
                     for val_data in val_loader:
                         val_embeddings = []
-                        for input in val_data['inputs']:
+                        for input in ['sources', 'contexts', 'targets']:
                             output = model(
-                                input['input_ids'], input['attention_mask'])
+                                val_data[input], val_data[input])
                             val_embeddings.append(
                                 output['last_hidden_state'][:, 0, :])
                         val_embeddings = torch.cat(val_embeddings, dim=1)
