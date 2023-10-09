@@ -92,11 +92,27 @@ def extract_links(source_page):
                             except:
                                 link['context'] = None
                             else:
-                                link['context'] = current_text[max(0, position - 1_000):position] + current_text[position + len(
-                                    sentence):min(len(current_text), position + len(sentence) + 1_000)]
+                                # find start and end position for context so that we don't cut words
+                                start_position = max(0, position - 1_000)
+                                if start_position > 0 and current_text[start_position - 1].isalnum():
+                                    while current_text[start_position].isalnum():
+                                        start_position += 1
+                                end_position = min(len(current_text), position + len(sentence) + 1_000)
+                                if end_position < len(current_text) and current_text[end_position].isalnum():
+                                    while current_text[end_position].isalnum():
+                                        end_position -= 1
+                                    
+                                context = current_text[start_position:position] + current_text[position + len(
+                                    sentence):end_position]
+                                context = re.sub(r'\[.*?\]', '', context)
+                                context = re.sub(r'\n', ' ', context)
+                                context = re.sub(r' +', ' ', context)
+                                context = context.strip()
+                                link['context'] = context
                         found_links.append(link)
                     section_links = []
                     sections = [re.sub(r'\[.*?\]', '', tag.text).strip()]
+                    section_text[sections[0]] = re.sub(r'\[.*?\]', '', tag.text).strip() + '\n'
                     if sections[0] not in section_text:
                         section_text[sections[0]] = ''
                     depth[0] += 1
@@ -107,11 +123,13 @@ def extract_links(source_page):
                         [re.sub(r'\[.*?\]', '', tag.text).strip()]
                     depth[1] += 1
                     depth[2] = 0
+                    section_text[sections[0]] += re.sub(r'\[.*?\]', '', tag.text).strip() + '\n'
                 elif tag.name == 'h4':
                     sections = sections[:2] + \
                         [re.sub(r'\[.*?\]', '', tag.text).strip()]
                     depth[2] += 1
-                if sections in [["Notes"], ["References"], ["External links"], ["Further reading"], ["Other websites"]]:
+                    section_text[sections[0]] += re.sub(r'\[.*?\]', '', tag.text).strip() + '\n'
+                if sections in [["Notes"], ["References"], ["Sources"], ["External links"], ["Further reading"], ["Other websites"], ["Sources and references"]]:
                     break
 
             # find all p and li tags
@@ -134,17 +152,23 @@ def extract_links(source_page):
                 if parent.get("class") == ["legend"]:
                     skip_text = True
                     break
+                if parent.get("role") == "note":
+                    skip_text = True
+                    break
+                if parent.get("class") == ["navbox-styles", "nomobile"]:
+                    skip_text = True
+                    break
             if not skip_text:
-                if tag.name == 'p' or tag.name == 'div' or tag.name == 'dl':
+                if tag.name == 'p' or tag.name == 'dl':
                     section_text[sections[0]] += tag.text
                 elif tag.name == 'li' or tag.name == 'span':
                     section_text[sections[0]] += tag.text + '\n'
                 else:
-                    tags = tag.find_all(['p', 'li', 'span', 'div'])
+                    tags = tag.find_all(['p', 'li', 'dl', 'span'])
                     for t in tags:
                         if tag.name == 'p':
                             section_text[sections[0]] += t.text
-                        elif tag.name == 'div' or tag.name == 'dl':
+                        elif tag.name == 'dl' and tag.get("role") != "note" and tag.get("class") != ["navbox-styles", "nomobile"]:
                             section_text[sections[0]] += t.text
                             break
                         elif tag.name == 'span':
@@ -192,6 +216,12 @@ def extract_links(source_page):
                         invalid = True
                         break
                     if parent.get("class") == ["legend"]:
+                        invalid = True
+                        break
+                    if parent.get("role") == "note":
+                        invalid = True
+                        break
+                    if parent.get("class") == ["navbox-styles", "nomobile"]:
                         invalid = True
                         break
 
@@ -331,6 +361,7 @@ def extract_links(source_page):
 
                             parsed_sentence = BeautifulSoup(
                                 clean_sentence, 'html.parser')
+                            
                             link_data['sentence'] = parsed_sentence.text
                             link_data['sentence_raw'] = clean_sentence
                             link_data['sentence_start_index'] = sentence['start_index']
@@ -363,8 +394,23 @@ def extract_links(source_page):
             except:
                 link['context'] = None
             else:
-                link['context'] = current_text[max(0, position - 1_000):position] + current_text[position + len(
-                    sentence):min(len(current_text), position + len(sentence) + 1_000)]
+                # find start and end position for context so that we don't cut words
+                start_position = max(0, position - 1_000)
+                if start_position > 0 and current_text[start_position - 1].isalnum():
+                    while current_text[start_position].isalnum():
+                        start_position += 1
+                end_position = min(len(current_text), position + len(sentence) + 1_000)
+                if end_position < len(current_text) and current_text[end_position].isalnum():
+                    while current_text[end_position].isalnum():
+                        end_position -= 1
+                
+                context = current_text[start_position:position] + current_text[position + len(
+                    sentence):end_position]
+                context = re.sub(r'\[.*?\]', '', context)
+                context = re.sub(r'\n', ' ', context)
+                context = re.sub(r' +', ' ', context)
+                context = context.strip()
+                link['context'] = context
         found_links.append(link)
 
     return found_links, section_text
