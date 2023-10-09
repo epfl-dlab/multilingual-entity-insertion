@@ -22,8 +22,6 @@ class WikiDataset(data.Dataset):
 
     def __len__(self):
         return len(self.data)
-    
+
     def __getitem__(self, index):
         return self.data.iloc[index].to_dict()
-
-    
