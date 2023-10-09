@@ -142,7 +142,7 @@ if __name__ == '__main__':
         labels = []
         for item in input:
             source_input = f"{item['source_title']}{tokenizer.sep_token}{item['source_lead']}"
-            context_input = f"{item['link_context']}"
+            context_input = f"{item['source_section']}{tokenizer.sep_token}{item['link_context']}"
             target_input = f"{item['target_title']}{tokenizer.sep_token}{item['target_lead']}"
 
             sources.append(source_input)
