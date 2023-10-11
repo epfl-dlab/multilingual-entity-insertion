@@ -44,7 +44,8 @@ if __name__ == '__main__':
                         help='Number of steps between saving model')
     parser.add_argument('--eval_steps', type=int, default=5_000,
                         help='Number of steps between evaluating model on validation set')
-    parser.add_argument('--scheduler_steps', type=int, default=10_000, help='Number of steps between scheduler steps')
+    parser.add_argument('--scheduler_steps', type=int, default=10_000,
+                        help='Number of steps between scheduler steps')
     parser.add_argument('--resume', action='store_true',
                         help='Resume training from checkpoint (needs --checkpoint_dir)')
     parser.add_argument('--checkpoint_dir', type=str,
@@ -145,7 +146,7 @@ if __name__ == '__main__':
     # add classification head to optimizer
     optimizer.add_param_group(
         {'params': classification_head.parameters(), 'lr': args.lr * args.head_lr_factor})
-    
+
     # set-up scheduler
     scheduler = ExponentialLR(optimizer, gamma=args.gamma_lr)
 
@@ -234,20 +235,25 @@ if __name__ == '__main__':
             # save running loss
             running_loss += loss.item() * args.ga_steps
             # print loss
-            if step % args.print_step == 0:
+            if step % args.print_steps == 0:
                 logger.info(
-                    f"Step {step}: loss = {running_loss / args.print_step}")
+                    f"Step {step}: loss = {running_loss / args.print_steps}")
                 if accelerator.is_main_process:
                     writer.add_scalar(
-                        'train/loss', running_loss / args.print_step, step)
+                        'train/loss', running_loss / args.print_steps, step)
                 running_loss = 0
-                
+
             if step % args.scheduler_steps == 0:
+                logger.info(f"Step {step}: scheduler step")
                 scheduler.step()
+                logger.info(
+                    f"Encoder learning rate: {scheduler.get_last_lr()[0]}")
+                logger.info(
+                    f"Classification head learning rate: {scheduler.get_last_lr()[1]}")
 
             # save model
-            if step % args.save_step == 0:
-                logger.info(f"Saving model at step {step}")
+            if step % args.save_steps == 0:
+                logger.info(f"Step {step}: saving model")
                 accelerator.wait_for_everyone()
                 # accelerator needs to unwrap model and classification head
                 accelerator.unwrap_model(model).save_pretrained(os.path.join(
@@ -256,15 +262,15 @@ if __name__ == '__main__':
                     output_dir, f"classification_head_{step}.pth"))
 
             # evaluate model
-            if step % args.eval_step == 0:
-                logger.info(f"Evaluating model at step {step}")
+            if step % args.eval_steps == 0:
+                logger.info(f"Step {step}: evaluating model")
                 model.eval()
                 with torch.no_grad():
                     # compare current model weights to initial model weights
                     current_model_weights = torch.cat(
                         [param.data.flatten() for param in model.parameters()]).to('cpu')
                     model_distance = torch.norm(
-                        current_model_weights - model_weights)
+                        current_model_weights - model_weights) / torch.norm(model_weights)
 
                     true_pos = 0
                     true_neg = 0
@@ -274,7 +280,8 @@ if __name__ == '__main__':
                     running_val_loss = 0
                     for j, val_data in (pbar := tqdm(enumerate(val_loader), total=len(val_loader))):
                         if j % 250 == 0:
-                            pbar.set_description(f"True pos: {true_pos}, True neg: {true_neg}, False pos: {false_pos}, False neg: {false_neg}, Total: {total}")
+                            pbar.set_description(
+                                f"True pos: {true_pos}, True neg: {true_neg}, False pos: {false_pos}, False neg: {false_neg}, Total: {total}")
                         output_source = model(**val_data['sources'])
                         output_context = model(**val_data['contexts'])
                         output_target = model(**val_data['targets'])
@@ -303,7 +310,7 @@ if __name__ == '__main__':
                         # use softmax to get probabilities
                         probs = torch.softmax(val_logits, dim=1)
                         preds = torch.argmax(probs, dim=1)
-                        
+
                         true_pos += torch.sum((preds == 1)
                                               & (labels == 1)).item()
                         true_neg += torch.sum((preds == 0)
@@ -313,7 +320,10 @@ if __name__ == '__main__':
                         false_neg += torch.sum((preds == 0)
                                                & (labels == 1)).item()
                         total += len(labels)
-
+                        
+                        if j == len(val_loader) - 1:
+                            pbar.set_description(
+                                f"True pos: {true_pos}, True neg: {true_neg}, False pos: {false_pos}, False neg: {false_neg}, Total: {total}")
                     # calculate accuracy, precision, recall, f1 score
                     accuracy = (true_pos + true_neg) / total
                     precision = true_pos / \
@@ -335,7 +345,8 @@ if __name__ == '__main__':
                         writer.add_scalar('val/recall', recall, step)
                         writer.add_scalar('val/f1', f1, step)
                         writer.add_scalar('val/loss', running_val_loss, step)
-                        writer.add_scalar('model/distance', model_distance, step)
+                        writer.add_scalar('model/distance',
+                                          model_distance, step)
                 model.train()
 
         scheduler.step()
