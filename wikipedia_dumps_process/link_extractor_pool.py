@@ -83,32 +83,45 @@ def extract_links(source_page):
                     # save all the links from this section
                     for link in section_links:
                         if link['sentence'] is None:
+                            link['context_sentence_start_index'] = None
+                            link['context_sentence_end_index'] = None
+                            link['context_mention_start_index'] = None
+                            link['context_mention_end_index'] = None
                             link['context'] = None
                         else:
                             current_text = section_text[sections[0]].strip()
                             sentence = link['sentence'].strip()
+                            
+                            current_text = re.sub(r'\[.*?\]', '', current_text)
+                            sentence = re.sub(r'\[.*?\]', '', sentence)
+                            current_text = re.sub(r'\n', ' ', current_text)
+                            sentence = re.sub(r'\n', ' ', sentence)
+                            current_text = re.sub(r' +', ' ', current_text)
+                            sentence = re.sub(r' +', ' ', sentence)
+                            link['sentence'] = sentence
                             try:
-                                position = current_text.index(sentence)
+                                link['context_sentence_start_index'] = current_text.index(sentence)
+                                link['context_sentence_end_index'] = link['context_sentence_start_index'] + len(sentence)
+                                link['context_mention_start_index'] = current_text[link['context_sentence_start_index']:].index(link['mention']) + link['context_sentence_start_index']
+                                link['context_mention_end_index'] = link['context_mention_start_index'] + len(link['mention'])
                             except:
+                                link['context_sentence_start_index'] = None
+                                link['context_sentence_end_index'] = None
+                                link['context_mention_start_index'] = None
+                                link['context_mention_end_index'] = None
                                 link['context'] = None
                             else:
                                 # find start and end position for context so that we don't cut words
-                                start_position = max(0, position - 1_000)
+                                start_position = max(0, link['context_sentence_start_index'] - 1_000)
                                 if start_position > 0 and current_text[start_position - 1].isalnum():
                                     while current_text[start_position].isalnum():
                                         start_position += 1
-                                end_position = min(len(current_text), position + len(sentence) + 1_000)
+                                end_position = min(len(current_text), link['context_sentence_start_index'] + len(sentence) + 1_000)
                                 if end_position < len(current_text) and current_text[end_position].isalnum():
                                     while current_text[end_position].isalnum():
                                         end_position -= 1
                                     
-                                context = current_text[start_position:position] + current_text[position + len(
-                                    sentence):end_position]
-                                context = re.sub(r'\[.*?\]', '', context)
-                                context = re.sub(r'\n', ' ', context)
-                                context = re.sub(r' +', ' ', context)
-                                context = context.strip()
-                                link['context'] = context
+                                link['context'] = current_text[start_position:end_position]
                         found_links.append(link)
                     section_links = []
                     sections = [re.sub(r'\[.*?\]', '', tag.text).strip()]
