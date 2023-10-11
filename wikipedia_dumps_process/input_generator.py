@@ -4,6 +4,13 @@ import os
 from glob import glob
 from tqdm import tqdm
 import random
+import urllib.parse
+
+
+def unencode_title(title):
+    clean_title = urllib.parse.unquote(title).replace('_', ' ')
+    return clean_title
+    
 
 
 if __name__ == '__main__':
@@ -13,7 +20,7 @@ if __name__ == '__main__':
     parser.add_argument('--output_dir', '-o', type=str,
                         required=True, help='Output directory')
     parser.add_argument('--neg_strategies', '-s', type=int, nargs='+', default=[
-                        1, 2, 3, 4, 5, 6], help='Negative sampling strategies: 1) replace source with random source not connected to target, 2) replace source with random source connected to target, 3) replace target with random target not connected to source, 4) replace target with random target connected to source, 5) replace context with random context, 6) replace source section with random section title')
+                        1, 2, 3, 4, 5], help='Negative sampling strategies: 1) replace source with random source not connected to target, 2) replace source with random source connected to target, 3) replace target with random target not connected to source, 4) replace target with random target connected to source, 5) replace context with random context')
     parser.add_argument('--neg_samples_per_pos', '-n', type=int,
                         default=1, help='Number of negative samples per positive sample')
     parser.add_argument('--max_samples', type=int, default=None,
@@ -24,7 +31,7 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     strategies_map = {1: 'easy_replace_source', 2: 'hard_replace_source', 3: 'easy_replace_target',
-                      4: 'hard_replace_target', 5: 'replace_context', 6: 'replace_section_source'}
+                      4: 'hard_replace_target', 5: 'replace_context'}
     strategies = []
     for strategy in args.neg_strategies:
         if strategy not in strategies_map:
@@ -43,7 +50,9 @@ if __name__ == '__main__':
     dfs = []
     for file in tqdm(page_files):
         dfs.append(pd.read_parquet(file, columns=['title', 'lead_paragraph']))
-    df_pages = pd.concat(dfs).to_dict(orient='records')
+    df_pages = pd.concat(dfs)
+    df_pages['title'] = df_pages['title'].apply(unencode_title)
+    df_pages = df_pages.to_dict(orient='records')
 
     print('Loading links')
     link_files = glob(os.path.join(args.input_dir, 'good_links*'))
@@ -51,7 +60,10 @@ if __name__ == '__main__':
     dfs = []
     for file in tqdm(link_files):
         dfs.append(pd.read_parquet(file))
-    df_links = pd.concat(dfs).to_dict(orient='records')
+    df_links = pd.concat(dfs)
+    df_links['source_title'] = df_links['source_title'].apply(unencode_title)
+    df_links['target_title'] = df_links['target_title'].apply(unencode_title)
+    df_links = df_links.to_dict(orient='records')
     del dfs
 
     print('Creating auxiliary data structures')
@@ -126,11 +138,6 @@ if __name__ == '__main__':
                 while new_context == positive_samples[i]['link_context']:
                     new_context = random.choices(positive_samples, k=1)[0]['link_context']
                 new_sample['link_context'] = new_context
-            elif strategy == 'replace_section_source':
-                new_source_section = random.choices(positive_samples, k=1)[0]['source_section']
-                while new_source_section == positive_samples[i]['source_section']:
-                    new_source_section = random.choices(positive_samples, k=1)[0]['source_section']
-                new_sample['source_section'] = new_source_section
             new_sample['label'] = 0
             new_samples.append(new_sample)
         negative_samples.extend(new_samples)   
@@ -141,9 +148,9 @@ if __name__ == '__main__':
         df = df.sample(min(args.max_samples, len(df))).reset_index(drop=True)
 
     if args.max_val_samples and not args.max_test_samples:
-        args.max_test_sample = args.max_val_samples
+        args.max_test_samples = args.max_val_samples
     if args.max_test_samples and not args.max_val_samples:
-        args.max_val_sample = args.max_test_samples
+        args.max_val_samples = args.max_test_samples
     
     if args.max_val_samples:
         train_samples = len(df) - args.max_val_samples - args.max_test_samples
