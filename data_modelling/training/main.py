@@ -5,6 +5,7 @@ import time
 
 import multiprocess
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 from accelerate import Accelerator
@@ -14,6 +15,9 @@ from torch.optim.lr_scheduler import ExponentialLR
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 from transformers import AutoModel, AutoTokenizer
+from tqdm import tqdm
+from accelerate import DistributedDataParallelKwargs
+from torch.nn import Sequential
 
 multiprocess.set_start_method("spawn", force=True)
 
@@ -50,6 +54,8 @@ if __name__ == '__main__':
                         help='Number of epochs to freeze all lazyers except classification head')
     parser.add_argument('--freeze_layers', type=int, default=0,
                         help='Number of initial layers to freeze')
+    parser.add_argument('--head_lr_factor', type=float, default=1,
+                        help='Factor for learning rate of classification head')
     parser.set_defaults(resume=False)
 
     args = parser.parse_args()
@@ -64,7 +70,8 @@ if __name__ == '__main__':
                 f"Checkpoint directory {args.checkpoint_dir} does not exist")
 
     # initialize accelerator
-    accelerator = Accelerator(gradient_accumulation_steps=args.ga_steps)
+    ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
+    accelerator = Accelerator(kwargs_handlers=[ddp_kwargs])
     device = accelerator.device
 
     # set-up tensorboard
@@ -74,7 +81,8 @@ if __name__ == '__main__':
     tb_dir = os.path.join('runs', date_time)
     if not os.path.exists(tb_dir):
         os.makedirs(tb_dir, exist_ok=True)
-    writer = SummaryWriter(tb_dir)
+    if accelerator.is_main_process:
+        writer = SummaryWriter(tb_dir)
 
     # create directory for logs and checkpoints
     if not os.path.exists('output'):
@@ -95,12 +103,6 @@ if __name__ == '__main__':
     for arg in vars(args):
         logger.info(f"\t- {arg}: {getattr(args, arg)}")
 
-    logger.info("Loading datasets")
-    train_set = WikiDataset(args.data_dir, 'train')
-    val_set = WikiDataset(args.data_dir, 'val')
-    logger.info(f"Train set size: {len(train_set)}")
-    logger.info(f"Validation set size: {len(val_set)}")
-
     if args.resume:
         logger.info("Loading model")
         try:
@@ -111,8 +113,9 @@ if __name__ == '__main__':
             logger.info("Initializing model from provided model name")
             model = AutoModel.from_pretrained(args.model_name)
         try:
-            classification_head = torch.nn.Linear(
-                model.config.hidden_size * 3, 2)
+            classification_head = Sequential(nn.Linear(model.config.hidden_size * 3, model.config.hidden_size),
+                                             nn.ReLU(),
+                                             nn.Linear(model.config.hidden_size, 2))
             classification_head.load_state_dict(torch.load(os.path.join(
                 args.checkpoint_dir, 'classification_head.pth'), map_location='cpu'))
             logger.info("Classification head loaded from checkpoint directory")
@@ -120,22 +123,32 @@ if __name__ == '__main__':
             logger.info(
                 "Could not load classification head from checkpoint directory")
             logger.info("Initializing classification head with random weights")
-            classification_head = torch.nn.Linear(
-                model.config.hidden_size * 3, 2)
+            classification_head = Sequential(nn.Linear(model.config.hidden_size * 3, model.config.hidden_size),
+                                             nn.ReLU(),
+                                             nn.Linear(model.config.hidden_size, 2))
     else:
         logger.info("Initializing model")
         model = AutoModel.from_pretrained(args.model_name)
-        classification_head = torch.nn.Linear(model.config.hidden_size * 3, 2)
+        classification_head = Sequential(nn.Linear(model.config.hidden_size * 3, model.config.hidden_size),
+                                         nn.ReLU(),
+                                         nn.Linear(model.config.hidden_size, 2))
 
     tokenizer = AutoTokenizer.from_pretrained(args.model_name)
 
     # store model weights to keep track of model distance
     model_weights = torch.cat([param.data.flatten()
-                              for param in model.parameters()])
+                              for param in model.parameters()]).to('cpu')
 
     logger.info("Initializing optimizer")
     optimizer = optim.Adam(model.parameters(), lr=args.lr)
     scheduler = ExponentialLR(optimizer, gamma=args.gamma_lr)
+
+    # add classification head to optimizer
+    optimizer.add_param_group(
+        {'params': classification_head.parameters(), 'lr': args.lr * args.head_lr_factor})
+
+    # define loss
+    loss_fn = nn.CrossEntropyLoss()
 
     def collator(input):
         sources, contexts, targets = [], [], []
@@ -155,7 +168,13 @@ if __name__ == '__main__':
                              truncation=True, return_tensors='pt')
         targets = tokenizer(targets, padding=True,
                             truncation=True, return_tensors='pt')
-        return {'sources': sources, 'contexts': contexts, 'targets': targets, 'labels': labels}
+        return {'sources': sources, 'contexts': contexts, 'targets': targets, 'labels': torch.tensor(labels)}
+
+    logger.info("Loading datasets")
+    train_set = WikiDataset(args.data_dir, 'train')
+    val_set = WikiDataset(args.data_dir, 'val')
+    logger.info(f"Train set size: {len(train_set)}")
+    logger.info(f"Validation set size: {len(val_set)}")
 
     logger.info("Creating dataloaders")
     train_loader = DataLoader(train_set,
@@ -163,17 +182,15 @@ if __name__ == '__main__':
                               shuffle=True,
                               num_workers=args.num_workers,
                               drop_last=True,
-                              collate_fn=collator)
+                              collate_fn=collator,
+                              pin_memory=True)
     val_loader = DataLoader(val_set,
                             batch_size=args.batch_size,
                             shuffle=False,
                             num_workers=args.num_workers,
                             drop_last=True,
-                            collate_fn=collator)
-
-    # prepare all objects with accelerator
-    model, classification_head, optimizer, train_loader, val_loader, scheduler = accelerator.prepare(
-        model, classification_head, optimizer, train_loader, val_loader, scheduler)
+                            collate_fn=collator,
+                            pin_memory=True)
 
     if args.full_freeze_epochs > 0:
         logger.info(
@@ -189,32 +206,39 @@ if __name__ == '__main__':
         for param in model.base_model.encoder.layer[:args.freeze_layers].parameters():
             param.requires_grad = False
 
+    # prepare all objects with accelerator
+    model, classification_head, optimizer, train_loader, val_loader, scheduler = accelerator.prepare(
+        model, classification_head, optimizer, train_loader, val_loader, scheduler)
+
     logger.info("Starting training")
     step = 0
     running_loss = 0
     for epoch in range(args.num_epochs):
-        for data in train_loader:
-            with accelerator.accumulate(model):
-                step += 1
-                embeddings = []
-                for input in ['sources', 'contexts', 'targets']:
-                    output = model(data[input], data[input])
-                    embeddings.append(output['last_hidden_state'][:, 0, :])
-                embeddings = torch.cat(embeddings, dim=1)
-                logits = classification_head(embeddings)
-                loss = F.cross_entropy(logits, data['labels'])
-                # save running loss
-                running_loss += loss.item()
-                # print loss
-                if step % args.print_step == 0:
-                    logger.info(
-                        f"Step {step}: loss = {running_loss / args.print_step}")
-                    writer.add_scalar(
-                        'train/loss', running_loss / args.print_step, step)
-                    running_loss = 0
-                accelerator.backward(loss)
+        for index, data in enumerate(train_loader):
+            step += 1
+            output_source = model(**data['sources'])
+            output_context = model(**data['contexts'])
+            output_target = model(**data['targets'])
+            embeddings = [output_source['last_hidden_state'][:, 0, :],
+                          output_context['last_hidden_state'][:, 0, :],
+                          output_target['last_hidden_state'][:, 0, :]]
+            embeddings = torch.cat(embeddings, dim=1)
+            logits = classification_head(embeddings)
+            loss = loss_fn(logits, data['labels']) / args.ga_steps
+            accelerator.backward(loss)
+            if (index + 1) % args.ga_steps == 0:
                 optimizer.step()
                 optimizer.zero_grad()
+            # save running loss
+            running_loss += loss.item() * args.ga_steps
+            # print loss
+            if step % args.print_step == 0:
+                logger.info(
+                    f"Step {step}: loss = {running_loss / args.print_step}")
+                if accelerator.is_main_process:
+                    writer.add_scalar(
+                        'train/loss', running_loss / args.print_step, step)
+                running_loss = 0
 
             # save model
             if step % args.save_step == 0:
@@ -233,7 +257,7 @@ if __name__ == '__main__':
                 with torch.no_grad():
                     # compare current model weights to initial model weights
                     current_model_weights = torch.cat(
-                        [param.data.flatten() for param in model.parameters()])
+                        [param.data.flatten() for param in model.parameters()]).to('cpu')
                     model_distance = torch.norm(
                         current_model_weights - model_weights)
 
@@ -243,25 +267,38 @@ if __name__ == '__main__':
                     false_neg = 0
                     total = 0
                     running_val_loss = 0
-                    for val_data in val_loader:
-                        val_embeddings = []
-                        for input in ['sources', 'contexts', 'targets']:
-                            output = model(
-                                val_data[input], val_data[input])
-                            val_embeddings.append(
-                                output['last_hidden_state'][:, 0, :])
+                    for j, val_data in (pbar := tqdm(enumerate(val_loader), total=len(val_loader))):
+                        if j % 250 == 0:
+                            pbar.set_description(f"True pos: {true_pos}, True neg: {true_neg}, False pos: {false_pos}, False neg: {false_neg}, Total: {total}")
+                        output_source = model(**val_data['sources'])
+                        output_context = model(**val_data['contexts'])
+                        output_target = model(**val_data['targets'])
+                        val_embeddings = [output_source['last_hidden_state'][:, 0, :],
+                                          output_context['last_hidden_state'][:, 0, :],
+                                          output_target['last_hidden_state'][:, 0, :]]
                         val_embeddings = torch.cat(val_embeddings, dim=1)
                         val_logits = classification_head(val_embeddings)
-                        val_loss = F.cross_entropy(
-                            val_logits, val_data['labels'])
-                        running_val_loss += val_loss.item()
+                        val_loss = loss_fn(val_logits, val_data['labels'])
+
+                        # gather the results from all processes
+                        val_logits = accelerator.pad_across_processes(
+                            val_logits, dim=0, pad_index=-1)
+                        labels = accelerator.pad_across_processes(
+                            val_data['labels'], dim=0, pad_index=-1)
+                        val_logits = accelerator.gather_for_metrics(
+                            val_logits).to('cpu')
+                        labels = accelerator.gather_for_metrics(
+                            labels).to('cpu')
+
+                        val_loss = accelerator.gather_for_metrics(
+                            val_loss).to('cpu')
+                        running_val_loss += val_loss.mean().item()
 
                         # measure true positives, true negatives, false positives, false negatives
                         # use softmax to get probabilities
-                        labels = val_data['labels']
                         probs = torch.softmax(val_logits, dim=1)
                         preds = torch.argmax(probs, dim=1)
-
+                        
                         true_pos += torch.sum((preds == 1)
                                               & (labels == 1)).item()
                         true_neg += torch.sum((preds == 0)
@@ -287,18 +324,20 @@ if __name__ == '__main__':
                     logger.info(f"F1: {f1}")
                     logger.info(f"Validation loss: {running_val_loss}")
                     logger.info(f"Model distance: {model_distance}")
-                    writer.add_scalar('val/accuracy', accuracy, step)
-                    writer.add_scalar('val/precision', precision, step)
-                    writer.add_scalar('val/recall', recall, step)
-                    writer.add_scalar('val/f1', f1, step)
-                    writer.add_scalar('val/loss', running_val_loss, step)
-                    writer.add_scalar('model/distance', model_distance, step)
+                    if accelerator.is_main_process:
+                        writer.add_scalar('val/accuracy', accuracy, step)
+                        writer.add_scalar('val/precision', precision, step)
+                        writer.add_scalar('val/recall', recall, step)
+                        writer.add_scalar('val/f1', f1, step)
+                        writer.add_scalar('val/loss', running_val_loss, step)
+                        writer.add_scalar('model/distance', model_distance, step)
                 model.train()
 
         scheduler.step()
 
         # unfreeze model if necessary
         if epoch + 1 == args.full_freeze_epochs:
+            model = accelerator.unwrap_model(model)
             logger.info(
                 f"Unfreezing model except first {args.freeze_layers} layers")
             for param in model.parameters():
@@ -307,7 +346,9 @@ if __name__ == '__main__':
                 param.requires_grad = False
             for param in model.base_model.encoder.layer[:args.freeze_layers].parameters():
                 param.requires_grad = False
+            model = accelerator.prepare(model)
 
     # close logger
     logger.info("Training finished")
-    writer.close()
+    if accelerator.is_main_process:
+        writer.close()
