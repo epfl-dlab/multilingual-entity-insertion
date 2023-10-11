@@ -16,7 +16,11 @@ if __name__ == '__main__':
                         1, 2, 3, 4, 5, 6], help='Negative sampling strategies: 1) replace source with random source not connected to target, 2) replace source with random source connected to target, 3) replace target with random target not connected to source, 4) replace target with random target connected to source, 5) replace context with random context, 6) replace source section with random section title')
     parser.add_argument('--neg_samples_per_pos', '-n', type=int,
                         default=1, help='Number of negative samples per positive sample')
-
+    parser.add_argument('--max_samples', type=int, default=None,
+                        help='Maximum number of samples to generate')
+    parser.add_argument('--max_val_samples', type=int, default=None, help='Maximum number of validation samples to generate.')
+    parser.add_argument('--max_test_samples', type=int, default=None, help='Maximum number of test samples to generate.')
+    
     args = parser.parse_args()
 
     strategies_map = {1: 'easy_replace_source', 2: 'hard_replace_source', 3: 'easy_replace_target',
@@ -133,11 +137,25 @@ if __name__ == '__main__':
     
     print('Spliting data into train, test, val')
     df = pd.DataFrame(positive_samples + negative_samples)
-    df_train = df.sample(frac=0.8)
-    df_val = df.drop(df_train.index).sample(frac=0.5)
-    df_test = df.drop(df_train.index).drop(df_val.index).sample(frac=1.0)
+    if args.max_samples:
+        df = df.sample(min(args.max_samples, len(df))).reset_index(drop=True)
+
+    if args.max_val_samples and not args.max_test_samples:
+        args.max_test_sample = args.max_val_samples
+    if args.max_test_samples and not args.max_val_samples:
+        args.max_val_sample = args.max_test_samples
     
+    if args.max_val_samples:
+        train_samples = len(df) - args.max_val_samples - args.max_test_samples
+        df_train = df.sample(train_samples)
+        df_val = df.drop(df_train.index).sample(args.max_val_samples)
+        df_test = df.drop(df_train.index).drop(df_val.index).sample(args.max_test_samples)
+    else:
+        df_train = df.sample(frac=0.8)
+        df_val = df.drop(df_train.index).sample(frac=0.5)
+        df_test = df.drop(df_train.index).drop(df_val.index).sample(frac=1.0)
+
     print('Saving data')
-    df_train.reset_index(drop=True).to_parquet(os.path.join(args.output_dir, 'train.parquet'))
-    df_val.reset_index(drop=True).to_parquet(os.path.join(args.output_dir, 'val.parquet'))
-    df_test.reset_index(drop=True).to_parquet(os.path.join(args.output_dir, 'test.parquet')) 
+    df_train.reset_index(drop=True).to_parquet(os.path.join(args.output_dir, 'train', 'train.parquet'))
+    df_val.reset_index(drop=True).to_parquet(os.path.join(args.output_dir, 'val', 'val.parquet'))
+    df_test.reset_index(drop=True).to_parquet(os.path.join(args.output_dir, 'test', 'test.parquet')) 
