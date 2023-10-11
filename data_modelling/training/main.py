@@ -349,8 +349,6 @@ if __name__ == '__main__':
                                           model_distance, step)
                 model.train()
 
-        scheduler.step()
-
         # unfreeze model if necessary
         if epoch + 1 == args.full_freeze_epochs:
             model = accelerator.unwrap_model(model)
