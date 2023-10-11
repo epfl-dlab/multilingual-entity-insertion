@@ -31,19 +31,20 @@ if __name__ == '__main__':
                         required=True, help='Data directory')
     parser.add_argument('--num_epochs', type=int,
                         default=1, help='Number of epochs')
-    parser.add_argument('--batch_size', type=int, default=32,
+    parser.add_argument('--batch_size', type=int, default=4,
                         help='Batch size')
-    parser.add_argument('--num_workers', type=int, default=4,
+    parser.add_argument('--num_workers', type=int, default=16,
                         help='Number of workers for dataloader')
     parser.add_argument('--lr', type=float, default=1e-5, help='Learning rate')
     parser.add_argument('--gamma_lr', type=float,
                         default=0.9, help='Gamma for lr scheduler')
-    parser.add_argument('--print_step', type=int, default=1000,
+    parser.add_argument('--print_steps', type=int, default=1_000,
                         help='Number of steps between printing loss')
-    parser.add_argument('--save_step', type=int, default=5000,
+    parser.add_argument('--save_steps', type=int, default=5_000,
                         help='Number of steps between saving model')
-    parser.add_argument('--eval_step', type=int, default=5000,
+    parser.add_argument('--eval_steps', type=int, default=5_000,
                         help='Number of steps between evaluating model on validation set')
+    parser.add_argument('--scheduler_steps', type=int, default=10_000, help='Number of steps between scheduler steps')
     parser.add_argument('--resume', action='store_true',
                         help='Resume training from checkpoint (needs --checkpoint_dir)')
     parser.add_argument('--checkpoint_dir', type=str,
@@ -52,7 +53,7 @@ if __name__ == '__main__':
                         help='Number of steps for gradient accumulation')
     parser.add_argument('--full_freeze_epochs', type=int, default=0,
                         help='Number of epochs to freeze all lazyers except classification head')
-    parser.add_argument('--freeze_layers', type=int, default=0,
+    parser.add_argument('--freeze_layers', type=int, default=2,
                         help='Number of initial layers to freeze')
     parser.add_argument('--head_lr_factor', type=float, default=1,
                         help='Factor for learning rate of classification head')
@@ -141,11 +142,12 @@ if __name__ == '__main__':
 
     logger.info("Initializing optimizer")
     optimizer = optim.Adam(model.parameters(), lr=args.lr)
-    scheduler = ExponentialLR(optimizer, gamma=args.gamma_lr)
-
     # add classification head to optimizer
     optimizer.add_param_group(
         {'params': classification_head.parameters(), 'lr': args.lr * args.head_lr_factor})
+    
+    # set-up scheduler
+    scheduler = ExponentialLR(optimizer, gamma=args.gamma_lr)
 
     # define loss
     loss_fn = nn.CrossEntropyLoss()
@@ -239,6 +241,9 @@ if __name__ == '__main__':
                     writer.add_scalar(
                         'train/loss', running_loss / args.print_step, step)
                 running_loss = 0
+                
+            if step % args.scheduler_steps == 0:
+                scheduler.step()
 
             # save model
             if step % args.save_step == 0:
