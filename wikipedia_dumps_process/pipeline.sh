@@ -59,6 +59,11 @@ python link_extractor_pool.py \
     --output_dir $output \
     --processes $processes
 
+echo "Running the post-processing script to clean-up the data..."
+python post_processing.py \
+    --input_dir $output \
+    --output_dir $output
+
 # Print the time taken
 end=`date +%s`
 runtime=$((end-start))
