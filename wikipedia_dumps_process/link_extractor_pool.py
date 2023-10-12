@@ -24,6 +24,20 @@ def process_title(title):
     title = urllib.parse.quote(title)
     return title
 
+def invalid_parent(parent):
+    if parent.name in ['table', 'figure', 'sup']:
+        return True
+    if parent.get("class") == ["mw-editsection"]:
+        return True
+    if parent.get("class") == ["side-box-text", "plainlist"]:
+        return True
+    if parent.get("class") == ["legend"]:
+        return True
+    if parent.get("role") == "note" or parent.get("role") == "navigation":
+        return True
+    if parent.get("class") == ["navbox-styles", "nomobile"]:
+        return True
+    return False
 
 def extract_links(source_page):
     raw_html = source_page['HTML']
@@ -150,26 +164,8 @@ def extract_links(source_page):
             test_elements = [parent for parent in tag.parents]
             test_elements += [tag]
             for parent in test_elements:
-                if parent.name in ['table', 'figure']:
-                    skip_text = True
-                    break
-                if parent.get("class") == ["mw-editsection"]:
-                    skip_text = True
-                    break
-                if parent.get("class") == ["mw-editsection"]:
-                    skip_text = True
-                    break
-                if parent.get("class") == ["side-box-text", "plainlist"]:
-                    skip_text = True
-                    break
-                if parent.get("class") == ["legend"]:
-                    skip_text = True
-                    break
-                if parent.get("role") == "note":
-                    skip_text = True
-                    break
-                if parent.get("class") == ["navbox-styles", "nomobile"]:
-                    skip_text = True
+                skip_text = invalid_parent(parent)
+                if skip_text:
                     break
             if not skip_text:
                 if tag.name == 'p' or tag.name == 'dl':
@@ -177,8 +173,14 @@ def extract_links(source_page):
                 elif tag.name == 'li' or tag.name == 'span':
                     section_text[sections[0]] += tag.text + '\n'
                 else:
-                    tags = tag.find_all(['p', 'li', 'dl', 'span'])
+                    tags = tag.find_all(['p', 'li', 'dl', 'span'])    
                     for t in tags:
+                        for parent in t.parents:
+                            skip = invalid_parent(parent)
+                            if skip:
+                                break
+                        if skip:
+                            continue
                         if tag.name == 'p':
                             section_text[sections[0]] += t.text
                         elif tag.name == 'dl' and tag.get("role") != "note" and tag.get("class") != ["navbox-styles", "nomobile"]:
@@ -216,26 +218,8 @@ def extract_links(source_page):
                 # also check if the parents have class "mw-editsection"
                 invalid = False
                 for parent in link.parents:
-                    if parent.name in ['table', 'figure', 'sup']:
-                        invalid = True
-                        break
-                    if parent.get("class") == ["mw-editsection"]:
-                        invalid = True
-                        break
-                    if parent.get("class") == ["mw-editsection"]:
-                        invalid = True
-                        break
-                    if parent.get("class") == ["side-box-text", "plainlist"]:
-                        invalid = True
-                        break
-                    if parent.get("class") == ["legend"]:
-                        invalid = True
-                        break
-                    if parent.get("role") == "note":
-                        invalid = True
-                        break
-                    if parent.get("class") == ["navbox-styles", "nomobile"]:
-                        invalid = True
+                    invalid = invalid_parent(parent)
+                    if invalid:
                         break
 
                 # get the title of the link and the target anchor if it exists
@@ -266,6 +250,8 @@ def extract_links(source_page):
 
                 link_data['source_ID'] = source_page['ID']
                 link_data['source_QID'] = source_page['QID']
+                
+                link_data['link_ID'] = link.get("id")
 
                 # get the text of the link
                 link_data['mention'] = link.text
@@ -398,32 +384,45 @@ def extract_links(source_page):
     # save the last remaining links
     for link in section_links:
         if link['sentence'] is None:
+            link['context_sentence_start_index'] = None
+            link['context_sentence_end_index'] = None
+            link['context_mention_start_index'] = None
+            link['context_mention_end_index'] = None
             link['context'] = None
         else:
             current_text = section_text[sections[0]].strip()
             sentence = link['sentence'].strip()
+            
+            current_text = re.sub(r'\[.*?\]', '', current_text)
+            sentence = re.sub(r'\[.*?\]', '', sentence)
+            current_text = re.sub(r'\n', ' ', current_text)
+            sentence = re.sub(r'\n', ' ', sentence)
+            current_text = re.sub(r' +', ' ', current_text)
+            sentence = re.sub(r' +', ' ', sentence)
+            link['sentence'] = sentence
             try:
-                position = current_text.index(sentence)
+                link['context_sentence_start_index'] = current_text.index(sentence)
+                link['context_sentence_end_index'] = link['context_sentence_start_index'] + len(sentence)
+                link['context_mention_start_index'] = current_text[link['context_sentence_start_index']:].index(link['mention']) + link['context_sentence_start_index']
+                link['context_mention_end_index'] = link['context_mention_start_index'] + len(link['mention'])
             except:
+                link['context_sentence_start_index'] = None
+                link['context_sentence_end_index'] = None
+                link['context_mention_start_index'] = None
+                link['context_mention_end_index'] = None
                 link['context'] = None
             else:
                 # find start and end position for context so that we don't cut words
-                start_position = max(0, position - 1_000)
+                start_position = max(0, link['context_sentence_start_index'] - 1_000)
                 if start_position > 0 and current_text[start_position - 1].isalnum():
                     while current_text[start_position].isalnum():
                         start_position += 1
-                end_position = min(len(current_text), position + len(sentence) + 1_000)
+                end_position = min(len(current_text), link['context_sentence_start_index'] + len(sentence) + 1_000)
                 if end_position < len(current_text) and current_text[end_position].isalnum():
                     while current_text[end_position].isalnum():
                         end_position -= 1
                 
-                context = current_text[start_position:position] + current_text[position + len(
-                    sentence):end_position]
-                context = re.sub(r'\[.*?\]', '', context)
-                context = re.sub(r'\n', ' ', context)
-                context = re.sub(r' +', ' ', context)
-                context = context.strip()
-                link['context'] = context
+                link['context'] = current_text[start_position:end_position]
         found_links.append(link)
 
     return found_links, section_text
@@ -488,9 +487,9 @@ if __name__ == '__main__':
                     f"Processing file {file} at element {j}/{len(df)}")
             for link in page_links:
                 links.append(link)
-            for section in section_text:
-                sections.append(
-                    {'section': section, 'text': section_text[section], 'title': section_text['.']})
+            # for section in section_text:
+            #     sections.append(
+            #         {'section': section, 'text': section_text[section], 'title': section_text['.']})
 
         pool.close()
         pool.join()
@@ -498,5 +497,5 @@ if __name__ == '__main__':
         df_links = pd.DataFrame(links)
         df_links.to_parquet(f"{args.output_dir}/links_{i}.parquet")
 
-        df_sections = pd.DataFrame(sections)
-        df_sections.to_parquet(f"{args.output_dir}/sections_{i}.parquet")
+        # df_sections = pd.DataFrame(sections)
+        # df_sections.to_parquet(f"{args.output_dir}/sections_{i}.parquet")
