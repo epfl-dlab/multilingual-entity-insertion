@@ -32,6 +32,10 @@ if __name__ == '__main__':
                         help='namespace of the wikipedia dump')
     parser.add_argument('--output_dir', type=str,
                         required=True, help='output directory')
+    parser.add_argument('--overwrite', action='store_true', default=False,
+                        help='overwrite existing files')
+
+    parser.set_defaults(overwrite=False)
     args = parser.parse_args()
 
     # check if output directory exists
@@ -49,11 +53,21 @@ if __name__ == '__main__':
 
     url_sql_dump_3 = f"https://dumps.wikimedia.org/{args.lang}wiki/{args.date}/{args.lang}wiki-{args.date}-redirect.sql.gz"
     output_sql_path_3 = f"{args.output_dir}/{args.lang}wiki-{args.date}-redirect.sql.gz"
+    
+    url_xml_dump = f"https://dumps.wikimedia.org/{args.lang}wiki/{args.date}/{args.lang}wiki-{args.date}-pages-meta-history.xml.bz2"
+    output_xml_path = f"{args.output_dir}/{args.lang}wiki-{args.date}-pages-meta-history.xml.bz2"
 
-    download_url(url_html_dump, output_html_path)
-    download_url(url_sql_dump_1, output_sql_path_1)
-    download_url(url_sql_dump_2, output_sql_path_2)
-    download_url(url_sql_dump_3, output_sql_path_3)
+    # check if files exist before downloading
+    if not os.path.exists(output_html_path) or args.overwrite:
+        download_url(url_html_dump, output_html_path)
+    if not os.path.exists(output_sql_path_1) or args.overwrite:
+        download_url(url_sql_dump_1, output_sql_path_1)
+    if not os.path.exists(output_sql_path_2) or args.overwrite:
+        download_url(url_sql_dump_2, output_sql_path_2)
+    if not os.path.exists(output_sql_path_3) or args.overwrite:
+        download_url(url_sql_dump_3, output_sql_path_3)
+    if not os.path.exists(output_xml_path) or args.overwrite:
+        download_url(url_xml_dump, output_xml_path)
 
     # extract the downloaded files (sql)
     print(f'Extracting {output_sql_path_1}')
