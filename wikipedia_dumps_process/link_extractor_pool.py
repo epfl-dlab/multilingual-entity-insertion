@@ -6,6 +6,7 @@ import urllib.parse
 import warnings
 from glob import glob
 from multiprocessing import Pool, cpu_count
+from nltk import sent_tokenize
 
 import lxml
 import pandas as pd
@@ -95,6 +96,16 @@ def extract_links(source_page):
                 # update section, add or trim section list
                 if tag.name == 'h2':
                     # save all the links from this section
+                    current_text = section_text[sections[0]].strip()
+                    current_text = re.sub(r'\[.*?\]', '', current_text)
+                    # current_text = re.sub(r'\n', ' ', current_text)
+                    current_text = re.sub(r' +', ' ', current_text)
+                    temp = current_text.split('\n')
+                    section_sentences = []
+                    for sentence in temp:
+                        for s in sent_tokenize(sentence):
+                            section_sentences.append(s)
+                    first_sentence = 0
                     for link in section_links:
                         if link['sentence'] is None:
                             link['context_sentence_start_index'] = None
@@ -103,39 +114,47 @@ def extract_links(source_page):
                             link['context_mention_end_index'] = None
                             link['context'] = None
                         else:
-                            current_text = section_text[sections[0]].strip()
                             sentence = link['sentence'].strip()
-                            
-                            current_text = re.sub(r'\[.*?\]', '', current_text)
                             sentence = re.sub(r'\[.*?\]', '', sentence)
-                            current_text = re.sub(r'\n', ' ', current_text)
-                            sentence = re.sub(r'\n', ' ', sentence)
-                            current_text = re.sub(r' +', ' ', current_text)
+                            # sentence = re.sub(r'\n', ' ', sentence)
                             sentence = re.sub(r' +', ' ', sentence)
                             link['sentence'] = sentence
                             try:
-                                link['context_sentence_start_index'] = current_text.index(sentence)
-                                link['context_sentence_end_index'] = link['context_sentence_start_index'] + len(sentence)
-                                link['context_mention_start_index'] = current_text[link['context_sentence_start_index']:].index(link['mention']) + link['context_sentence_start_index']
-                                link['context_mention_end_index'] = link['context_mention_start_index'] + len(link['mention'])
+                                for j in range(first_sentence, len(section_sentences)):
+                                    if link['mention'] in section_sentences[j]:
+                                        first_sentence = j
+                                        # use as context the sentence in which the mention is present
+                                        # as well as the 5 previous and 5 next sentences
+                                        context_start = max(0, j - 5)
+                                        context_end = min(len(section_sentences), j + 6)
+                                        link['context'] = ' '.join(section_sentences[context_start:context_end])
+                                        link['context_sentence_start_index'] = link['context'].index(section_sentences[j])
+                                        link['context_sentence_end_index'] = link['context_sentence_start_index'] + len(section_sentences[j])
+                                        link['context_mention_start_index'] = link['context_sentence_start_index'] + section_sentences[j].index(link['mention'])
+                                        link['context_mention_end_index'] = link['context_mention_start_index'] + len(link['mention'])
+                                        break
+                                # link['context_sentence_start_index'] = current_text.index(sentence)
+                                # link['context_sentence_end_index'] = link['context_sentence_start_index'] + len(sentence)
+                                # link['context_mention_start_index'] = current_text[link['context_sentence_start_index']:].index(link['mention']) + link['context_sentence_start_index']
+                                # link['context_mention_end_index'] = link['context_mention_start_index'] + len(link['mention'])
                             except:
                                 link['context_sentence_start_index'] = None
                                 link['context_sentence_end_index'] = None
                                 link['context_mention_start_index'] = None
                                 link['context_mention_end_index'] = None
                                 link['context'] = None
-                            else:
-                                # find start and end position for context so that we don't cut words
-                                start_position = max(0, link['context_sentence_start_index'] - 1_000)
-                                if start_position > 0 and current_text[start_position - 1].isalnum():
-                                    while current_text[start_position].isalnum():
-                                        start_position += 1
-                                end_position = min(len(current_text), link['context_sentence_start_index'] + len(sentence) + 1_000)
-                                if end_position < len(current_text) and current_text[end_position].isalnum():
-                                    while current_text[end_position].isalnum():
-                                        end_position -= 1
+                            # else:
+                                # # find start and end position for context so that we don't cut words
+                                # start_position = max(0, link['context_sentence_start_index'] - 1_000)
+                                # if start_position > 0 and current_text[start_position - 1].isalnum():
+                                #     while current_text[start_position].isalnum():
+                                #         start_position += 1
+                                # end_position = min(len(current_text), link['context_sentence_start_index'] + len(sentence) + 1_000)
+                                # if end_position < len(current_text) and current_text[end_position].isalnum():
+                                #     while current_text[end_position].isalnum():
+                                #         end_position -= 1
                                     
-                                link['context'] = current_text[start_position:end_position]
+                                # link['context'] = current_text[start_position:end_position]
                         found_links.append(link)
                     section_links = []
                     sections = [re.sub(r'\[.*?\]', '', tag.text).strip()]
@@ -169,9 +188,9 @@ def extract_links(source_page):
                     break
             if not skip_text:
                 if tag.name == 'p' or tag.name == 'dl':
-                    section_text[sections[0]] += tag.text
+                    section_text[sections[0]] += tag.text + ' '
                 elif tag.name == 'li' or tag.name == 'span':
-                    section_text[sections[0]] += tag.text + '\n'
+                    section_text[sections[0]] += tag.text + ' \n'
                 else:
                     tags = tag.find_all(['p', 'li', 'dl', 'span'])    
                     for t in tags:
@@ -184,13 +203,13 @@ def extract_links(source_page):
                         if tag.name == 'p':
                             section_text[sections[0]] += t.text
                         elif tag.name == 'dl' and tag.get("role") != "note" and tag.get("class") != ["navbox-styles", "nomobile"]:
-                            section_text[sections[0]] += t.text
+                            section_text[sections[0]] += t.text + ' '
                             break
                         elif tag.name == 'span':
-                            section_text[sections[0]] += t.text + '\n'
+                            section_text[sections[0]] += t.text + ' \n'
                             break
                         else:
-                            section_text[sections[0]] += t.text + '\n'
+                            section_text[sections[0]] += t.text + ' \n'
 
             # find links
             links = tag.find_all('a')
@@ -247,9 +266,10 @@ def extract_links(source_page):
                 else:
                     link_data['target_ID'] = page_ids[link_data['target_title']]['ID']
                     link_data['target_QID'] = page_ids[link_data['target_title']]['QID']
-
+     
                 link_data['source_ID'] = source_page['ID']
                 link_data['source_QID'] = source_page['QID']
+                link_data['source_version'] = source_page['version']
                 
                 link_data['link_ID'] = link.get("id")
 
@@ -382,6 +402,17 @@ def extract_links(source_page):
                 section_links.append(link_data)
 
     # save the last remaining links
+    current_text = section_text[sections[0]].strip()
+    current_text = re.sub(r'\[.*?\]', '', current_text)
+    # current_text = re.sub(r'\n', ' ', current_text)
+    current_text = re.sub(r' +', ' ', current_text)
+
+    temp = current_text.split('\n')
+    section_sentences = []
+    for sentence in temp:
+        for s in sent_tokenize(sentence):
+            section_sentences.append(s)
+    first_sentence = 0
     for link in section_links:
         if link['sentence'] is None:
             link['context_sentence_start_index'] = None
@@ -390,39 +421,49 @@ def extract_links(source_page):
             link['context_mention_end_index'] = None
             link['context'] = None
         else:
-            current_text = section_text[sections[0]].strip()
             sentence = link['sentence'].strip()
-            
-            current_text = re.sub(r'\[.*?\]', '', current_text)
             sentence = re.sub(r'\[.*?\]', '', sentence)
-            current_text = re.sub(r'\n', ' ', current_text)
-            sentence = re.sub(r'\n', ' ', sentence)
-            current_text = re.sub(r' +', ' ', current_text)
+            # sentence = re.sub(r'\n', ' ', sentence)
             sentence = re.sub(r' +', ' ', sentence)
             link['sentence'] = sentence
             try:
-                link['context_sentence_start_index'] = current_text.index(sentence)
-                link['context_sentence_end_index'] = link['context_sentence_start_index'] + len(sentence)
-                link['context_mention_start_index'] = current_text[link['context_sentence_start_index']:].index(link['mention']) + link['context_sentence_start_index']
-                link['context_mention_end_index'] = link['context_mention_start_index'] + len(link['mention'])
+                for j in range(first_sentence, len(section_sentences)):
+                    if link['mention'] in section_sentences[j]:
+                        first_sentence = j
+                        # use as context the sentence in which the mention is present
+                        # as well as the 5 previous and 5 next sentences
+                        context_start = max(0, j - 5)
+                        context_end = min(len(section_sentences), j + 6)
+                        link['context'] = ' '.join(section_sentences[context_start:context_end])
+                        link['context_sentence_start_index'] = link['context'].index(section_sentences[j])
+                        link['context_sentence_end_index'] = link['context_sentence_start_index'] + len(section_sentences[j])
+                        link['context_mention_start_index'] = link['context_sentence_start_index'] + section_sentences[j].index(link['mention'])
+                        link['context_mention_end_index'] = link['context_mention_start_index'] + len(link['mention'])
+                        break
+            # try:
+            #     mention_position = current_text.index(link['mention'])
+            #     link['context_sentence_start_index'] = current_text.index(sentence)
+            #     link['context_sentence_end_index'] = link['context_sentence_start_index'] + len(sentence)
+            #     link['context_mention_start_index'] = current_text[link['context_sentence_start_index']:].index(link['mention']) + link['context_sentence_start_index']
+            #     link['context_mention_end_index'] = link['context_mention_start_index'] + len(link['mention'])
             except:
                 link['context_sentence_start_index'] = None
                 link['context_sentence_end_index'] = None
                 link['context_mention_start_index'] = None
                 link['context_mention_end_index'] = None
                 link['context'] = None
-            else:
-                # find start and end position for context so that we don't cut words
-                start_position = max(0, link['context_sentence_start_index'] - 1_000)
-                if start_position > 0 and current_text[start_position - 1].isalnum():
-                    while current_text[start_position].isalnum():
-                        start_position += 1
-                end_position = min(len(current_text), link['context_sentence_start_index'] + len(sentence) + 1_000)
-                if end_position < len(current_text) and current_text[end_position].isalnum():
-                    while current_text[end_position].isalnum():
-                        end_position -= 1
+            # else:
+            #     # find start and end position for context so that we don't cut words
+            #     start_position = max(0, link['context_sentence_start_index'] - 1_000)
+            #     if start_position > 0 and current_text[start_position - 1].isalnum():
+            #         while current_text[start_position].isalnum():
+            #             start_position += 1
+            #     end_position = min(len(current_text), link['context_sentence_start_index'] + len(sentence) + 1_000)
+            #     if end_position < len(current_text) and current_text[end_position].isalnum():
+            #         while current_text[end_position].isalnum():
+            #             end_position -= 1
                 
-                link['context'] = current_text[start_position:end_position]
+            #     link['context'] = current_text[start_position:end_position]
         found_links.append(link)
 
     return found_links, section_text
