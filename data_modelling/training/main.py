@@ -21,7 +21,6 @@ from torch.nn import Sequential
 
 multiprocess.set_start_method("spawn", force=True)
 
-
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(
         formatter_class=argparse.ArgumentDefaultsHelpFormatter)
@@ -219,6 +218,8 @@ if __name__ == '__main__':
     for epoch in range(args.num_epochs):
         for index, data in enumerate(train_loader):
             step += 1
+            # multiple forward passes accumulate gradients
+            # source: https://discuss.pytorch.org/t/multiple-model-forward-followed-by-one-loss-backward/20868
             output_source = model(**data['sources'])
             output_context = model(**data['contexts'])
             output_target = model(**data['targets'])
