@@ -513,6 +513,7 @@ if __name__ == '__main__':
         file for file in files if args.page_ids not in file and args.redirect_map not in file]
     files.sort()
 
+    mention_map = set([])
     for i, file in (pbar := tqdm(enumerate(files), total=len(files))):
         df = pd.read_parquet(file)
         list_data = []
@@ -528,6 +529,7 @@ if __name__ == '__main__':
                     f"Processing file {file} at element {j}/{len(df)}")
             for link in page_links:
                 links.append(link)
+                mention_map.add(f"{link['mention']}<sep>{link['target_title']}")
             # for section in section_text:
             #     sections.append(
             #         {'section': section, 'text': section_text[section], 'title': section_text['.']})
@@ -540,3 +542,7 @@ if __name__ == '__main__':
 
         # df_sections = pd.DataFrame(sections)
         # df_sections.to_parquet(f"{args.output_dir}/sections_{i}.parquet")
+
+    mention_map = [{'mention': mention.split('<sep>')[0], 'target_title': mention.split('<sep>')[1]} for mention in mention_map]
+    df_mentions = pd.DataFrame(mention_map)
+    df_mentions.to_parquet(f"{args.output_dir}/mention_map.parquet")
