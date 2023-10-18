@@ -9,6 +9,7 @@ class WikiDataset(data.Dataset):
     def __init__(self, data_dir, split):
         super(WikiDataset, self).__init__()
         self.data = self.get_data(data_dir, split)
+        self.split = split
 
     def get_data(self, data_dir, split):
         data_dir = os.path.join(data_dir, split)
@@ -24,4 +25,9 @@ class WikiDataset(data.Dataset):
         return len(self.data)
 
     def __getitem__(self, index):
-        return self.data.iloc[index].to_dict()
+        data = self.data.iloc[index].to_dict()
+        for key in data:
+            if 'index' in key:
+                data[key] = int(data[key])
+        data['split'] = self.split
+        return data
