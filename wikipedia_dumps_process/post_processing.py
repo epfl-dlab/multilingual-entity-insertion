@@ -17,7 +17,7 @@ def simplify_html(html):
 def split_text(x):
     if x is None:
         return 0
-    return len(x.split(' ', 5))
+    return len(x.split(' ', 10))
 
 
 def fix_context(x):

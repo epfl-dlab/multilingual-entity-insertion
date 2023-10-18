@@ -14,16 +14,20 @@ def unencode_title(title):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--input_dir', '-i', type=str,
+    parser.add_argument('--input_dir_train', type=str,
                         required=True, help='Input directory')
-    parser.add_argument('--output_dir', '-o', type=str,
+    parser.add_argument('--input_month2_dir', type=str,
+                        required=True, help='Input directory for second month data')
+    parser.add_argument('--input_dir_val', type=str,
+                        required=True, help='Input directory')
+    parser.add_argument('--output_dir', type=str,
                         required=True, help='Output directory')
     parser.add_argument('--neg_strategies', '-s', type=int, nargs='+', default=[
                         1, 2, 3, 4, 5], help='Negative sampling strategies: 1) replace source with random source not connected to target, 2) replace source with random source connected to target, 3) replace target with random target not connected to source, 4) replace target with random target connected to source, 5) replace context with random context')
     parser.add_argument('--neg_samples_per_pos', '-n', type=int,
                         default=1, help='Number of negative samples per positive sample')
-    parser.add_argument('--max_samples', type=int, default=None,
-                        help='Maximum number of samples to generate')
+    parser.add_argument('--max_train_samples', type=int, default=None,
+                        help='Maximum number of train samples to generate')
     parser.add_argument('--max_val_samples', type=int, default=None,
                         help='Maximum number of validation samples to generate.')
     parser.add_argument('--max_test_samples', type=int, default=None,
@@ -42,36 +46,64 @@ if __name__ == '__main__':
     if not os.path.exists(args.output_dir):
         os.makedirs(args.output_dir)
 
-    if not os.path.exists(args.input_dir):
-        raise ValueError(f'Input directory {args.input_dir} does not exist')
+    if not os.path.exists(args.input_dir_train):
+        raise ValueError(
+            f'Train input directory {args.input_dir_train} does not exist')
+    if not os.path.exists(args.input_dir_val):
+        raise ValueError(
+            f'Validation input directory {args.input_dir_val} does not exist')
 
     print('Loading pages')
-    page_files = glob(os.path.join(args.input_dir, 'good_pages*'))
+    page_files = glob(os.path.join(args.input_dir_train, 'good_pages*')) + \
+        glob(os.path.join(args.input_month2_dir, 'good_pages*'))
     page_files.sort()
     dfs = []
     for file in tqdm(page_files):
         dfs.append(pd.read_parquet(file, columns=['title', 'lead_paragraph']))
     df_pages = pd.concat(dfs)
+    df_pages = df_pages.drop_duplicates(
+        subset=['title']).reset_index(drop=True)
     df_pages['title'] = df_pages['title'].apply(unencode_title)
     df_pages = df_pages.to_dict(orient='records')
 
-    print('Loading links')
-    link_files = glob(os.path.join(args.input_dir, 'good_links*'))
+    print('Loading training links')
+    link_files = glob(os.path.join(args.input_dir_train, 'good_links*'))
     link_files.sort()
     dfs = []
     for file in tqdm(link_files):
         dfs.append(pd.read_parquet(file))
-    df_links = pd.concat(dfs)
-    df_links['source_title'] = df_links['source_title'].apply(unencode_title)
-    df_links['target_title'] = df_links['target_title'].apply(unencode_title)
-    df_links = df_links.to_dict(orient='records')
-    del dfs
-    
+    df_links_train = pd.concat(dfs)
+    df_links_train['source_title'] = df_links_train['source_title'].apply(
+        unencode_title)
+    df_links_train['target_title'] = df_links_train['target_title'].apply(
+        unencode_title)
+    df_links_train = df_links_train.to_dict(orient='records')
+
+    print('Loading validation links')
+    df_links_val = pd.read_parquet(os.path.join(
+        args.input_dir_val, 'val_links.parquet'))
+    df_links_val['source_title'] = df_links_val['source_title'].apply(
+        unencode_title)
+    df_links_val['target_title'] = df_links_val['target_title'].apply(
+        unencode_title)
+    df_links_val = df_links_val.to_dict(orient='records')
+
     print('Loading mention map')
-    mention_map = pd.read_parquet(os.path.join(args.input_dir, 'mention_map.parquet'))
-    mention_map = mention_map.to_dict(orient='records')
+    mention_map_1 = pd.read_parquet(os.path.join(
+        args.input_dir_train, 'mention_map.parquet'))
+    mention_map_1 = mention_map_1.to_dict(orient='records')
+    mention_map_2 = pd.read_parquet(os.path.join(
+        args.input_month2_dir, 'mention_map.parquet'))
+    mention_map_2 = mention_map_2.to_dict(orient='records')
     entity_map = {}
-    for row in mention_map:
+    for row in mention_map_1:
+        title = unencode_title(row['target_title'])
+        mention = row['mention']
+        if title in entity_map:
+            entity_map[title].add(mention)
+        else:
+            entity_map[title] = set([mention])
+    for row in mention_map_2:
         title = unencode_title(row['target_title'])
         mention = row['mention']
         if title in entity_map:
@@ -83,14 +115,13 @@ if __name__ == '__main__':
     print('\tProcessing links')
     source_to_all_targets = {}
     target_to_all_sources = {}
-    for row in tqdm(df_links):
+    for row in tqdm(df_links_train + df_links_val):
         source = row['source_title']
         target = row['target_title']
         source_section = row['source_section'].split('<sep>')[0]
         if source not in source_to_all_targets:
             source_to_all_targets[source] = []
-        source_to_all_targets[source].append(
-            {'target': target, 'section': source_section})
+        source_to_all_targets[source].append(target)
         if target not in target_to_all_sources:
             target_to_all_sources[target] = []
         target_to_all_sources[target].append(source)
@@ -100,24 +131,50 @@ if __name__ == '__main__':
                   for row in tqdm(df_pages)}
 
     print('Generating positive samples')
-    positive_samples = [{
+    positive_samples_train = [{
         'source_title': row['source_title'],
         'source_lead': page_leads[row['source_title']],
         'target_title': row['target_title'],
         'target_lead': page_leads[row['target_title']],
         'link_context': row['context'],
         'source_section': row['source_section'].split('<sep>')[0],
+        'context_span_start_index': row['context_span_start_index'],
+        'context_span_end_index': row['context_span_end_index'],
         'context_sentence_start_index': row['context_sentence_start_index'],
         'context_sentence_end_index': row['context_sentence_end_index'],
         'context_mention_start_index': row['context_mention_start_index'],
         'context_mention_end_index': row['context_mention_end_index'],
         'label': 1,
         'neg_type': 'none'
-    } for row in tqdm(df_links)]
+    } for row in tqdm(df_links_train)]
+
+    positive_samples_val = []
+    for row in tqdm(df_links_val):
+        try:
+            positive_samples_val.append({
+                'source_title': row['source_title'],
+                'source_lead': page_leads[row['source_title']],
+                'target_title': row['target_title'],
+                'target_lead': page_leads[row['target_title']],
+                'link_context': row['context'],
+                'source_section': row['source_section'].split('<sep>')[0],
+                'context_span_start_index': row['context_span_start_index'],
+                'context_span_end_index': row['context_span_end_index'],
+                'context_sentence_start_index': row['context_sentence_start_index'],
+                'context_sentence_end_index': row['context_sentence_end_index'],
+                'context_mention_start_index': row['context_mention_start_index'],
+                'context_mention_end_index': row['context_mention_end_index'],
+                'label': 1,
+                'neg_type': 'none',
+                'noise_strategy': row['noise_strategy']
+            })
+        except:
+            print(
+                f"Couldn't find {row['target_title']} from {row['source_title']}")
 
     print('Generating negative samples')
-    negative_samples = []
-    for sample in tqdm(positive_samples):
+    negative_samples_train = []
+    for sample in tqdm(positive_samples_train):
         valid_strategies = strategies.copy()
         if len(source_to_all_targets[sample['source_title']]) == 1 and 'hard_replace_target' in valid_strategies:
             valid_strategies.remove('hard_replace_target')
@@ -129,19 +186,19 @@ if __name__ == '__main__':
         for strategy in list_strategies:
             new_sample = sample.copy()
             if strategy == 'easy_replace_source':
-                new_source = random.choices(positive_samples, k=1)[
+                new_source = random.choices(positive_samples_train, k=1)[
                     0]['source_title']
                 while new_source in target_to_all_sources[sample['target_title']]:
-                    new_source = random.choices(positive_samples, k=1)[
+                    new_source = random.choices(positive_samples_train, k=1)[
                         0]['source_title']
                 new_sample['source_title'] = new_source
                 new_sample['source_lead'] = page_leads[new_source]
                 new_sample['neg_type'] = 'easy_replace_source'
             elif strategy == 'easy_replace_target':
-                new_target = random.choices(positive_samples, k=1)[
+                new_target = random.choices(positive_samples_train, k=1)[
                     0]['target_title']
                 while new_target in source_to_all_targets[sample['source_title']]:
-                    new_target = random.choices(positive_samples, k=1)[
+                    new_target = random.choices(positive_samples_train, k=1)[
                         0]['target_title']
                 new_sample['target_title'] = new_target
                 new_sample['target_lead'] = page_leads[new_target]
@@ -163,63 +220,159 @@ if __name__ == '__main__':
                     if not found:
                         safe_targets.append(target)
                 if len(safe_targets) == 0:
-                    new_target = random.choices(positive_samples, k=1)[
+                    new_target = random.choices(positive_samples_train, k=1)[
                         0]['target_title']
                     while new_target in source_to_all_targets[sample['source_title']]:
                         new_target = new_target = random.choices(
-                            positive_samples, k=1)[0]['target_title']
+                            positive_samples_train, k=1)[0]['target_title']
                 else:
                     new_target = random.choices(safe_targets, k=1)[0]
                 new_sample['target_title'] = new_target
                 new_sample['target_lead'] = page_leads[new_target]
                 new_sample['neg_type'] = 'hard_replace_target'
             elif strategy == 'replace_context':
-                new_context = random.choices(positive_samples, k=1)[
+                new_context = random.choices(positive_samples_train, k=1)[
                     0]['link_context']
-                mentions = []
-                for mention in entity_map[sample['target_title']]:
-                    mentions.append(mention)
                 while True:
                     found = False
                     for mention in entity_map[new_sample['target_title']]:
+                        if mention == '':
+                            continue
                         if mention in new_context:
                             found = True
                             break
                     if not found:
                         break
-                    new_context = random.choices(positive_samples, k=1)[
+                    new_context = random.choices(positive_samples_train, k=1)[
                         0]['link_context']
                 new_sample['link_context'] = new_context
                 new_sample['neg_type'] = 'replace_context'
             new_sample['label'] = 0
             new_samples.append(new_sample)
-        negative_samples.extend(new_samples)
+        negative_samples_train.extend(new_samples)
 
-    print('Spliting data into train, test, val')
-    df = pd.DataFrame(positive_samples + negative_samples)
-    if args.max_samples:
-        df = df.sample(min(args.max_samples, len(df))).reset_index(drop=True)
-
-    if args.max_val_samples and not args.max_test_samples:
-        args.max_test_samples = args.max_val_samples
-    if args.max_test_samples and not args.max_val_samples:
-        args.max_val_samples = args.max_test_samples
-
-    if args.max_val_samples:
-        train_samples = len(df) - args.max_val_samples - args.max_test_samples
-        df_train = df.sample(train_samples)
-        df_val = df.drop(df_train.index).sample(args.max_val_samples)
-        df_test = df.drop(df_train.index).drop(
-            df_val.index).sample(args.max_test_samples)
-    else:
-        df_train = df.sample(frac=0.8)
-        df_val = df.drop(df_train.index).sample(frac=0.5)
-        df_test = df.drop(df_train.index).drop(df_val.index).sample(frac=1.0)
+    negative_samples_val = []
+    for sample in tqdm(positive_samples_val):
+        valid_strategies = strategies.copy()
+        if len(source_to_all_targets[sample['source_title']]) == 1 and 'hard_replace_target' in valid_strategies:
+            valid_strategies.remove('hard_replace_target')
+        if len(target_to_all_sources[sample['target_title']]) == 1 and 'hard_replace_source' in valid_strategies:
+            valid_strategies.remove('hard_replace_source')
+        list_strategies = random.choices(
+            valid_strategies, k=args.neg_samples_per_pos)
+        new_samples = []
+        for strategy in list_strategies:
+            new_sample = sample.copy()
+            if strategy == 'easy_replace_source':
+                new_source = random.choices(positive_samples_val, k=1)[
+                    0]['source_title']
+                while new_source in target_to_all_sources[sample['target_title']]:
+                    new_source = random.choices(positive_samples_val, k=1)[
+                        0]['source_title']
+                new_sample['source_title'] = new_source
+                new_sample['source_lead'] = page_leads[new_source]
+                new_sample['neg_type'] = 'easy_replace_source'
+            elif strategy == 'easy_replace_target':
+                new_target = random.choices(positive_samples_val, k=1)[
+                    0]['target_title']
+                while new_target in source_to_all_targets[sample['source_title']]:
+                    new_target = random.choices(positive_samples_val, k=1)[
+                        0]['target_title']
+                new_sample['target_title'] = new_target
+                new_sample['target_lead'] = page_leads[new_target]
+                new_sample['neg_type'] = 'easy_replace_target'
+            elif strategy == 'hard_replace_source':
+                new_source_section = random.choices(
+                    target_to_all_sources[sample['target_title']], k=1)[0]
+                new_sample['source_title'] = new_source_section
+                new_sample['source_lead'] = page_leads[new_source_section]
+                new_sample['neg_type'] = 'hard_replace_source'
+            elif strategy == 'hard_replace_target':
+                safe_targets = []
+                for target in source_to_all_targets[sample['source_title']]:
+                    found = False
+                    for mention in entity_map[target]:
+                        if mention in sample['link_context']:
+                            found = True
+                            break
+                    if not found:
+                        safe_targets.append(target)
+                if len(safe_targets) == 0:
+                    new_target = random.choices(positive_samples_val, k=1)[
+                        0]['target_title']
+                    while new_target in source_to_all_targets[sample['source_title']]:
+                        new_target = new_target = random.choices(
+                            positive_samples_val, k=1)[0]['target_title']
+                else:
+                    new_target = random.choices(safe_targets, k=1)[0]
+                new_sample['target_title'] = new_target
+                new_sample['target_lead'] = page_leads[new_target]
+                new_sample['neg_type'] = 'hard_replace_target'
+            elif strategy == 'replace_context':
+                new_context = random.choices(positive_samples_val, k=1)[
+                    0]['link_context']
+                while True:
+                    found = False
+                    for mention in entity_map[new_sample['target_title']]:
+                        if mention == '':
+                            continue
+                        if mention in new_context:
+                            found = True
+                            break
+                    if not found:
+                        break
+                    new_context = random.choices(positive_samples_val, k=1)[
+                        0]['link_context']
+                new_sample['link_context'] = new_context
+                new_sample['neg_type'] = 'replace_context' 
+            new_sample['label'] = 0
+            new_samples.append(new_sample)
+        negative_samples_val.extend(new_samples)
 
     print('Saving data')
-    df_train.reset_index(drop=True).to_parquet(
-        os.path.join(args.output_dir, 'train', 'train.parquet'))
-    df_val.reset_index(drop=True).to_parquet(
-        os.path.join(args.output_dir, 'val', 'val.parquet'))
-    df_test.reset_index(drop=True).to_parquet(
-        os.path.join(args.output_dir, 'test', 'test.parquet'))
+    df_train = pd.DataFrame(positive_samples_train + negative_samples_train)
+    df_train = df_train.sample(
+        n=min(args.max_train_samples, len(df_train))).reset_index(drop=True)
+
+    df_val_full = pd.DataFrame(positive_samples_val + negative_samples_val).sample(frac=1).reset_index(drop=True)
+    if args.max_val_samples and not args.max_test_samples:
+        args.max_test_samples = len(df_val_full) - args.max_val_samples
+    if args.max_test_samples and not args.max_val_samples:
+        args.max_val_samples = len(df_val_full) - args.max_test_samples
+
+    if args.max_val_samples and args.max_test_samples:
+        if args.max_val_samples + args.max_test_samples > len(df_val_full):
+            # keep the same ratio
+            val_samples = int(len(df_val_full) * args.max_val_samples /
+                              (args.max_val_samples + args.max_test_samples))
+            test_samples = len(df_val_full) - val_samples
+        else:
+            val_samples = args.max_val_samples
+            test_samples = args.max_test_samples
+    elif args.max_val_samples:
+        val_samples = args.max_val_samples
+        test_samples = len(df_val_full) - val_samples
+    elif args.max_test_samples:
+        test_samples = args.max_test_samples
+        val_samples = len(df_val_full) - test_samples
+    else:
+        val_samples = int(len(df_val_full) * 0.5)
+        test_samples = len(df_val_full) - val_samples
+
+    df_val = df_val_full.sample(n=val_samples)
+    df_test = df_val_full.drop(df_val.index).sample(n=test_samples)
+
+    df_val = df_val.reset_index(drop=True)
+    df_test = df_test.reset_index(drop=True)
+
+    # create directories if they don't exist
+    if not os.path.exists(os.path.join(args.output_dir, 'train')):
+        os.makedirs(os.path.join(args.output_dir, 'train'))
+    if not os.path.exists(os.path.join(args.output_dir, 'val')):
+        os.makedirs(os.path.join(args.output_dir, 'val'))
+    if not os.path.exists(os.path.join(args.output_dir, 'test')):
+        os.makedirs(os.path.join(args.output_dir, 'test'))
+    df_train.to_parquet(os.path.join(
+        args.output_dir, 'train', 'train.parquet'))
+    df_val.to_parquet(os.path.join(args.output_dir, 'val', 'val.parquet'))
+    df_test.to_parquet(os.path.join(args.output_dir, 'test', 'test.parquet'))
