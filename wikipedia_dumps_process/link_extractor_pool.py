@@ -103,7 +103,8 @@ def extract_links(source_page):
                         current_text = re.sub(r'\[.*?\]', '', current_text)
                         # current_text = re.sub(r'\n', ' ', current_text)
                         current_text = re.sub(r' +', ' ', current_text)
-                        temp = [elem.strip() + "\n" for elem in current_text.split('\n') if elem != '']
+                        temp = [
+                            elem.strip() + "\n" for elem in current_text.split('\n') if elem != '']
                         if temp:
                             temp[-1] = temp[-1][:-1]
                         section_sentences = []
@@ -129,11 +130,10 @@ def extract_links(source_page):
                             else:
                                 sentence = link['sentence'].strip()
                                 sentence = re.sub(r'\[.*?\]', '', sentence)
-                                # sentence = re.sub(r'\n', ' ', sentence)
                                 sentence = re.sub(r' +', ' ', sentence)
                                 link['sentence'] = sentence
                                 for j in range(first_sentence, len(section_sentences)):
-                                    if link['mention'] in section_sentences[j]:
+                                    if re.search(r"\b" + re.escape(link['mention']) + r"\b", section_sentences[j]) is not None:
                                         first_sentence = j
                                         # use as context the sentence in which the mention is present
                                         # as well as the 5 previous and 5 next sentences
@@ -142,6 +142,8 @@ def extract_links(source_page):
                                             len(section_sentences), j + 6)
                                         link['context'] = re.sub(r' +', ' ', ' '.join(
                                             section_sentences[context_start:context_end]))
+                                        link['context'] = re.sub(
+                                            r'\n +', '\n', link['context'])
                                         link['context_sentence_start_index'] = link['context'].index(
                                             section_sentences[j])
                                         link['context_sentence_end_index'] = link['context_sentence_start_index'] + len(
@@ -151,7 +153,7 @@ def extract_links(source_page):
                                                 link['mention'])
                                         link['context_mention_end_index'] = link['context_mention_start_index'] + len(
                                             link['mention'])
-                                        
+
                                         # find the occurrences of the previous and the next \n
                                         # they delimit the span
                                         context_span_start_index = link['context'][:link['context_mention_start_index']].rfind(
@@ -163,7 +165,8 @@ def extract_links(source_page):
                                         else:
                                             context_span_start_index += 1
                                         if context_span_end_index == -1:
-                                            context_span_end_index = len(link['context'])
+                                            context_span_end_index = len(
+                                                link['context'])
                                         else:
                                             context_span_end_index += link['context_mention_end_index']
                                         link['context_span_start_index'] = context_span_start_index
@@ -426,7 +429,8 @@ def extract_links(source_page):
         # current_text = re.sub(r'\n', ' ', current_text)
         current_text = re.sub(r' +', ' ', current_text)
 
-        temp = [line.strip() + '\n' for line in current_text.split('\n') if line != '']
+        temp = [line.strip() + '\n' for line in current_text.split('\n')
+                if line != '']
         if temp:
             temp[-1] = temp[-1][:-1]
         section_sentences = []
@@ -456,7 +460,7 @@ def extract_links(source_page):
                 sentence = re.sub(r' +', ' ', sentence)
                 link['sentence'] = sentence
                 for j in range(first_sentence, len(section_sentences)):
-                    if link['mention'] in section_sentences[j]:
+                    if re.search(r"\b" + re.escape(link['mention']) + r"\b", section_sentences[j]) is not None:
                         first_sentence = j
                         # use as context the sentence in which the mention is present
                         # as well as the 5 previous and 5 next sentences
@@ -539,6 +543,7 @@ if __name__ == '__main__':
     files.sort()
 
     mention_map = set([])
+    pool = Pool(min(cpu_count(), args.processes), initializer=initializer)
     for i, file in (pbar := tqdm(enumerate(files), total=len(files))):
         df = pd.read_parquet(file)
         list_data = []
@@ -547,7 +552,6 @@ if __name__ == '__main__':
         links = []
         sections = []
 
-        pool = Pool(min(cpu_count(), args.processes), initializer=initializer)
         for j, (page_links, section_text) in enumerate(pool.imap(extract_links, list_data)):
             if j % 1000 == 0:
                 pbar.set_description(
@@ -560,14 +564,14 @@ if __name__ == '__main__':
             #     sections.append(
             #         {'section': section, 'text': section_text[section], 'title': section_text['.']})
 
-        pool.close()
-        pool.join()
-
         df_links = pd.DataFrame(links)
         df_links.to_parquet(f"{args.output_dir}/links_{i}.parquet")
 
         # df_sections = pd.DataFrame(sections)
         # df_sections.to_parquet(f"{args.output_dir}/sections_{i}.parquet")
+
+    pool.close()
+    pool.join()
 
     mention_map = [{'mention': mention.split('<sep>')[0], 'target_title': mention.split(
         '<sep>')[1]} for mention in mention_map]
