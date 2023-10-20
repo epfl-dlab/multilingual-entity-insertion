@@ -48,12 +48,7 @@ if __name__ == '__main__':
         temp_df['HTML'] = temp_df['HTML'].apply(
             lambda x: simplify_html(x))  # simpify html so it is not too big
         dfs.append(temp_df)
-    df_pages = pd.concat(dfs)
-
-    # dfs = []
-    # for file in tqdm(link_files):
-    #     dfs.append(pd.read_parquet(file))
-    # df_links = pd.concat(dfs)
+    df_pages = pd.concat(dfs).reset_index(drop=True)
 
     print('Saving good pages')
     for file in tqdm(page_files):
@@ -61,6 +56,7 @@ if __name__ == '__main__':
         df = df[(~df['QID'].isna()) & (~df['HTML'].isna()) & (~df['lead_paragraph'].isna()) & (df['HTML'] != '') & (
             df['lead_paragraph'] != '') & (df['lead_paragraph'].apply(lambda x: split_text(x) >= 6))]
         df = df.reset_index(drop=True)
+        df = df.drop(columns=['HTML'])
         basename = os.path.basename(file)
         df.to_parquet(os.path.join(args.output_dir,
                       basename.replace('pages', 'good_pages')))

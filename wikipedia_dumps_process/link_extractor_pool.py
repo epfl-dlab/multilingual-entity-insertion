@@ -560,15 +560,15 @@ if __name__ == '__main__':
                 links.append(link)
                 mention_map.add(
                     f"{link['mention']}<sep>{link['target_title']}")
-            # for section in section_text:
-            #     sections.append(
-            #         {'section': section, 'text': section_text[section], 'title': section_text['.']})
+            for section in section_text:
+                sections.append(
+                    {'section': section, 'text': section_text[section], 'title': section_text['.']})
 
         df_links = pd.DataFrame(links)
         df_links.to_parquet(f"{args.output_dir}/links_{i}.parquet")
 
-        # df_sections = pd.DataFrame(sections)
-        # df_sections.to_parquet(f"{args.output_dir}/sections_{i}.parquet")
+        df_sections = pd.DataFrame(sections)
+        df_sections.to_parquet(f"{args.output_dir}/sections_{i}.parquet")
 
     pool.close()
     pool.join()
