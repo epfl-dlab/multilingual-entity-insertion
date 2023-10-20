@@ -1,7 +1,11 @@
-training/datasets/*
-!training/datasets/.gitkeep
-!training/datasets/dummy_generator.ipynb
+training_classification/datasets/*
+!training_classification/datasets/.gitkeep
+!training_classification/datasets/dummy_generator.ipynb
+training_classification/output/*
+training_classification/runs/*
 
-training/output/*
-
-training/runs/*
+training_ranking/datasets/*
+!training_ranking/datasets/.gitkeep
+!training_ranking/datasets/dummy_generator.ipynb
+training_ranking/output/*
+training_ranking/runs/*

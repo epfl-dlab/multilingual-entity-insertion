@@ -10,7 +10,7 @@ class WikiDataset(data.Dataset):
         super(WikiDataset, self).__init__()
         self.data = self.get_data(data_dir, split)
         self.split = split
-
+        
     def get_data(self, data_dir, split):
         data_dir = os.path.join(data_dir, split)
         files = glob(os.path.join(data_dir, '*.parquet'))
@@ -19,6 +19,7 @@ class WikiDataset(data.Dataset):
             df = pd.read_parquet(file)
             dfs.append(df)
         df = pd.concat(dfs)
+        df = df.reset_index(drop=True)
         return df
 
     def __len__(self):
