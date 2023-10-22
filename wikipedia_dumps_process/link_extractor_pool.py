@@ -84,7 +84,7 @@ def extract_links(source_page):
     depth = [0, 0, 0]
     sections = ["Lead"]
     section_links = []
-    section_text = {'.': source_page['title'], 'Lead': ''}
+    section_text = {'Lead': {'text': '', 'depth': 0, 'title': source_page['title']}}
     search_index_link = 0
     # iterate through all tags
     for section in content.children:
@@ -99,7 +99,7 @@ def extract_links(source_page):
                 if tag.name == 'h2':
                     if section_links:
                         # save all the links from this section
-                        current_text = section_text[sections[0]].strip()
+                        current_text = section_text[sections[0]]['text'].strip()
                         current_text = re.sub(r'\[.*?\]', '', current_text)
                         # current_text = re.sub(r'\n', ' ', current_text)
                         current_text = re.sub(r' +', ' ', current_text)
@@ -110,7 +110,27 @@ def extract_links(source_page):
                         section_sentences = []
                         for sentence in temp:
                             new_sentences = []
-                            for s in sent_tokenize(sentence):
+                            split_sentences = sent_tokenize(sentence)
+                            clean_split_sentences = []
+                            i = 0
+                            while i < len(split_sentences):
+                                if len(split_sentences[i]) < 10:
+                                    if i > 0 and i < len(split_sentences) - 1:
+                                        clean_split_sentences[-1] += ' ' + split_sentences[i] + ' ' + split_sentences[i+1]
+                                        i += 2
+                                    elif i == 0 and i < len(split_sentences) - 1:
+                                        clean_split_sentences.append(split_sentences[i] + ' ' + split_sentences[i+1])
+                                        i += 2
+                                    elif i > 0 and i == len(split_sentences) - 1:
+                                        clean_split_sentences[-1] += ' ' + split_sentences[i]
+                                        i += 1
+                                    else:
+                                        clean_split_sentences.append(split_sentences[i])
+                                        i += 1
+                                else:
+                                    clean_split_sentences.append(split_sentences[i])
+                                    i += 1
+                            for s in clean_split_sentences:
                                 new_sentences.append(s)
                             if new_sentences:
                                 new_sentences[-1] += '\n'
@@ -176,10 +196,11 @@ def extract_links(source_page):
                             found_links.append(link)
                     section_links = []
                     sections = [re.sub(r'\[.*?\]', '', tag.text).strip()]
-                    section_text[sections[0]] = re.sub(
+                    section_text[sections[0]] = {}
+                    section_text[sections[0]]['text'] = re.sub(
                         r'\[.*?\]', '', tag.text).strip() + '\n'
-                    if sections[0] not in section_text:
-                        section_text[sections[0]] = ''
+                    section_text[sections[0]]['depth'] = depth[0] + 1
+                    section_text[sections[0]]['title'] = source_page['title']
                     depth[0] += 1
                     depth[1] = 0
                     depth[2] = 0
@@ -188,14 +209,12 @@ def extract_links(source_page):
                         [re.sub(r'\[.*?\]', '', tag.text).strip()]
                     depth[1] += 1
                     depth[2] = 0
-                    section_text[sections[0]
-                                 ] += re.sub(r'\[.*?\]', '', tag.text).strip() + '\n'
+                    section_text[sections[0]]['text'] += re.sub(r'\[.*?\]', '', tag.text).strip() + '\n'
                 elif tag.name == 'h4':
                     sections = sections[:2] + \
                         [re.sub(r'\[.*?\]', '', tag.text).strip()]
                     depth[2] += 1
-                    section_text[sections[0]
-                                 ] += re.sub(r'\[.*?\]', '', tag.text).strip() + '\n'
+                    section_text[sections[0]]['text'] += re.sub(r'\[.*?\]', '', tag.text).strip() + '\n'
                 if sections in [["Notes"], ["References"], ["Sources"], ["External links"], ["Further reading"], ["Other websites"], ["Sources and references"]]:
                     break
 
@@ -209,9 +228,9 @@ def extract_links(source_page):
                     break
             if not skip_text:
                 if tag.name == 'p' or tag.name == 'dl':
-                    section_text[sections[0]] += tag.text + ' '
+                    section_text[sections[0]]['text'] += urllib.parse.unquote(tag.text).replace('_', ' ') + ' '
                 elif tag.name == 'li' or tag.name == 'span':
-                    section_text[sections[0]] += tag.text + ' \n'
+                    section_text[sections[0]]['text'] += urllib.parse.unquote(tag.text).replace('_', ' ') + ' \n'
                 else:
                     tags = tag.find_all(['p', 'li', 'dl', 'span'])
                     for t in tags:
@@ -222,15 +241,15 @@ def extract_links(source_page):
                         if skip:
                             continue
                         if tag.name == 'p':
-                            section_text[sections[0]] += t.text
+                            section_text[sections[0]]['text'] += urllib.parse.unquote(t.text).replace('_', ' ') + ' '
                         elif tag.name == 'dl' and tag.get("role") != "note" and tag.get("class") != ["navbox-styles", "nomobile"]:
-                            section_text[sections[0]] += t.text + ' '
+                            section_text[sections[0]]['text'] += urllib.parse.unquote(t.text).replace('_', ' ') + ' '
                             break
                         elif tag.name == 'span':
-                            section_text[sections[0]] += t.text + ' \n'
+                            section_text[sections[0]]['text'] += urllib.parse.unquote(t.text).replace('_', ' ') + ' \n'
                             break
                         else:
-                            section_text[sections[0]] += t.text + ' \n'
+                            section_text[sections[0]]['text'] += urllib.parse.unquote(t.text).replace('_', ' ') + ' \n'
 
             # find links
             links = tag.find_all('a')
@@ -424,7 +443,7 @@ def extract_links(source_page):
 
     if section_links:
         # save the last remaining links
-        current_text = section_text[sections[0]].strip()
+        current_text = section_text[sections[0]]['text'].strip()
         current_text = re.sub(r'\[.*?\]', '', current_text)
         # current_text = re.sub(r'\n', ' ', current_text)
         current_text = re.sub(r' +', ' ', current_text)
@@ -562,7 +581,7 @@ if __name__ == '__main__':
                     f"{link['mention']}<sep>{link['target_title']}")
             for section in section_text:
                 sections.append(
-                    {'section': section, 'text': section_text[section], 'title': section_text['.']})
+                    {'section': section, 'text': section_text[section]['text'], 'depth': section_text[section]['depth'], 'title': section_text[section]['title']})
 
         df_links = pd.DataFrame(links)
         df_links.to_parquet(f"{args.output_dir}/links_{i}.parquet")

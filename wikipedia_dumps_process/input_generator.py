@@ -1,4 +1,5 @@
 import argparse
+from calendar import c
 import pandas as pd
 import os
 from glob import glob
@@ -7,6 +8,8 @@ import random
 import urllib.parse
 from nltk import sent_tokenize
 import re
+from multiprocessing import Pool, cpu_count
+import math
 
 
 def unencode_title(title):
@@ -23,6 +26,39 @@ def get_strategies(link, strategies, k):
     list_strategies = random.choices(
         valid_strategies, k=k)
     return list_strategies
+
+
+def construct_negative_samples(positive_samples, neg_samples, page_sections):
+    pages = list(page_sections.keys())
+    negative_samples = []
+    for sample in tqdm(positive_samples):
+        list_strategies = get_strategies(
+            sample, strategies, neg_samples)
+        new_samples = []
+        for strategy in list_strategies:
+            new_sample = sample.copy()
+            if strategy == 'easy_replace_source':
+                new_sample = easy_replace_source(
+                    new_sample, positive_samples)
+            elif strategy == 'easy_replace_target':
+                new_sample = easy_replace_target(
+                    new_sample, positive_samples)
+            elif strategy == 'hard_replace_source':
+                new_sample = hard_replace_source(new_sample)
+            elif strategy == 'hard_replace_target':
+                new_sample = hard_replace_target(
+                    new_sample, positive_samples)
+            elif strategy == 'easy_replace_context':
+                new_sample = easy_replace_context(
+                    new_sample, page_sections, pages)
+            elif strategy == 'hard_replace_context':
+                new_sample = hard_replace_context(
+                    new_sample, page_sections, pages)
+
+            new_sample['label'] = 0
+            new_samples.append(new_sample)
+        negative_samples.extend(new_samples)
+    return negative_samples
 
 
 def easy_replace_source(link, all_links):
@@ -79,31 +115,126 @@ def hard_replace_target(link, all_links):
     return link
 
 
-def easy_replace_context(link, page_sections):
+def easy_replace_context(link, page_sections, pages):
     while True:
-        new_file = random.choices(page_sections.keys(), k=1)[0]
-        while new_file == link['source_title']:
-            new_file = random.choices(page_sections.keys(), k=1)[0]
-        new_section = random.choices(page_sections[new_file].keys(), k=1)[0]
-        middle_sentence_index = random.randint(
-            0, len(page_sections[new_file][new_section]) - 1)
-        new_context = " ".join(page_sections[new_file][new_section][max(
-            0, middle_sentence_index - 5):min(middle_sentence_index + 6, len(page_sections[new_file][new_section]))])
-
-        found = False
-        for mention in entity_map[link['target_title']]:
-            if mention in new_context:
-                found = True
-                break
-        if not found:
+        new_file = random.choices(pages, k=1)[0]
+        if new_file == link['source_title']:
+            continue
+        new_context = replace_context(new_file, link['target_title'], int(link['depth'].split('.')[0]), page_sections)
+        if new_context is not None:
             break
     link['link_context'] = new_context
     link['neg_type'] = 'easy_replace_context'
     return link
 
 
+def hard_replace_context(link, page_sections, pages):
+    new_context = replace_context(link['source_title'], link['target_title'], int(link['depth'].split('.')[0]), page_sections)
+    if new_context is None:
+        link = easy_replace_context(link, page_sections, pages)
+        link['neg_type'] = 'easy_replace_context'
+    else:
+        link['link_context'] = new_context
+        link['neg_type'] = 'hard_replace_context'
+    return link
+
+
+def replace_context(source_title, target_title, source_depth, page_sections):
+    valid_section_ranges = {}
+    for key in page_sections[source_title]:
+        good_sentences = []
+        for i, sentence in enumerate(page_sections[source_title][key]['sentences']):
+            found = False
+            for mention in entity_map[target_title]:
+                if mention in sentence and mention != '':
+                    found = True
+                    break
+            if not found:
+                good_sentences.append(i)
+        if not good_sentences:
+            continue
+        # find all the consecutive ranges in the good sentences
+        # store them as a list of tuples (start, end)
+        ranges = []
+        if len(good_sentences) > 0:
+            start = good_sentences[0]
+            end = good_sentences[0]
+            for i in range(1, len(good_sentences)):
+                if good_sentences[i] == end + 1:
+                    end = good_sentences[i]
+                else:
+                    if end > start:
+                        ranges.append((start, end))
+                    start = good_sentences[i]
+                    end = good_sentences[i]
+            if end > start:
+                ranges.append((start, end))
+        if ranges:
+            valid_section_ranges[key] = {}
+            valid_section_ranges[key]['ranges'] = ranges
+            valid_section_ranges[key]['depth'] = page_sections[source_title][key]['depth']
+    
+    if len(valid_section_ranges) == 0:
+        return None
+    else:
+        keys = list(valid_section_ranges.keys())
+        weights = [1 / (abs(valid_section_ranges[key]['depth'] - source_depth) + 1) for key in keys]
+        new_section = random.choices(keys, weights=weights, k=1)[0]
+        new_sentence_range = random.choices(
+            valid_section_ranges[new_section]['ranges'], k=1)[0]
+        new_sentence_index = random.randint(new_sentence_range[0], new_sentence_range[1])
+        new_context = " ".join(page_sections[source_title][new_section]['sentences'][max(
+            new_sentence_range[0], new_sentence_index - 5):min(new_sentence_index + 6, new_sentence_range[1] + 1)])
+        return new_context
+
+
+def extract_sections(row):
+    title = row['title']
+    text = row['text']
+    section = row['section'].split('<sep>')[0]
+    depth = row['depth']
+    page = {'title': title, 'section': section, 'sentences': [], 'depth': depth}
+    text = text.strip()
+    text = re.sub(r'\[.*?\]', '', text)
+    text = re.sub(r' +', ' ', text)
+    sentences = [elem.strip() + '\n' for elem in text.split('\n')
+                 if elem.strip() != '']
+    if sentences:
+        sentences[-1] = sentences[-1][:-1]
+    for sentence in sentences:
+        split_sentences = sent_tokenize(sentence)
+        clean_split_sentences = []
+        i = 0
+        while i < len(split_sentences):
+            if len(split_sentences[i]) < 10:
+                if i > 0 and i < len(split_sentences) - 1:
+                    clean_split_sentences[-1] += ' ' + split_sentences[i] + ' ' + split_sentences[i+1]
+                    i += 2
+                elif i == 0 and i < len(split_sentences) - 1:
+                    clean_split_sentences.append(split_sentences[i] + ' ' + split_sentences[i+1])
+                    i += 2
+                elif i > 0 and i == len(split_sentences) - 1:
+                    clean_split_sentences[-1] += ' ' + split_sentences[i]
+                    i += 1
+                else:
+                    clean_split_sentences.append(split_sentences[i])
+                    i += 1
+            else:
+                clean_split_sentences.append(split_sentences[i])
+                i += 1
+        for s in clean_split_sentences:
+            s = s.strip()
+            s = re.sub(' +', ' ', s)
+            s = re.sub('\n+', '\n', s)
+            s = re.sub('\n +', '\n', s)
+            if s:
+                page['sentences'].append(s)
+    return page
+
+
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument('--input_dir_train', type=str,
                         required=True, help='Input directory')
     parser.add_argument('--input_month2_dir', type=str,
@@ -124,7 +255,10 @@ if __name__ == '__main__':
                         help='Maximum number of validation samples to generate.')
     parser.add_argument('--max_test_samples', type=int, default=None,
                         help='Maximum number of test samples to generate.')
+    parser.add_argument('--join_samples', action='store_true',
+                        help='Join positive and its negative samples into one row')
 
+    parser.set_defaults(join_samples=False)
     args = parser.parse_args()
 
     strategies_map = {1: 'easy_replace_source', 2: 'hard_replace_source', 3: 'easy_replace_target',
@@ -213,6 +347,8 @@ if __name__ == '__main__':
     for row in mention_map_1:
         title = unencode_title(row['target_title'])
         mention = row['mention']
+        if mention == '':
+            continue
         if title in entity_map:
             entity_map[title].add(mention)
         else:
@@ -220,6 +356,8 @@ if __name__ == '__main__':
     for row in mention_map_2:
         title = unencode_title(row['target_title'])
         mention = row['mention']
+        if mention == '':
+            continue
         if title in entity_map:
             entity_map[title].add(mention)
         else:
@@ -246,50 +384,28 @@ if __name__ == '__main__':
 
     print('\tProcessing sections')
     page_sections_train = {}
-    for row in tqdm(df_sections_train):
-        title = row['title']
-        text = row['text']
-        section = row['section'].split('<sep>')[0]
+    pool = Pool(20)
+    for output in tqdm(pool.imap_unordered(extract_sections, df_sections_train), total=len(df_sections_train)):
+        title = output['title']
+        section = output['section']
+        sentences = output['sentences']
+        depth = output['depth']
         if title not in page_sections_train:
             page_sections_train[title] = {}
         if section not in page_sections_train[title]:
-            page_sections_train[title][section] = []
-        text = text.strip()
-        text = re.sub(r'\[.*?\]', '', text)
-        text = re.sub(r' +', ' ', text)
-        sentences = [elem.strip() + '\n' for elem in text.split('\n')
-                     if elem.strip() != '']
-        if sentences:
-            sentences[-1] = sentences[-1][:-1]
-        for sentence in sentences:
-            for s in sent_tokenize(sentence):
-                s = s.strip()
-                s = re.sub(' +', ' ', s)
-                s = re.sub('\n+', '\n', s)
-                s = re.sub('\n +', '\n', s)
-                if s:
-                    page_sections_train[title][section].append(s)
+            page_sections_train[title][section] = {'depth': depth, 'sentences': []}
+        page_sections_train[title][section]['sentences'].extend(sentences)
+
     page_sections_val = {}
-    for row in tqdm(df_sections_val):
-        title = row['title']
-        text = row['text']
+    for output in tqdm(pool.imap_unordered(extract_sections, df_sections_val), total=len(df_sections_val)):
+        title = output['title']
+        section = output['section']
+        sentences = output['sentences']
         if title not in page_sections_val:
-            page_sections_val[title] = []
-        text = text.strip()
-        text = re.sub(r'\[.*?\]', '', text)
-        text = re.sub(r' +', ' ', text)
-        sentences = [elem.strip() + '\n' for elem in text.split('\n')
-                     if elem.strip() != '']
-        if sentences:
-            sentences[-1] = sentences[-1][:-1]
-        for sentence in sentences:
-            for s in sent_tokenize(sentence):
-                s = s.strip()
-                s = re.sub(' +', ' ', s)
-                s = re.sub('\n+', '\n', s)
-                s = re.sub('\n +', '\n', s)
-                if s:
-                    page_sections_val[title].append(s)
+            page_sections_val[title] = {}
+        if section not in page_sections_val[title]:
+            page_sections_val[title][section] = {'depth': depth, 'sentences': []}
+        page_sections_val[title][section]['sentences'].extend(sentences)
 
     print('Generating positive samples')
     positive_samples_train = [{
@@ -306,8 +422,10 @@ if __name__ == '__main__':
         'context_mention_start_index': row['context_mention_start_index'],
         'context_mention_end_index': row['context_mention_end_index'],
         'label': 1,
-        'neg_type': 'none'
+        'neg_type': 'none',
+        'depth': row['link_section_depth'],
     } for row in tqdm(df_links_train)]
+    random.shuffle(positive_samples_train)
 
     positive_samples_val = []
     for row in tqdm(df_links_val):
@@ -327,77 +445,75 @@ if __name__ == '__main__':
                 'context_mention_end_index': row['context_mention_end_index'],
                 'label': 1,
                 'neg_type': 'none',
-                'noise_strategy': row['noise_strategy']
+                'noise_strategy': row['noise_strategy'],
+                'depth': row['link_section_depth'],
             })
         except:
             print(
                 f"Couldn't find {row['target_title']} from {row['source_title']}")
+    random.shuffle(positive_samples_val)
+
+    if not args.max_train_samples:
+        args.max_train_samples = len(
+            positive_samples_train) * (1 + args.neg_samples_train)
+
+    if not args.max_val_samples and not args.max_test_samples:
+        args.max_val_samples = len(
+            positive_samples_val) * (1 + args.neg_samples_val) // 2
+        args.max_test_samples = len(
+            positive_samples_val) * (1 + args.neg_samples_val) // 2
+    elif not args.max_test_samples:
+        args.max_test_samples = len(
+            positive_samples_val) * (1 + args.neg_samples_val) - args.max_val_samples
+    elif not args.max_val_samples:
+        args.max_val_samples = len(
+            positive_samples_val) * (1 + args.neg_samples_val) - args.max_test_samples
+
+    if len(positive_samples_train) * (1 + args.neg_samples_train) > args.max_train_samples:
+        positive_samples_train = random.sample(
+            positive_samples_train, math.ceil(
+                args.max_train_samples / (1 + args.neg_samples_train))
+        )
+    if len(positive_samples_val) * (1 + args.neg_samples_val) > args.max_val_samples:
+        positive_samples_val = random.sample(
+            positive_samples_val, math.ceil(
+                args.max_val_samples / (1 + args.neg_samples_val))
+        )
 
     print('Generating negative samples')
-    negative_samples_train = []
-    for sample in tqdm(positive_samples_train):
-        list_strategies = get_strategies(
-            sample, strategies, args.neg_samples_train)
-        new_samples = []
-        for strategy in list_strategies:
-            new_sample = sample.copy()
-            if strategy == 'easy_replace_source':
-                new_sample = easy_replace_source(
-                    new_sample, positive_samples_train)
-            elif strategy == 'easy_replace_target':
-                new_sample = easy_replace_target(
-                    new_sample, positive_samples_train)
-            elif strategy == 'hard_replace_source':
-                new_sample = hard_replace_source(new_sample)
-            elif strategy == 'hard_replace_target':
-                new_sample = hard_replace_target(
-                    new_sample, positive_samples_train)
-            elif strategy == 'easy_replace_context':
-                new_sample = easy_replace_context(
-                    new_sample, page_sections_train)
-            elif strategy == 'hard_replace_context':
-                new_sample = hard_replace_context(
-                    new_sample, page_sections_train)
-
-            new_sample['label'] = 0
-            new_samples.append(new_sample)
-        negative_samples_train.extend(new_samples)
-
-    negative_samples_val = []
-    for sample in tqdm(positive_samples_val):
-        list_strategies = get_strategies(
-            sample, strategies, args.neg_samples_val)
-        new_samples = []
-        for strategy in list_strategies:
-            new_sample = sample.copy()
-            if strategy == 'easy_replace_source':
-                new_sample = easy_replace_source(
-                    new_sample, positive_samples_val)
-            elif strategy == 'easy_replace_target':
-                new_sample = easy_replace_target(
-                    new_sample, positive_samples_val)
-            elif strategy == 'hard_replace_source':
-                new_sample = hard_replace_source(new_sample)
-            elif strategy == 'hard_replace_target':
-                new_sample = hard_replace_target(
-                    new_sample, positive_samples_val)
-            elif strategy == 'easy_replace_context':
-                new_sample = easy_replace_context(
-                    new_sample, page_sections_val)
-            elif strategy == 'hard_replace_context':
-                new_sample = hard_replace_context(
-                    new_sample, page_sections_val)
-            new_sample['label'] = 0
-            new_samples.append(new_sample)
-        negative_samples_val.extend(new_samples)
+    negative_samples_train = construct_negative_samples(
+        positive_samples_train, args.neg_samples_train, page_sections_train)
+    negative_samples_val = construct_negative_samples(
+        positive_samples_val, args.neg_samples_val, page_sections_val)
 
     print('Saving data')
-    df_train = pd.DataFrame(positive_samples_train + negative_samples_train)
-    df_train = df_train.sample(
-        n=min(args.max_train_samples, len(df_train))).reset_index(drop=True)
+    if not args.join_samples:
+        df_train = pd.DataFrame(
+            positive_samples_train + negative_samples_train)
+        df_train = df_train.sample(
+            n=min(args.max_train_samples, len(df_train))).reset_index(drop=True)
 
-    df_val_full = pd.DataFrame(
-        positive_samples_val + negative_samples_val).sample(frac=1).reset_index(drop=True)
+        df_val_full = pd.DataFrame(
+            positive_samples_val + negative_samples_val).sample(frac=1).reset_index(drop=True)
+    else:
+        full_samples_train = positive_samples_train.copy()
+        for i, sample in enumerate(negative_samples_train):
+            true_index = i // args.neg_samples_train
+            rel_index = i % args.neg_samples_train
+            keys = ['link_context', 'label', 'neg_type', 'noise_strategy']
+            for key in keys:
+                full_samples_train[true_index][f'{key}_neg_{rel_index}'] = sample[key]
+        df_train = pd.DataFrame(full_samples_train)
+
+        full_samples_val = positive_samples_val.copy()
+        for i, sample in enumerate(negative_samples_val):
+            true_index = i // args.neg_samples_val
+            rel_index = i % args.neg_samples_val
+            keys = ['link_context', 'label', 'neg_type', 'noise_strategy']
+            for key in keys:
+                full_samples_val[true_index][f'{key}_neg_{rel_index}'] = sample[key]
+        df_val_full = pd.DataFrame(full_samples_val)
+
     if args.max_val_samples and not args.max_test_samples:
         args.max_test_samples = len(df_val_full) - args.max_val_samples
     if args.max_test_samples and not args.max_val_samples:
@@ -439,3 +555,6 @@ if __name__ == '__main__':
         args.output_dir, 'train', 'train.parquet'))
     df_val.to_parquet(os.path.join(args.output_dir, 'val', 'val.parquet'))
     df_test.to_parquet(os.path.join(args.output_dir, 'test', 'test.parquet'))
+
+    pool.close()
+    pool.join()
