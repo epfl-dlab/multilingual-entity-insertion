@@ -120,21 +120,25 @@ def easy_replace_context(link, page_sections, pages):
         new_file = random.choices(pages, k=1)[0]
         if new_file == link['source_title']:
             continue
-        new_context = replace_context(new_file, link['target_title'], int(link['depth'].split('.')[0]), page_sections)
+        new_context = replace_context(new_file, link['target_title'], int(
+            link['depth'].split('.')[0]), page_sections)
         if new_context is not None:
             break
-    link['link_context'] = new_context
+    link['link_context'] = new_context['context']
+    link['source_section'] = new_context['section']
     link['neg_type'] = 'easy_replace_context'
     return link
 
 
 def hard_replace_context(link, page_sections, pages):
-    new_context = replace_context(link['source_title'], link['target_title'], int(link['depth'].split('.')[0]), page_sections)
+    new_context = replace_context(link['source_title'], link['target_title'], int(
+        link['depth'].split('.')[0]), page_sections)
     if new_context is None:
         link = easy_replace_context(link, page_sections, pages)
         link['neg_type'] = 'easy_replace_context'
     else:
-        link['link_context'] = new_context
+        link['link_context'] = new_context['context']
+        link['source_section'] = new_context['section']
         link['neg_type'] = 'hard_replace_context'
     return link
 
@@ -142,6 +146,9 @@ def hard_replace_context(link, page_sections, pages):
 def replace_context(source_title, target_title, source_depth, page_sections):
     valid_section_ranges = {}
     for key in page_sections[source_title]:
+        # don't sample from the same section
+        if page_sections[source_title][key]['depth'] == source_depth:
+            continue
         good_sentences = []
         for i, sentence in enumerate(page_sections[source_title][key]['sentences']):
             found = False
@@ -173,19 +180,21 @@ def replace_context(source_title, target_title, source_depth, page_sections):
             valid_section_ranges[key] = {}
             valid_section_ranges[key]['ranges'] = ranges
             valid_section_ranges[key]['depth'] = page_sections[source_title][key]['depth']
-    
+
     if len(valid_section_ranges) == 0:
         return None
     else:
         keys = list(valid_section_ranges.keys())
-        weights = [1 / (abs(valid_section_ranges[key]['depth'] - source_depth) + 1) for key in keys]
+        weights = [1 / abs(valid_section_ranges[key]
+                           ['depth'] - source_depth) for key in keys]
         new_section = random.choices(keys, weights=weights, k=1)[0]
         new_sentence_range = random.choices(
             valid_section_ranges[new_section]['ranges'], k=1)[0]
-        new_sentence_index = random.randint(new_sentence_range[0], new_sentence_range[1])
+        new_sentence_index = random.randint(
+            new_sentence_range[0], new_sentence_range[1])
         new_context = " ".join(page_sections[source_title][new_section]['sentences'][max(
             new_sentence_range[0], new_sentence_index - 5):min(new_sentence_index + 6, new_sentence_range[1] + 1)])
-        return new_context
+        return {'context': new_context, 'section': new_section}
 
 
 def extract_sections(row):
@@ -193,7 +202,10 @@ def extract_sections(row):
     text = row['text']
     section = row['section'].split('<sep>')[0]
     depth = row['depth']
-    page = {'title': title, 'section': section, 'sentences': [], 'depth': depth}
+    page = {'title': title, 'section': section,
+            'sentences': [], 'depth': depth}
+    if section in ['Notes', 'References', 'Sources', 'External links', 'Further reading', 'Other websites', 'Sources and references']:
+        return page
     text = text.strip()
     text = re.sub(r'\[.*?\]', '', text)
     text = re.sub(r' +', ' ', text)
@@ -208,10 +220,12 @@ def extract_sections(row):
         while i < len(split_sentences):
             if len(split_sentences[i]) < 10:
                 if i > 0 and i < len(split_sentences) - 1:
-                    clean_split_sentences[-1] += ' ' + split_sentences[i] + ' ' + split_sentences[i+1]
+                    clean_split_sentences[-1] += ' ' + \
+                        split_sentences[i] + ' ' + split_sentences[i+1]
                     i += 2
                 elif i == 0 and i < len(split_sentences) - 1:
-                    clean_split_sentences.append(split_sentences[i] + ' ' + split_sentences[i+1])
+                    clean_split_sentences.append(
+                        split_sentences[i] + ' ' + split_sentences[i+1])
                     i += 2
                 elif i > 0 and i == len(split_sentences) - 1:
                     clean_split_sentences[-1] += ' ' + split_sentences[i]
@@ -390,10 +404,13 @@ if __name__ == '__main__':
         section = output['section']
         sentences = output['sentences']
         depth = output['depth']
+        if not sentences:
+            continue
         if title not in page_sections_train:
             page_sections_train[title] = {}
         if section not in page_sections_train[title]:
-            page_sections_train[title][section] = {'depth': depth, 'sentences': []}
+            page_sections_train[title][section] = {
+                'depth': depth, 'sentences': []}
         page_sections_train[title][section]['sentences'].extend(sentences)
 
     page_sections_val = {}
@@ -401,11 +418,15 @@ if __name__ == '__main__':
         title = output['title']
         section = output['section']
         sentences = output['sentences']
+        depth = output['depth']
         if title not in page_sections_val:
             page_sections_val[title] = {}
         if section not in page_sections_val[title]:
-            page_sections_val[title][section] = {'depth': depth, 'sentences': []}
+            page_sections_val[title][section] = {
+                'depth': depth, 'sentences': []}
         page_sections_val[title][section]['sentences'].extend(sentences)
+    pool.close()
+    pool.join()
 
     print('Generating positive samples')
     positive_samples_train = [{
@@ -502,7 +523,10 @@ if __name__ == '__main__':
             rel_index = i % args.neg_samples_train
             keys = ['link_context', 'label', 'neg_type', 'noise_strategy']
             for key in keys:
-                full_samples_train[true_index][f'{key}_neg_{rel_index}'] = sample[key]
+                if key in sample:
+                    full_samples_train[true_index][f'{key}_neg_{rel_index}'] = sample[key]
+                else:
+                    full_samples_train[true_index][f'{key}_neg_{rel_index}'] = None
         df_train = pd.DataFrame(full_samples_train)
 
         full_samples_val = positive_samples_val.copy()
@@ -511,7 +535,10 @@ if __name__ == '__main__':
             rel_index = i % args.neg_samples_val
             keys = ['link_context', 'label', 'neg_type', 'noise_strategy']
             for key in keys:
-                full_samples_val[true_index][f'{key}_neg_{rel_index}'] = sample[key]
+                if key in sample:
+                    full_samples_val[true_index][f'{key}_neg_{rel_index}'] = sample[key]
+                else:
+                    full_samples_val[true_index][f'{key}_neg_{rel_index}'] = None
         df_val_full = pd.DataFrame(full_samples_val)
 
     if args.max_val_samples and not args.max_test_samples:
@@ -555,6 +582,3 @@ if __name__ == '__main__':
         args.output_dir, 'train', 'train.parquet'))
     df_val.to_parquet(os.path.join(args.output_dir, 'val', 'val.parquet'))
     df_test.to_parquet(os.path.join(args.output_dir, 'test', 'test.parquet'))
-
-    pool.close()
-    pool.join()
