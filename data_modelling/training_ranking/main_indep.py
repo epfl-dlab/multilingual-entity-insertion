@@ -1,5 +1,6 @@
 import argparse
 import logging
+from operator import is_
 import os
 import time
 import random
@@ -116,10 +117,10 @@ if __name__ == '__main__':
         writer = SummaryWriter(tb_dir)
 
     # create directory for logs and checkpoints
-    if not os.path.exists('output'):
-        os.makedirs('output', exist_ok=True)
+    if not os.path.exists('output_indep'):
+        os.makedirs('output_indep', exist_ok=True)
 
-    output_dir = os.path.join('output', date_time)
+    output_dir = os.path.join('output_indep', date_time)
     if not os.path.exists(output_dir):
         os.makedirs(output_dir, exist_ok=True)
 
@@ -183,11 +184,11 @@ if __name__ == '__main__':
     loss_fn = nn.CrossEntropyLoss()
 
     def collator(input):
-        sources, contexts, targets = [], [], []
-        labels = []
-        noises = []
-        negatives = []
+        output = {'sources': [], 'contexts': [], 'targets': [], 'noises': []}
         if input[0]['split'] == 'train':
+            for i in range(args.neg_samples_train):
+                output[f"contexts_neg_{i}"] = []
+                output[f"strategy_neg_{i}"] = []
             for item in input:
                 found = False
                 if (item['link_context'][:item['context_span_start_index']] + item['link_context'][item['context_span_end_index']:]).strip() != '':
@@ -229,42 +230,61 @@ if __name__ == '__main__':
                 context_input = f"{item['source_section']}{tokenizer.sep_token}{item['link_context']}"
                 target_input = f"{item['target_title']}{tokenizer.sep_token}{item['target_lead']}"
 
-                noises.append(noise_map[noise_type])
-                if item['neg_type'] is not None and item['neg_type'] != 'none':
-                    negatives.append(neg_map[item['neg_type']])
-                else:
-                    negatives.append(-1)
-                sources.append(source_input)
-                contexts.append(context_input)
-                targets.append(target_input)
-                labels.append(item['label'])
-
+                output['noises'].append(noise_map[noise_type])
+                output['sources'].append(source_input)
+                output['contexts'].append(context_input)
+                output['targets'].append(target_input)
+                for i in range(args.neg_samples_train):
+                    source_section_neg = item[f"source_section_neg_{i}"]
+                    link_context_neg = item[f"link_context_neg_{i}"]
+                    context_input = f"{source_section_neg}{tokenizer.sep_token}{link_context_neg}"
+                    output[f"contexts_neg_{i}"].append(context_input)
+                    output[f"strategy_neg_{i}"].append(
+                        neg_map[item[f'neg_type_neg_{i}']])
         else:
+            for i in range(args.neg_samples_eval):
+                output[f"contexts_neg_{i}"] = []
+                output[f"strategy_neg_{i}"] = []
             for item in input:
                 source_input = f"{item['source_title']}{tokenizer.sep_token}{item['source_lead']}"
                 context_input = f"{item['source_section']}{tokenizer.sep_token}{item['link_context']}"
                 target_input = f"{item['target_title']}{tokenizer.sep_token}{item['target_lead']}"
-                noises.append(noise_map[item['noise_strategy']])
-                if item['neg_type'] is not None and item['neg_type'] != 'none':
-                    negatives.append(neg_map[item['neg_type']])
-                else:
-                    negatives.append(-1)
-                sources.append(source_input)
-                contexts.append(context_input)
-                targets.append(target_input)
-                labels.append(item['label'])
+                output['noises'].append(noise_map[item['noise_strategy']])
+                output['sources'].append(source_input)
+                output['contexts'].append(context_input)
+                output['targets'].append(target_input)
+                for i in range(args.neg_samples_eval):
+                    source_section_neg = item[f"source_section_neg_{i}"]
+                    link_context_neg = item[f"link_context_neg_{i}"]
+                    context_input = f"{source_section_neg}{tokenizer.sep_token}{link_context_neg}"
+                    output[f"contexts_neg_{i}"].append(context_input)
+                    output[f"strategy_neg_{i}"].append(
+                        neg_map[item[f'neg_type_neg_{i}']])
 
-        sources = tokenizer(sources, padding=True, truncation=True,
-                            return_tensors='pt', max_length=args.max_tokens)
-        contexts = tokenizer(contexts, padding=True, truncation=True,
-                             return_tensors='pt', max_length=args.max_tokens)
-        targets = tokenizer(targets, padding=True, truncation=True,
-                            return_tensors='pt', max_length=args.max_tokens)
-        return {'sources': sources, 'contexts': contexts, 'targets': targets, 'labels': torch.tensor(labels), 'noise_strategy': torch.tensor(noises), 'neg_type': torch.tensor(negatives)}
+        output['sources'] = tokenizer(
+            output['sources'], padding=True, truncation=True, return_tensors='pt', max_length=args.max_tokens)
+        output['targets'] = tokenizer(
+            output['targets'], padding=True, truncation=True, return_tensors='pt', max_length=args.max_tokens)
+        output['contexts'] = tokenizer(
+            output['contexts'], padding=True, truncation=True, return_tensors='pt', max_length=args.max_tokens)
+        output['noises'] = torch.tensor(output['noises'])
+        if input[0]['split'] == 'train':
+            for i in range(args.neg_samples_train):
+                output[f"contexts_neg_{i}"] = tokenizer(
+                    output[f"contexts_neg_{i}"], padding=True, truncation=True, return_tensors='pt', max_length=args.max_tokens)
+                output[f"strategy_neg_{i}"] = torch.tensor(
+                    output[f"strategy_neg_{i}"])
+        else:
+            for i in range(args.neg_samples_eval):
+                output[f"contexts_neg_{i}"] = tokenizer(
+                    output[f"contexts_neg_{i}"], padding=True, truncation=True, return_tensors='pt', max_length=args.max_tokens)
+                output[f"strategy_neg_{i}"] = torch.tensor(
+                    output[f"strategy_neg_{i}"])
+        return output
 
     logger.info("Loading datasets")
-    train_set = WikiDataset(args.data_dir, 'train')
-    val_set = WikiDataset(args.data_dir, 'val')
+    train_set = WikiDataset(args.data_dir, 'train', args.neg_samples_train)
+    val_set = WikiDataset(args.data_dir, 'val', args.neg_samples_eval)
     logger.info(f"Train set size: {len(train_set)}")
     logger.info(f"Validation set size: {len(val_set)}")
 
@@ -311,14 +331,24 @@ if __name__ == '__main__':
             # multiple forward passes accumulate gradients
             # source: https://discuss.pytorch.org/t/multiple-model-forward-followed-by-one-loss-backward/20868
             output_source = model(**data['sources'])
-            output_context = model(**data['contexts'])
+            output_context_pos = model(**data['contexts'])
             output_target = model(**data['targets'])
-            embeddings = [output_source['last_hidden_state'][:, 0, :],
-                          output_context['last_hidden_state'][:, 0, :],
-                          output_target['last_hidden_state'][:, 0, :]]
-            embeddings = torch.cat(embeddings, dim=1)
-            logits = classification_head(embeddings)
-            loss = loss_fn(logits, data['labels']) / args.ga_steps
+            embeddings_pos = [output_source['last_hidden_state'][:, 0, :],
+                              output_context_pos['last_hidden_state'][:, 0, :],
+                              output_target['last_hidden_state'][:, 0, :]]
+            embeddings_pos = torch.cat(embeddings_pos, dim=1)
+            logits = classification_head(embeddings_pos)
+            loss = loss_fn(logits, torch.ones(logits.shape[0]).long().to(
+                device)) / args.ga_steps / (args.neg_samples_train + 1)
+            for i in range(args.neg_samples_train):
+                output_context_neg = model(**data[f"contexts_neg_{i}"])
+                embeddings_neg = [output_source['last_hidden_state'][:, 0, :],
+                                  output_context_neg['last_hidden_state'][:, 0, :],
+                                  output_target['last_hidden_state'][:, 0, :]]
+                embeddings_neg = torch.cat(embeddings_neg, dim=1)
+                logits = classification_head(embeddings_neg)
+                loss += loss_fn(logits, torch.zeros(logits.shape[0]).long().to(
+                    device)) / args.ga_steps / (args.neg_samples_train + 1)
             accelerator.backward(loss)
             if (index + 1) % args.ga_steps == 0:
                 optimizer.step()
@@ -367,6 +397,9 @@ if __name__ == '__main__':
                     true_neg = 0
                     false_pos = 0
                     false_neg = 0
+                    mrr_at_k = {'1': 0, '5': 0, '10': 0}
+                    hits_at_k = {'1': 0, '5': 0, '10': 0}
+                    ndcg_at_k = {'1': 0, '5': 0, '10': 0}
                     total = 0
                     noise_perf = {i: {'true_pos': 0, 'true_neg': 0, 'false_pos': 0,
                                       'false_neg': 0, 'total': 0} for i in range(len(noise_map))}
@@ -375,7 +408,7 @@ if __name__ == '__main__':
 
                     running_val_loss = 0
                     for j, val_data in (pbar := tqdm(enumerate(val_loader), total=len(val_loader))):
-                        if j % 250 == 0:
+                        if j % 20 == 0:
                             pbar.set_description(
                                 f"True pos: {true_pos}, True neg: {true_neg}, False pos: {false_pos}, False neg: {false_neg}, Total: {total}")
                         output_source = model(**val_data['sources'])
@@ -386,36 +419,100 @@ if __name__ == '__main__':
                                           output_target['last_hidden_state'][:, 0, :]]
                         val_embeddings = torch.cat(val_embeddings, dim=1)
                         val_logits = classification_head(val_embeddings)
-                        val_loss = loss_fn(val_logits, val_data['labels'])
+                        val_loss = loss_fn(val_logits, torch.ones(
+                            val_logits.shape[0]).long().to(device)) / (args.neg_samples_eval + 1)
+
+                        val_logits_negs = []
+                        neg_strategies = []
+                        for i in range(args.neg_samples_eval):
+                            neg_strategies.append(
+                                val_data[f"strategy_neg_{i}"])
+                            output_context_neg = model(
+                                **val_data[f"contexts_neg_{i}"])
+                            val_embeddings_neg = [output_source['last_hidden_state'][:, 0, :],
+                                                  output_context_neg['last_hidden_state'][:, 0, :],
+                                                  output_target['last_hidden_state'][:, 0, :]]
+                            val_embeddings_neg = torch.cat(
+                                val_embeddings_neg, dim=1)
+                            val_logits_neg = classification_head(
+                                val_embeddings_neg)
+                            val_logits_negs.append(val_logits_neg)
+                            val_loss += loss_fn(val_logits_neg, torch.zeros(
+                                val_logits_neg.shape[0]).long().to(device)) / (args.neg_samples_eval + 1)
 
                         # gather the results from all processes
                         val_logits = accelerator.pad_across_processes(
                             val_logits, dim=0, pad_index=-1)
-                        labels = accelerator.pad_across_processes(
-                            val_data['labels'], dim=0, pad_index=-1)
+                        for i in range(len(val_logits_negs)):
+                            val_logits_negs[i] = accelerator.pad_across_processes(
+                                val_logits_negs[i], dim=0, pad_index=-1)
+                        for i in range(len(neg_strategies)):
+                            neg_strategies[i] = accelerator.pad_across_processes(
+                                neg_strategies[i], dim=0, pad_index=-1)
                         noise = accelerator.pad_across_processes(
-                            val_data['noise_strategy'], dim=0, pad_index=-1)
-                        neg = accelerator.pad_across_processes(
-                            val_data['neg_type'], dim=0, pad_index=-1)
+                            val_data['noises'], dim=0, pad_index=-1)
 
                         val_logits = accelerator.gather_for_metrics(
                             val_logits).to('cpu')
-                        labels = accelerator.gather_for_metrics(
-                            labels).to('cpu')
+                        for i in range(len(val_logits_negs)):
+                            val_logits_negs[i] = accelerator.gather_for_metrics(
+                                val_logits_negs[i]).to('cpu')
+                        for i in range(len(neg_strategies)):
+                            neg_strategies[i] = accelerator.gather_for_metrics(
+                                neg_strategies[i]).to('cpu')
                         noise = accelerator.gather_for_metrics(
                             noise).to('cpu')
-                        neg = accelerator.gather_for_metrics(
-                            neg).to('cpu')
 
                         val_loss = accelerator.gather_for_metrics(
                             val_loss).to('cpu')
                         running_val_loss += val_loss.mean().item()
 
-                        # measure true positives, true negatives, false positives, false negatives
-                        # use softmax to get probabilities
-                        probs = torch.softmax(val_logits, dim=1)
-                        preds = torch.argmax(probs, dim=1)
+                        # join positive and negative logits into one tensor containing the probability of label=1
+                        # shape (batch_size, (neg_samples + 1), 2)
+                        val_logits = torch.stack(
+                            [val_logits] + val_logits_negs, dim=1)
+                        # apply softmax to get the probability of label=1
+                        # shape (batch_size, (neg_samples + 1))
+                        probs = torch.softmax(val_logits, dim=2)[:, :, 1]
+                        # get the labels
+                        # shape (batch_size, (neg_samples + 1))
+                        labels = torch.zeros_like(probs)
+                        labels[:, 0] = 1
 
+                        # calculate mrr, hits@k, ndcg@k
+                        # sort probabilities in descending order and labels accordingly
+                        # shape (batch_size, (neg_samples + 1))
+                        probs, indices = torch.sort(
+                            probs, dim=1, descending=True)
+                        labels = torch.gather(labels, dim=1, index=indices)
+                        # calculate mrr
+                        # shape ()
+                        mrr_at_k['1'] += torch.sum(
+                            1 / (torch.nonzero(labels[:, :1]).flatten().float() + 1)).item()
+                        mrr_at_k['5'] += torch.sum(
+                            1 / (torch.nonzero(labels[:, :5]).flatten().float() + 1)).item()
+                        mrr_at_k['10'] += torch.sum(
+                            1 / (torch.nonzero(labels[:, :10]).flatten().float() + 1)).item()
+
+                        # calculate hits@k
+                        # shape ()
+                        hits_at_k['1'] += torch.sum(
+                            torch.sum(labels[:, :1], dim=1)).item()
+                        hits_at_k['5'] += torch.sum(
+                            torch.sum(labels[:, :5], dim=1)).item()
+                        hits_at_k['10'] += torch.sum(
+                            torch.sum(labels[:, :10], dim=1)).item()
+
+                        # calculate ndcg@k
+                        # shape ()
+                        ndcg_at_k['1'] += torch.sum(
+                            torch.sum(labels[:, :1] / torch.log2(torch.arange(2, 3).float()), dim=1)).item()
+                        ndcg_at_k['5'] += torch.sum(
+                            torch.sum(labels[:, :5] / torch.log2(torch.arange(2, 7).float()), dim=1)).item()
+                        ndcg_at_k['10'] += torch.sum(
+                            torch.sum(labels[:, :10] / torch.log2(torch.arange(2, 12).float()), dim=1)).item()
+
+                        preds = (probs > 0.5).long()
                         true_pos += torch.sum((preds == 1)
                                               & (labels == 1)).item()
                         true_neg += torch.sum((preds == 0)
@@ -424,36 +521,36 @@ if __name__ == '__main__':
                                                & (labels == 0)).item()
                         false_neg += torch.sum((preds == 0)
                                                & (labels == 1)).item()
-                        total += len(labels)
 
                         # measure performance for each noise strategy
-                        for i in range(len(noise_map)):
-                            preds_part = preds[noise == i]
-                            labels_part = labels[noise == i]
-                            noise_perf[i]['true_pos'] += torch.sum((preds_part == 1)
-                                                                   & (labels_part == 1)).item()
-                            noise_perf[i]['true_neg'] += torch.sum((preds_part == 0)
-                                                                   & (labels_part == 0)).item()
-                            noise_perf[i]['false_pos'] += torch.sum((preds_part == 1)
-                                                                    & (labels_part == 0)).item()
-                            noise_perf[i]['false_neg'] += torch.sum((preds_part == 0)
-                                                                    & (labels_part == 1)).item()
-                            noise_perf[i]['total'] += len(labels_part)
+                        # for i in range(len(noise_map)):
+                        #     preds_part = preds[noise == i]
+                        #     labels_part = labels[noise == i]
+                        #     noise_perf[i]['true_pos'] += torch.sum((preds_part == 1)
+                        #                                            & (labels_part == 1)).item()
+                        #     noise_perf[i]['true_neg'] += torch.sum((preds_part == 0)
+                        #                                            & (labels_part == 0)).item()
+                        #     noise_perf[i]['false_pos'] += torch.sum((preds_part == 1)
+                        #                                             & (labels_part == 0)).item()
+                        #     noise_perf[i]['false_neg'] += torch.sum((preds_part == 0)
+                        #                                             & (labels_part == 1)).item()
+                        #     noise_perf[i]['total'] += len(labels_part)
 
-                        # measure performance for each negative strategy
-                        for i in range(len(neg_map)):
-                            preds_part = preds[neg == i]
-                            labels_part = labels[neg == i]
-                            neg_perf[i]['true_neg'] += torch.sum((preds_part == 0)
-                                                                 & (labels_part == 0)).item()
-                            neg_perf[i]['false_pos'] += torch.sum((preds_part == 1)
-                                                                  & (labels_part == 0)).item()
-                            neg_perf[i]['total'] += len(labels_part)
+                        # # measure performance for each negative strategy
+                        # for i in range(len(neg_map)):
+                        #     preds_part = preds[neg == i]
+                        #     labels_part = labels[neg == i]
+                        #     neg_perf[i]['true_neg'] += torch.sum((preds_part == 0)
+                        #                                          & (labels_part == 0)).item()
+                        #     neg_perf[i]['false_pos'] += torch.sum((preds_part == 1)
+                        #                                           & (labels_part == 0)).item()
+                        #     neg_perf[i]['total'] += len(labels_part)
 
                         if j == len(val_loader) - 1:
                             pbar.set_description(
                                 f"True pos: {true_pos}, True neg: {true_neg}, False pos: {false_pos}, False neg: {false_neg}, Total: {total}")
                     # calculate accuracy, precision, recall, f1 score
+                    total = true_pos + true_neg + false_pos + false_neg
                     accuracy = (true_pos + true_neg) / total
                     precision = true_pos / \
                         (true_pos + false_pos) if true_pos + false_pos > 0 else 0
@@ -461,7 +558,20 @@ if __name__ == '__main__':
                         (true_pos + false_neg) if true_pos + false_neg > 0 else 0
                     f1 = 2 * precision * recall / \
                         (precision + recall) if precision + recall > 0 else 0
+                    mrr_at_k = {k: v / total for k, v in mrr_at_k.items()}
+                    hits_at_k = {k: v / total for k, v in hits_at_k.items()}
+                    ndcg_at_k = {k: v / total for k, v in ndcg_at_k.items()}
                     running_val_loss /= len(val_loader)
+
+                    logger.info(f"MRR@1: {mrr_at_k['1']}")
+                    logger.info(f"MRR@5: {mrr_at_k['5']}")
+                    logger.info(f"MRR@10: {mrr_at_k['10']}")
+                    logger.info(f"Hits@1: {hits_at_k['1']}")
+                    logger.info(f"Hits@5: {hits_at_k['5']}")
+                    logger.info(f"Hits@10: {hits_at_k['10']}")
+                    logger.info(f"NDCG@1: {ndcg_at_k['1']}")
+                    logger.info(f"NDCG@5: {ndcg_at_k['5']}")
+                    logger.info(f"NDCG@10: {ndcg_at_k['10']}")
                     logger.info(f"Accuracy: {accuracy}")
                     logger.info(f"Precision: {precision}")
                     logger.info(f"Recall: {recall}")
@@ -470,6 +580,15 @@ if __name__ == '__main__':
                     logger.info(f"Model distance: {model_distance}")
 
                     if accelerator.is_main_process:
+                        writer.add_scalar('val/mrr@1', mrr_at_k['1'], step)
+                        writer.add_scalar('val/mrr@5', mrr_at_k['5'], step)
+                        writer.add_scalar('val/mrr@10', mrr_at_k['10'], step)
+                        writer.add_scalar('val/hits@1', hits_at_k['1'], step)
+                        writer.add_scalar('val/hits@5', hits_at_k['5'], step)
+                        writer.add_scalar('val/hits@10', hits_at_k['10'], step)
+                        writer.add_scalar('val/ndcg@1', ndcg_at_k['1'], step)
+                        writer.add_scalar('val/ndcg@5', ndcg_at_k['5'], step)
+                        writer.add_scalar('val/ndcg@10', ndcg_at_k['10'], step)
                         writer.add_scalar('val/accuracy', accuracy, step)
                         writer.add_scalar('val/precision', precision, step)
                         writer.add_scalar('val/recall', recall, step)
@@ -478,45 +597,45 @@ if __name__ == '__main__':
                         writer.add_scalar('model/distance',
                                           model_distance, step)
 
-                    # log scores for each noise strategy
-                    for i in range(len(noise_map)):
-                        noise_accuracy = (
-                            noise_perf[i]['true_pos'] + noise_perf[i]['true_neg']) / noise_perf[i]['total']
-                        noise_precision = noise_perf[i]['true_pos'] / \
-                            (noise_perf[i]['true_pos'] + noise_perf[i]['false_pos']
-                             ) if noise_perf[i]['true_pos'] + noise_perf[i]['false_pos'] > 0 else 0
-                        noise_recall = noise_perf[i]['true_pos'] / \
-                            (noise_perf[i]['true_pos'] + noise_perf[i]['false_neg']
-                             ) if noise_perf[i]['true_pos'] + noise_perf[i]['false_neg'] > 0 else 0
-                        noise_f1 = 2 * noise_precision * noise_recall / \
-                            (noise_precision + noise_recall) if noise_precision + \
-                            noise_recall > 0 else 0
-                        logger.info(f"Noise strategy {noise_map_rev[i]}:")
-                        logger.info(f"\t- Accuracy: {noise_accuracy}")
-                        logger.info(f"\t- Precision: {noise_precision}")
-                        logger.info(f"\t- Recall: {noise_recall}")
-                        logger.info(f"\t- F1: {noise_f1}")
+                    # # log scores for each noise strategy
+                    # for i in range(len(noise_map)):
+                    #     noise_accuracy = (
+                    #         noise_perf[i]['true_pos'] + noise_perf[i]['true_neg']) / noise_perf[i]['total']
+                    #     noise_precision = noise_perf[i]['true_pos'] / \
+                    #         (noise_perf[i]['true_pos'] + noise_perf[i]['false_pos']
+                    #          ) if noise_perf[i]['true_pos'] + noise_perf[i]['false_pos'] > 0 else 0
+                    #     noise_recall = noise_perf[i]['true_pos'] / \
+                    #         (noise_perf[i]['true_pos'] + noise_perf[i]['false_neg']
+                    #          ) if noise_perf[i]['true_pos'] + noise_perf[i]['false_neg'] > 0 else 0
+                    #     noise_f1 = 2 * noise_precision * noise_recall / \
+                    #         (noise_precision + noise_recall) if noise_precision + \
+                    #         noise_recall > 0 else 0
+                    #     logger.info(f"Noise strategy {noise_map_rev[i]}:")
+                    #     logger.info(f"\t- Accuracy: {noise_accuracy}")
+                    #     logger.info(f"\t- Precision: {noise_precision}")
+                    #     logger.info(f"\t- Recall: {noise_recall}")
+                    #     logger.info(f"\t- F1: {noise_f1}")
 
-                        if accelerator.is_main_process:
-                            writer.add_scalar(
-                                f'val_noise/noise_{noise_map_rev[i]}_accuracy', noise_accuracy, step)
-                            writer.add_scalar(
-                                f'val_noise/noise_{noise_map_rev[i]}_precision', noise_precision, step)
-                            writer.add_scalar(
-                                f'val_noise/noise_{noise_map_rev[i]}_recall', noise_recall, step)
-                            writer.add_scalar(
-                                f'val_noise/noise_{noise_map_rev[i]}_f1', noise_f1, step)
+                    #     if accelerator.is_main_process:
+                    #         writer.add_scalar(
+                    #             f'val_noise/noise_{noise_map_rev[i]}_accuracy', noise_accuracy, step)
+                    #         writer.add_scalar(
+                    #             f'val_noise/noise_{noise_map_rev[i]}_precision', noise_precision, step)
+                    #         writer.add_scalar(
+                    #             f'val_noise/noise_{noise_map_rev[i]}_recall', noise_recall, step)
+                    #         writer.add_scalar(
+                    #             f'val_noise/noise_{noise_map_rev[i]}_f1', noise_f1, step)
 
-                    # log scores for each negative strategy
-                    for i in range(len(neg_map)):
-                        neg_accuracy = (
-                            neg_perf[i]['true_neg']) / neg_perf[i]['total']
-                        logger.info(f"Negative strategy {neg_map_rev[i]}:")
-                        logger.info(f"\t- Accuracy: {neg_accuracy}")
+                    # # log scores for each negative strategy
+                    # for i in range(len(neg_map)):
+                    #     neg_accuracy = (
+                    #         neg_perf[i]['true_neg']) / neg_perf[i]['total']
+                    #     logger.info(f"Negative strategy {neg_map_rev[i]}:")
+                    #     logger.info(f"\t- Accuracy: {neg_accuracy}")
 
-                        if accelerator.is_main_process:
-                            writer.add_scalar(
-                                f'val_neg/neg_{neg_map_rev[i]}_accuracy', neg_accuracy, step)
+                    #     if accelerator.is_main_process:
+                    #         writer.add_scalar(
+                    #             f'val_neg/neg_{neg_map_rev[i]}_accuracy', neg_accuracy, step)
                 model.train()
                 torch.cuda.empty_cache()
                 gc.collect()
