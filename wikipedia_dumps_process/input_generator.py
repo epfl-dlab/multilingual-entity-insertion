@@ -495,10 +495,10 @@ if __name__ == '__main__':
             positive_samples_train, math.ceil(
                 args.max_train_samples / (1 + args.neg_samples_train))
         )
-    if len(positive_samples_val) * (1 + args.neg_samples_val) > args.max_val_samples:
+    if len(positive_samples_val) * (1 + args.neg_samples_val) > (args.max_val_samples + args.max_test_samples):
         positive_samples_val = random.sample(
             positive_samples_val, math.ceil(
-                args.max_val_samples / (1 + args.neg_samples_val))
+                (args.max_val_samples + args.max_test_samples) / (1 + args.neg_samples_val))
         )
 
     print('Generating negative samples')
@@ -521,7 +521,7 @@ if __name__ == '__main__':
         for i, sample in enumerate(negative_samples_train):
             true_index = i // args.neg_samples_train
             rel_index = i % args.neg_samples_train
-            keys = ['link_context', 'label', 'neg_type', 'noise_strategy']
+            keys = ['link_context', 'label', 'neg_type', 'noise_strategy', 'source_section']
             for key in keys:
                 if key in sample:
                     full_samples_train[true_index][f'{key}_neg_{rel_index}'] = sample[key]
@@ -533,7 +533,7 @@ if __name__ == '__main__':
         for i, sample in enumerate(negative_samples_val):
             true_index = i // args.neg_samples_val
             rel_index = i % args.neg_samples_val
-            keys = ['link_context', 'label', 'neg_type', 'noise_strategy']
+            keys = ['link_context', 'label', 'neg_type', 'noise_strategy', 'source_section']
             for key in keys:
                 if key in sample:
                     full_samples_val[true_index][f'{key}_neg_{rel_index}'] = sample[key]
@@ -541,32 +541,8 @@ if __name__ == '__main__':
                     full_samples_val[true_index][f'{key}_neg_{rel_index}'] = None
         df_val_full = pd.DataFrame(full_samples_val)
 
-    if args.max_val_samples and not args.max_test_samples:
-        args.max_test_samples = len(df_val_full) - args.max_val_samples
-    if args.max_test_samples and not args.max_val_samples:
-        args.max_val_samples = len(df_val_full) - args.max_test_samples
-
-    if args.max_val_samples and args.max_test_samples:
-        if args.max_val_samples + args.max_test_samples > len(df_val_full):
-            # keep the same ratio
-            val_samples = int(len(df_val_full) * args.max_val_samples /
-                              (args.max_val_samples + args.max_test_samples))
-            test_samples = len(df_val_full) - val_samples
-        else:
-            val_samples = args.max_val_samples
-            test_samples = args.max_test_samples
-    elif args.max_val_samples:
-        val_samples = args.max_val_samples
-        test_samples = len(df_val_full) - val_samples
-    elif args.max_test_samples:
-        test_samples = args.max_test_samples
-        val_samples = len(df_val_full) - test_samples
-    else:
-        val_samples = int(len(df_val_full) * 0.5)
-        test_samples = len(df_val_full) - val_samples
-
-    df_val = df_val_full.sample(n=val_samples)
-    df_test = df_val_full.drop(df_val.index).sample(n=test_samples)
+    df_val = df_val_full.sample(n=args.max_val_samples // (1 + args.neg_samples_val))
+    df_test = df_val_full.drop(df_val.index).sample(n=args.max_test_samples // (1 + args.neg_samples_val))
 
     df_val = df_val.reset_index(drop=True)
     df_test = df_test.reset_index(drop=True)
