@@ -55,7 +55,7 @@ if __name__ == '__main__':
     parser.add_argument('--ga_steps', type=int, default=1,
                         help='Number of steps for gradient accumulation')
     parser.add_argument('--full_freeze_epochs', type=int, default=0,
-                        help='Number of epochs to freeze all lazyers except classification head')
+                        help='Number of epochs to freeze all layers except classification head')
     parser.add_argument('--freeze_layers', type=int, default=2,
                         help='Number of initial layers to freeze')
     parser.add_argument('--head_lr_factor', type=float, default=1,
