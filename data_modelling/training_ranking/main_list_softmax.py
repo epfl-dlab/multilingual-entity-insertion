@@ -75,6 +75,8 @@ if __name__ == '__main__':
                         help='Number of negative samples for training')
     parser.add_argument('--neg_samples_eval', type=int, default=20,
                         help='Number of negative samples for evaluation')
+    parser.add_argument('--temperature', type=float, default=1,
+                        help='Temperature for softmax')
     parser.set_defaults(resume=False)
 
     args = parser.parse_args()
@@ -352,7 +354,7 @@ if __name__ == '__main__':
             indices = torch.randperm(logits.shape[1])
             logits = logits[:, indices]
             labels = labels[:, indices]
-            loss = loss_fn(logits, labels) / args.ga_steps
+            loss = loss_fn(logits / args.temperature, labels) / args.ga_steps
             accelerator.backward(loss)
             if (index + 1) % args.ga_steps == 0:
                 optimizer.step()
@@ -401,15 +403,16 @@ if __name__ == '__main__':
                     true_neg = 0
                     false_pos = 0
                     false_neg = 0
-                    mrr_at_k = {'1': 0, '5': 0, '10': 0}
-                    hits_at_k = {'1': 0, '5': 0, '10': 0}
-                    ndcg_at_k = {'1': 0, '5': 0, '10': 0}
+                    mrr_at_k = {'1': 0, '5': 0, '10': 0, 'max': 0}
+                    hits_at_k = {'1': 0, '5': 0, '10': 0, 'max': 0}
+                    ndcg_at_k = {'1': 0, '5': 0, '10': 0, 'max': 0}
+                    noise_perf = {i : {'mrr': {'1': 0, '5': 0, '10': 0, 'max': 0},
+                                       'hits': {'1': 0, '5': 0, '10': 0, 'max': 0},
+                                       'ndcg': {'1': 0, '5': 0, '10': 0, 'max': 0},
+                                       'n_lists': 0} for i in range(len(noise_map))}
+                    n_lists = 0
                     total = 0
-                    noise_perf = {i: {'true_pos': 0, 'true_neg': 0, 'false_pos': 0,
-                                      'false_neg': 0, 'total': 0} for i in range(len(noise_map))}
-                    neg_perf = {i: {'true_pos': 0, 'true_neg': 0, 'false_pos': 0,
-                                    'false_neg': 0, 'total': 0} for i in range(len(neg_map))}
-
+                    
                     running_val_loss = 0
                     for j, val_data in (pbar := tqdm(enumerate(val_loader), total=len(val_loader))):
                         if j % 20 == 0:
@@ -422,9 +425,8 @@ if __name__ == '__main__':
                                           output_context['last_hidden_state'][:, 0, :],
                                           output_target['last_hidden_state'][:, 0, :]]
                         val_embeddings = torch.cat(val_embeddings, dim=1)
-                        val_logits = [classification_head(val_embeddings).squeeze()]
-                        # val_loss = loss_fn(val_logits, torch.ones(
-                        #     val_logits.shape[0]).long().to(device)) / (args.neg_samples_eval + 1)
+                        val_logits = [classification_head(
+                            val_embeddings).squeeze()]
 
                         neg_strategies = []
                         for i in range(args.neg_samples_eval):
@@ -440,8 +442,6 @@ if __name__ == '__main__':
                             val_logits_neg = classification_head(
                                 val_embeddings_neg)
                             val_logits.append(val_logits_neg.squeeze())
-                            # val_loss += loss_fn(val_logits_neg, torch.zeros(
-                            #     val_logits_neg.shape[0]).long().to(device)) / (args.neg_samples_eval + 1)
                         val_logits = torch.stack(val_logits, dim=1)
                         labels = torch.zeros_like(val_logits)
                         labels[:, 0] = 1
@@ -449,8 +449,8 @@ if __name__ == '__main__':
                         indices = torch.randperm(val_logits.shape[1])
                         val_logits = val_logits[:, indices]
                         labels = labels[:, indices]
-                        val_loss = loss_fn(val_logits, labels)
-                        
+                        val_loss = loss_fn(val_logits / args.temperature, labels)
+
                         # gather the results from all processes
                         val_logits = accelerator.pad_across_processes(
                             val_logits, dim=0, pad_index=-1)
@@ -474,7 +474,9 @@ if __name__ == '__main__':
 
                         val_loss = accelerator.gather_for_metrics(
                             val_loss).to('cpu')
-                        running_val_loss += val_loss.mean().item()
+                        running_val_loss += val_loss.sum().item()
+
+                        n_lists += len(labels)
 
                         # calculate mrr, hits@k, ndcg@k
                         # sort probabilities in descending order and labels accordingly
@@ -485,11 +487,13 @@ if __name__ == '__main__':
                         # calculate mrr
                         # shape ()
                         mrr_at_k['1'] += torch.sum(
-                            1 / (torch.nonzero(labels[:, :1]).flatten().float() + 1)).item()
+                            1 / (torch.nonzero(labels[:, :1])[:,1].float() + 1)).item()
                         mrr_at_k['5'] += torch.sum(
-                            1 / (torch.nonzero(labels[:, :5]).flatten().float() + 1)).item()
+                            1 / (torch.nonzero(labels[:, :5])[:,1].float() + 1)).item()
                         mrr_at_k['10'] += torch.sum(
-                            1 / (torch.nonzero(labels[:, :10]).flatten().float() + 1)).item()
+                            1 / (torch.nonzero(labels[:, :10])[:,1].float() + 1)).item()
+                        mrr_at_k['max'] += torch.sum(
+                            1 / (torch.nonzero(labels)[:,1].float() + 1)).item()
 
                         # calculate hits@k
                         # shape ()
@@ -499,6 +503,8 @@ if __name__ == '__main__':
                             torch.sum(labels[:, :5], dim=1)).item()
                         hits_at_k['10'] += torch.sum(
                             torch.sum(labels[:, :10], dim=1)).item()
+                        hits_at_k['max'] += torch.sum(
+                            torch.sum(labels, dim=1)).item()
 
                         # calculate ndcg@k
                         # shape ()
@@ -508,14 +514,51 @@ if __name__ == '__main__':
                             torch.sum(labels[:, :5] / torch.log2(torch.arange(2, 7).float()), dim=1)).item()
                         ndcg_at_k['10'] += torch.sum(
                             torch.sum(labels[:, :10] / torch.log2(torch.arange(2, 12).float()), dim=1)).item()
+                        ndcg_at_k['max'] += torch.sum(
+                            torch.sum(labels / torch.log2(torch.arange(2, labels.shape[1] + 2).float()), dim=1)).item()
+                        
+                        # compute discritized scores for each noise type
+                        for i in range(len(noise_map)):
+                            noise_part = noise == i
+                            labels_part = labels[noise_part]
+
+                            noise_perf[i]['mrr']['1'] += torch.sum(
+                                1 / (torch.nonzero(labels_part[:, :1])[:,1].float() + 1)).item()
+                            noise_perf[i]['mrr']['5'] += torch.sum(
+                                1 / (torch.nonzero(labels_part[:, :5])[:,1].float() + 1)).item()
+                            noise_perf[i]['mrr']['10'] += torch.sum(
+                                1 / (torch.nonzero(labels_part[:, :10])[:,1].float() + 1)).item()
+                            noise_perf[i]['mrr']['max'] += torch.sum(
+                                1 / (torch.nonzero(labels_part)[:,1].float() + 1)).item()
+                            
+                            noise_perf[i]['hits']['1'] += torch.sum(
+                                torch.sum(labels_part[:, :1], dim=1)).item()
+                            noise_perf[i]['hits']['5'] += torch.sum(
+                                torch.sum(labels_part[:, :5], dim=1)).item()
+                            noise_perf[i]['hits']['10'] += torch.sum(
+                                torch.sum(labels_part[:, :10], dim=1)).item()
+                            noise_perf[i]['hits']['max'] += torch.sum(
+                                torch.sum(labels_part, dim=1)).item()
+                            
+                            noise_perf[i]['ndcg']['1'] += torch.sum(
+                                torch.sum(labels_part[:, :1] / torch.log2(torch.arange(2, 3).float()), dim=1)).item()
+                            noise_perf[i]['ndcg']['5'] += torch.sum(
+                                torch.sum(labels_part[:, :5] / torch.log2(torch.arange(2, 7).float()), dim=1)).item()
+                            noise_perf[i]['ndcg']['10'] += torch.sum(
+                                torch.sum(labels_part[:, :10] / torch.log2(torch.arange(2, 12).float()), dim=1)).item()
+                            noise_perf[i]['ndcg']['max'] += torch.sum(
+                                torch.sum(labels_part / torch.log2(torch.arange(2, labels_part.shape[1] + 2).float()), dim=1)).item()
+                            
+                            noise_perf[i]['n_lists'] += len(labels_part)
 
                         # logits has shape (batch_size, (neg_samples + 1))
                         # use softmax to get probabilities
                         probs = torch.softmax(val_logits, dim=1)
                         # predictions are 1 at the index with the highest probability, and 0 otherwise
                         # shape (batch_size, (neg_samples + 1))
-                        preds = (probs == torch.max(probs, dim=1, keepdim=True)[0]).long()
-                        
+                        preds = (probs == torch.max(
+                            probs, dim=1, keepdim=True)[0]).long()
+
                         true_pos += torch.sum((preds == 1)
                                               & (labels == 1)).item()
                         true_neg += torch.sum((preds == 0)
@@ -524,30 +567,7 @@ if __name__ == '__main__':
                                                & (labels == 0)).item()
                         false_neg += torch.sum((preds == 0)
                                                & (labels == 1)).item()
-
-                        # measure performance for each noise strategy
-                        # for i in range(len(noise_map)):
-                        #     preds_part = preds[noise == i]
-                        #     labels_part = labels[noise == i]
-                        #     noise_perf[i]['true_pos'] += torch.sum((preds_part == 1)
-                        #                                            & (labels_part == 1)).item()
-                        #     noise_perf[i]['true_neg'] += torch.sum((preds_part == 0)
-                        #                                            & (labels_part == 0)).item()
-                        #     noise_perf[i]['false_pos'] += torch.sum((preds_part == 1)
-                        #                                             & (labels_part == 0)).item()
-                        #     noise_perf[i]['false_neg'] += torch.sum((preds_part == 0)
-                        #                                             & (labels_part == 1)).item()
-                        #     noise_perf[i]['total'] += len(labels_part)
-
-                        # # measure performance for each negative strategy
-                        # for i in range(len(neg_map)):
-                        #     preds_part = preds[neg == i]
-                        #     labels_part = labels[neg == i]
-                        #     neg_perf[i]['true_neg'] += torch.sum((preds_part == 0)
-                        #                                          & (labels_part == 0)).item()
-                        #     neg_perf[i]['false_pos'] += torch.sum((preds_part == 1)
-                        #                                           & (labels_part == 0)).item()
-                        #     neg_perf[i]['total'] += len(labels_part)
+                        total = true_pos + true_neg + false_pos + false_neg
 
                         if j == len(val_loader) - 1:
                             pbar.set_description(
@@ -561,20 +581,43 @@ if __name__ == '__main__':
                         (true_pos + false_neg) if true_pos + false_neg > 0 else 0
                     f1 = 2 * precision * recall / \
                         (precision + recall) if precision + recall > 0 else 0
-                    mrr_at_k = {k: v / total for k, v in mrr_at_k.items()}
-                    hits_at_k = {k: v / total for k, v in hits_at_k.items()}
-                    ndcg_at_k = {k: v / total for k, v in ndcg_at_k.items()}
-                    running_val_loss /= len(val_loader)
+                    mrr_at_k = {k: v / n_lists for k, v in mrr_at_k.items()}
+                    hits_at_k = {k: v / n_lists for k, v in hits_at_k.items()}
+                    ndcg_at_k = {k: v / n_lists for k, v in ndcg_at_k.items()}
+                    for i in range(len(noise_map)):
+                        if noise_perf[i]['n_lists'] > 0:
+                            noise_perf[i]['mrr'] = {k: v / noise_perf[i]['n_lists'] for k, v in noise_perf[i]['mrr'].items()}
+                            noise_perf[i]['hits'] = {k: v / noise_perf[i]['n_lists'] for k, v in noise_perf[i]['hits'].items()}
+                            noise_perf[i]['ndcg'] = {k: v / noise_perf[i]['n_lists'] for k, v in noise_perf[i]['ndcg'].items()}
+                    running_val_loss /= n_lists
 
                     logger.info(f"MRR@1: {mrr_at_k['1']}")
                     logger.info(f"MRR@5: {mrr_at_k['5']}")
                     logger.info(f"MRR@10: {mrr_at_k['10']}")
+                    logger.info(f"MRR@max: {mrr_at_k['max']}")
                     logger.info(f"Hits@1: {hits_at_k['1']}")
                     logger.info(f"Hits@5: {hits_at_k['5']}")
                     logger.info(f"Hits@10: {hits_at_k['10']}")
+                    logger.info(f"Hits@max: {hits_at_k['max']}")
                     logger.info(f"NDCG@1: {ndcg_at_k['1']}")
                     logger.info(f"NDCG@5: {ndcg_at_k['5']}")
                     logger.info(f"NDCG@10: {ndcg_at_k['10']}")
+                    logger.info(f"NDCG@max: {ndcg_at_k['max']}")
+                    for i in range(len(noise_map)):
+                        if noise_perf[i]['n_lists'] > 0:
+                            logger.info(f"Noise strategy {noise_map_rev[i]}:")
+                            logger.info(f"\t- MRR@1: {noise_perf[i]['mrr']['1']}")
+                            logger.info(f"\t- MRR@5: {noise_perf[i]['mrr']['5']}")
+                            logger.info(f"\t- MRR@10: {noise_perf[i]['mrr']['10']}")
+                            logger.info(f"\t- MRR@max: {noise_perf[i]['mrr']['max']}")
+                            logger.info(f"\t- Hits@1: {noise_perf[i]['hits']['1']}")
+                            logger.info(f"\t- Hits@5: {noise_perf[i]['hits']['5']}")
+                            logger.info(f"\t- Hits@10: {noise_perf[i]['hits']['10']}")
+                            logger.info(f"\t- Hits@max: {noise_perf[i]['hits']['max']}")
+                            logger.info(f"\t- NDCG@1: {noise_perf[i]['ndcg']['1']}")
+                            logger.info(f"\t- NDCG@5: {noise_perf[i]['ndcg']['5']}")
+                            logger.info(f"\t- NDCG@10: {noise_perf[i]['ndcg']['10']}")
+                            logger.info(f"\t- NDCG@max: {noise_perf[i]['ndcg']['max']}")
                     logger.info(f"Accuracy: {accuracy}")
                     logger.info(f"Precision: {precision}")
                     logger.info(f"Recall: {recall}")
@@ -586,12 +629,15 @@ if __name__ == '__main__':
                         writer.add_scalar('val/mrr@1', mrr_at_k['1'], step)
                         writer.add_scalar('val/mrr@5', mrr_at_k['5'], step)
                         writer.add_scalar('val/mrr@10', mrr_at_k['10'], step)
+                        writer.add_scalar('val/mrr@max', mrr_at_k['max'], step)
                         writer.add_scalar('val/hits@1', hits_at_k['1'], step)
                         writer.add_scalar('val/hits@5', hits_at_k['5'], step)
                         writer.add_scalar('val/hits@10', hits_at_k['10'], step)
+                        writer.add_scalar('val/hits@max', hits_at_k['max'], step)
                         writer.add_scalar('val/ndcg@1', ndcg_at_k['1'], step)
                         writer.add_scalar('val/ndcg@5', ndcg_at_k['5'], step)
                         writer.add_scalar('val/ndcg@10', ndcg_at_k['10'], step)
+                        writer.add_scalar('val/ndcg@max', ndcg_at_k['max'], step)
                         writer.add_scalar('val/accuracy', accuracy, step)
                         writer.add_scalar('val/precision', precision, step)
                         writer.add_scalar('val/recall', recall, step)
@@ -599,46 +645,21 @@ if __name__ == '__main__':
                         writer.add_scalar('val/loss', running_val_loss, step)
                         writer.add_scalar('model/distance',
                                           model_distance, step)
+                        for i in range(len(noise_map)):
+                            if noise_perf[i]['n_lists'] > 0:
+                                writer.add_scalar(f'val_noise/{noise_map_rev[i]}_mrr@1', noise_perf[i]['mrr']['1'], step)
+                                writer.add_scalar(f'val_noise/{noise_map_rev[i]}_mrr@5', noise_perf[i]['mrr']['5'], step)
+                                writer.add_scalar(f'val_noise/{noise_map_rev[i]}_mrr@10', noise_perf[i]['mrr']['10'], step)
+                                writer.add_scalar(f'val_noise/{noise_map_rev[i]}_mrr@max', noise_perf[i]['mrr']['max'], step)
+                                writer.add_scalar(f'val_noise/{noise_map_rev[i]}_hits@1', noise_perf[i]['hits']['1'], step)
+                                writer.add_scalar(f'val_noise/{noise_map_rev[i]}_hits@5', noise_perf[i]['hits']['5'], step)
+                                writer.add_scalar(f'val_noise/{noise_map_rev[i]}_hits@10', noise_perf[i]['hits']['10'], step)
+                                writer.add_scalar(f'val_noise/{noise_map_rev[i]}_hits@max', noise_perf[i]['hits']['max'], step)
+                                writer.add_scalar(f'val_noise/{noise_map_rev[i]}_ndcg@1', noise_perf[i]['ndcg']['1'], step)
+                                writer.add_scalar(f'val_noise/{noise_map_rev[i]}_ndcg@5', noise_perf[i]['ndcg']['5'], step)
+                                writer.add_scalar(f'val_noise/{noise_map_rev[i]}_ndcg@10', noise_perf[i]['ndcg']['10'], step)
+                                writer.add_scalar(f'val_noise/{noise_map_rev[i]}_ndcg@max', noise_perf[i]['ndcg']['max'], step)
 
-                    # # log scores for each noise strategy
-                    # for i in range(len(noise_map)):
-                    #     noise_accuracy = (
-                    #         noise_perf[i]['true_pos'] + noise_perf[i]['true_neg']) / noise_perf[i]['total']
-                    #     noise_precision = noise_perf[i]['true_pos'] / \
-                    #         (noise_perf[i]['true_pos'] + noise_perf[i]['false_pos']
-                    #          ) if noise_perf[i]['true_pos'] + noise_perf[i]['false_pos'] > 0 else 0
-                    #     noise_recall = noise_perf[i]['true_pos'] / \
-                    #         (noise_perf[i]['true_pos'] + noise_perf[i]['false_neg']
-                    #          ) if noise_perf[i]['true_pos'] + noise_perf[i]['false_neg'] > 0 else 0
-                    #     noise_f1 = 2 * noise_precision * noise_recall / \
-                    #         (noise_precision + noise_recall) if noise_precision + \
-                    #         noise_recall > 0 else 0
-                    #     logger.info(f"Noise strategy {noise_map_rev[i]}:")
-                    #     logger.info(f"\t- Accuracy: {noise_accuracy}")
-                    #     logger.info(f"\t- Precision: {noise_precision}")
-                    #     logger.info(f"\t- Recall: {noise_recall}")
-                    #     logger.info(f"\t- F1: {noise_f1}")
-
-                    #     if accelerator.is_main_process:
-                    #         writer.add_scalar(
-                    #             f'val_noise/noise_{noise_map_rev[i]}_accuracy', noise_accuracy, step)
-                    #         writer.add_scalar(
-                    #             f'val_noise/noise_{noise_map_rev[i]}_precision', noise_precision, step)
-                    #         writer.add_scalar(
-                    #             f'val_noise/noise_{noise_map_rev[i]}_recall', noise_recall, step)
-                    #         writer.add_scalar(
-                    #             f'val_noise/noise_{noise_map_rev[i]}_f1', noise_f1, step)
-
-                    # # log scores for each negative strategy
-                    # for i in range(len(neg_map)):
-                    #     neg_accuracy = (
-                    #         neg_perf[i]['true_neg']) / neg_perf[i]['total']
-                    #     logger.info(f"Negative strategy {neg_map_rev[i]}:")
-                    #     logger.info(f"\t- Accuracy: {neg_accuracy}")
-
-                    #     if accelerator.is_main_process:
-                    #         writer.add_scalar(
-                    #             f'val_neg/neg_{neg_map_rev[i]}_accuracy', neg_accuracy, step)
                 model.train()
                 torch.cuda.empty_cache()
                 gc.collect()
