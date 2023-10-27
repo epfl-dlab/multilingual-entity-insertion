@@ -9,3 +9,6 @@ training_ranking/datasets/*
 !training_ranking/datasets/dummy_generator.ipynb
 training_ranking/output*
 training_ranking/runs/*
+training_ranking/models/*
+
+**.parquet
