@@ -407,13 +407,13 @@ if __name__ == '__main__':
                     mrr_at_k = {'1': 0, '5': 0, '10': 0, 'max': 0}
                     hits_at_k = {'1': 0, '5': 0, '10': 0, 'max': 0}
                     ndcg_at_k = {'1': 0, '5': 0, '10': 0, 'max': 0}
-                    noise_perf = {i : {'mrr': {'1': 0, '5': 0, '10': 0, 'max': 0},
-                                       'hits': {'1': 0, '5': 0, '10': 0, 'max': 0},
-                                       'ndcg': {'1': 0, '5': 0, '10': 0, 'max': 0},
-                                       'n_lists': 0} for i in range(len(noise_map))}
+                    noise_perf = {i: {'mrr': {'1': 0, '5': 0, '10': 0, 'max': 0},
+                                      'hits': {'1': 0, '5': 0, '10': 0, 'max': 0},
+                                      'ndcg': {'1': 0, '5': 0, '10': 0, 'max': 0},
+                                      'n_lists': 0} for i in range(len(noise_map))}
                     n_lists = 0
                     total = 0
-                    
+
                     running_val_loss = 0
                     for j, val_data in (pbar := tqdm(enumerate(val_loader), total=len(val_loader))):
                         if j % 20 == 0:
@@ -450,7 +450,8 @@ if __name__ == '__main__':
                         indices = torch.randperm(val_logits.shape[1])
                         val_logits = val_logits[:, indices]
                         labels = labels[:, indices]
-                        val_loss = loss_fn(val_logits / args.temperature, labels)
+                        val_loss = loss_fn(
+                            val_logits / args.temperature, labels)
 
                         # gather the results from all processes
                         val_logits = accelerator.pad_across_processes(
@@ -488,13 +489,13 @@ if __name__ == '__main__':
                         # calculate mrr
                         # shape ()
                         mrr_at_k['1'] += torch.sum(
-                            1 / (torch.nonzero(labels[:, :1])[:,1].float() + 1)).item()
+                            1 / (torch.nonzero(labels[:, :1])[:, 1].float() + 1)).item()
                         mrr_at_k['5'] += torch.sum(
-                            1 / (torch.nonzero(labels[:, :5])[:,1].float() + 1)).item()
+                            1 / (torch.nonzero(labels[:, :5])[:, 1].float() + 1)).item()
                         mrr_at_k['10'] += torch.sum(
-                            1 / (torch.nonzero(labels[:, :10])[:,1].float() + 1)).item()
+                            1 / (torch.nonzero(labels[:, :10])[:, 1].float() + 1)).item()
                         mrr_at_k['max'] += torch.sum(
-                            1 / (torch.nonzero(labels)[:,1].float() + 1)).item()
+                            1 / (torch.nonzero(labels)[:, 1].float() + 1)).item()
 
                         # calculate hits@k
                         # shape ()
@@ -517,21 +518,21 @@ if __name__ == '__main__':
                             torch.sum(labels[:, :10] / torch.log2(torch.arange(2, 12).float()), dim=1)).item()
                         ndcg_at_k['max'] += torch.sum(
                             torch.sum(labels / torch.log2(torch.arange(2, labels.shape[1] + 2).float()), dim=1)).item()
-                        
+
                         # compute discritized scores for each noise type
                         for i in range(len(noise_map)):
                             noise_part = noise == i
                             labels_part = labels[noise_part]
 
                             noise_perf[i]['mrr']['1'] += torch.sum(
-                                1 / (torch.nonzero(labels_part[:, :1])[:,1].float() + 1)).item()
+                                1 / (torch.nonzero(labels_part[:, :1])[:, 1].float() + 1)).item()
                             noise_perf[i]['mrr']['5'] += torch.sum(
-                                1 / (torch.nonzero(labels_part[:, :5])[:,1].float() + 1)).item()
+                                1 / (torch.nonzero(labels_part[:, :5])[:, 1].float() + 1)).item()
                             noise_perf[i]['mrr']['10'] += torch.sum(
-                                1 / (torch.nonzero(labels_part[:, :10])[:,1].float() + 1)).item()
+                                1 / (torch.nonzero(labels_part[:, :10])[:, 1].float() + 1)).item()
                             noise_perf[i]['mrr']['max'] += torch.sum(
-                                1 / (torch.nonzero(labels_part)[:,1].float() + 1)).item()
-                            
+                                1 / (torch.nonzero(labels_part)[:, 1].float() + 1)).item()
+
                             noise_perf[i]['hits']['1'] += torch.sum(
                                 torch.sum(labels_part[:, :1], dim=1)).item()
                             noise_perf[i]['hits']['5'] += torch.sum(
@@ -540,7 +541,7 @@ if __name__ == '__main__':
                                 torch.sum(labels_part[:, :10], dim=1)).item()
                             noise_perf[i]['hits']['max'] += torch.sum(
                                 torch.sum(labels_part, dim=1)).item()
-                            
+
                             noise_perf[i]['ndcg']['1'] += torch.sum(
                                 torch.sum(labels_part[:, :1] / torch.log2(torch.arange(2, 3).float()), dim=1)).item()
                             noise_perf[i]['ndcg']['5'] += torch.sum(
@@ -549,7 +550,7 @@ if __name__ == '__main__':
                                 torch.sum(labels_part[:, :10] / torch.log2(torch.arange(2, 12).float()), dim=1)).item()
                             noise_perf[i]['ndcg']['max'] += torch.sum(
                                 torch.sum(labels_part / torch.log2(torch.arange(2, labels_part.shape[1] + 2).float()), dim=1)).item()
-                            
+
                             noise_perf[i]['n_lists'] += len(labels_part)
 
                         # logits has shape (batch_size, (neg_samples + 1))
@@ -587,9 +588,12 @@ if __name__ == '__main__':
                     ndcg_at_k = {k: v / n_lists for k, v in ndcg_at_k.items()}
                     for i in range(len(noise_map)):
                         if noise_perf[i]['n_lists'] > 0:
-                            noise_perf[i]['mrr'] = {k: v / noise_perf[i]['n_lists'] for k, v in noise_perf[i]['mrr'].items()}
-                            noise_perf[i]['hits'] = {k: v / noise_perf[i]['n_lists'] for k, v in noise_perf[i]['hits'].items()}
-                            noise_perf[i]['ndcg'] = {k: v / noise_perf[i]['n_lists'] for k, v in noise_perf[i]['ndcg'].items()}
+                            noise_perf[i]['mrr'] = {
+                                k: v / noise_perf[i]['n_lists'] for k, v in noise_perf[i]['mrr'].items()}
+                            noise_perf[i]['hits'] = {
+                                k: v / noise_perf[i]['n_lists'] for k, v in noise_perf[i]['hits'].items()}
+                            noise_perf[i]['ndcg'] = {
+                                k: v / noise_perf[i]['n_lists'] for k, v in noise_perf[i]['ndcg'].items()}
                     running_val_loss /= n_lists
 
                     logger.info(f"MRR@1: {mrr_at_k['1']}")
@@ -607,18 +611,30 @@ if __name__ == '__main__':
                     for i in range(len(noise_map)):
                         if noise_perf[i]['n_lists'] > 0:
                             logger.info(f"Noise strategy {noise_map_rev[i]}:")
-                            logger.info(f"\t- MRR@1: {noise_perf[i]['mrr']['1']}")
-                            logger.info(f"\t- MRR@5: {noise_perf[i]['mrr']['5']}")
-                            logger.info(f"\t- MRR@10: {noise_perf[i]['mrr']['10']}")
-                            logger.info(f"\t- MRR@max: {noise_perf[i]['mrr']['max']}")
-                            logger.info(f"\t- Hits@1: {noise_perf[i]['hits']['1']}")
-                            logger.info(f"\t- Hits@5: {noise_perf[i]['hits']['5']}")
-                            logger.info(f"\t- Hits@10: {noise_perf[i]['hits']['10']}")
-                            logger.info(f"\t- Hits@max: {noise_perf[i]['hits']['max']}")
-                            logger.info(f"\t- NDCG@1: {noise_perf[i]['ndcg']['1']}")
-                            logger.info(f"\t- NDCG@5: {noise_perf[i]['ndcg']['5']}")
-                            logger.info(f"\t- NDCG@10: {noise_perf[i]['ndcg']['10']}")
-                            logger.info(f"\t- NDCG@max: {noise_perf[i]['ndcg']['max']}")
+                            logger.info(
+                                f"\t- MRR@1: {noise_perf[i]['mrr']['1']}")
+                            logger.info(
+                                f"\t- MRR@5: {noise_perf[i]['mrr']['5']}")
+                            logger.info(
+                                f"\t- MRR@10: {noise_perf[i]['mrr']['10']}")
+                            logger.info(
+                                f"\t- MRR@max: {noise_perf[i]['mrr']['max']}")
+                            logger.info(
+                                f"\t- Hits@1: {noise_perf[i]['hits']['1']}")
+                            logger.info(
+                                f"\t- Hits@5: {noise_perf[i]['hits']['5']}")
+                            logger.info(
+                                f"\t- Hits@10: {noise_perf[i]['hits']['10']}")
+                            logger.info(
+                                f"\t- Hits@max: {noise_perf[i]['hits']['max']}")
+                            logger.info(
+                                f"\t- NDCG@1: {noise_perf[i]['ndcg']['1']}")
+                            logger.info(
+                                f"\t- NDCG@5: {noise_perf[i]['ndcg']['5']}")
+                            logger.info(
+                                f"\t- NDCG@10: {noise_perf[i]['ndcg']['10']}")
+                            logger.info(
+                                f"\t- NDCG@max: {noise_perf[i]['ndcg']['max']}")
                     logger.info(f"Accuracy: {accuracy}")
                     logger.info(f"Precision: {precision}")
                     logger.info(f"Recall: {recall}")
@@ -634,11 +650,13 @@ if __name__ == '__main__':
                         writer.add_scalar('val/hits@1', hits_at_k['1'], step)
                         writer.add_scalar('val/hits@5', hits_at_k['5'], step)
                         writer.add_scalar('val/hits@10', hits_at_k['10'], step)
-                        writer.add_scalar('val/hits@max', hits_at_k['max'], step)
+                        writer.add_scalar(
+                            'val/hits@max', hits_at_k['max'], step)
                         writer.add_scalar('val/ndcg@1', ndcg_at_k['1'], step)
                         writer.add_scalar('val/ndcg@5', ndcg_at_k['5'], step)
                         writer.add_scalar('val/ndcg@10', ndcg_at_k['10'], step)
-                        writer.add_scalar('val/ndcg@max', ndcg_at_k['max'], step)
+                        writer.add_scalar(
+                            'val/ndcg@max', ndcg_at_k['max'], step)
                         writer.add_scalar('val/accuracy', accuracy, step)
                         writer.add_scalar('val/precision', precision, step)
                         writer.add_scalar('val/recall', recall, step)
@@ -648,18 +666,30 @@ if __name__ == '__main__':
                                           model_distance, step)
                         for i in range(len(noise_map)):
                             if noise_perf[i]['n_lists'] > 0:
-                                writer.add_scalar(f'val_noise/{noise_map_rev[i]}_mrr@1', noise_perf[i]['mrr']['1'], step)
-                                writer.add_scalar(f'val_noise/{noise_map_rev[i]}_mrr@5', noise_perf[i]['mrr']['5'], step)
-                                writer.add_scalar(f'val_noise/{noise_map_rev[i]}_mrr@10', noise_perf[i]['mrr']['10'], step)
-                                writer.add_scalar(f'val_noise/{noise_map_rev[i]}_mrr@max', noise_perf[i]['mrr']['max'], step)
-                                writer.add_scalar(f'val_noise/{noise_map_rev[i]}_hits@1', noise_perf[i]['hits']['1'], step)
-                                writer.add_scalar(f'val_noise/{noise_map_rev[i]}_hits@5', noise_perf[i]['hits']['5'], step)
-                                writer.add_scalar(f'val_noise/{noise_map_rev[i]}_hits@10', noise_perf[i]['hits']['10'], step)
-                                writer.add_scalar(f'val_noise/{noise_map_rev[i]}_hits@max', noise_perf[i]['hits']['max'], step)
-                                writer.add_scalar(f'val_noise/{noise_map_rev[i]}_ndcg@1', noise_perf[i]['ndcg']['1'], step)
-                                writer.add_scalar(f'val_noise/{noise_map_rev[i]}_ndcg@5', noise_perf[i]['ndcg']['5'], step)
-                                writer.add_scalar(f'val_noise/{noise_map_rev[i]}_ndcg@10', noise_perf[i]['ndcg']['10'], step)
-                                writer.add_scalar(f'val_noise/{noise_map_rev[i]}_ndcg@max', noise_perf[i]['ndcg']['max'], step)
+                                writer.add_scalar(
+                                    f'val_noise/{noise_map_rev[i]}_mrr@1', noise_perf[i]['mrr']['1'], step)
+                                writer.add_scalar(
+                                    f'val_noise/{noise_map_rev[i]}_mrr@5', noise_perf[i]['mrr']['5'], step)
+                                writer.add_scalar(
+                                    f'val_noise/{noise_map_rev[i]}_mrr@10', noise_perf[i]['mrr']['10'], step)
+                                writer.add_scalar(
+                                    f'val_noise/{noise_map_rev[i]}_mrr@max', noise_perf[i]['mrr']['max'], step)
+                                writer.add_scalar(
+                                    f'val_noise/{noise_map_rev[i]}_hits@1', noise_perf[i]['hits']['1'], step)
+                                writer.add_scalar(
+                                    f'val_noise/{noise_map_rev[i]}_hits@5', noise_perf[i]['hits']['5'], step)
+                                writer.add_scalar(
+                                    f'val_noise/{noise_map_rev[i]}_hits@10', noise_perf[i]['hits']['10'], step)
+                                writer.add_scalar(
+                                    f'val_noise/{noise_map_rev[i]}_hits@max', noise_perf[i]['hits']['max'], step)
+                                writer.add_scalar(
+                                    f'val_noise/{noise_map_rev[i]}_ndcg@1', noise_perf[i]['ndcg']['1'], step)
+                                writer.add_scalar(
+                                    f'val_noise/{noise_map_rev[i]}_ndcg@5', noise_perf[i]['ndcg']['5'], step)
+                                writer.add_scalar(
+                                    f'val_noise/{noise_map_rev[i]}_ndcg@10', noise_perf[i]['ndcg']['10'], step)
+                                writer.add_scalar(
+                                    f'val_noise/{noise_map_rev[i]}_ndcg@max', noise_perf[i]['ndcg']['max'], step)
 
                 model.train()
                 torch.cuda.empty_cache()
