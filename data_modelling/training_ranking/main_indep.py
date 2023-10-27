@@ -94,8 +94,8 @@ if __name__ == '__main__':
     if abs(args.no_mask_perc + args.mask_mention_perc + args.mask_sentence_perc + args.mask_span_perc - 1) > 1e-5:
         raise ValueError(
             "Noise percentages do not add up to 1")
-    weights = [args.mask_span_perc, args.no_mask_perc,
-               args.mask_mention_perc, args.mask_sentence_perc]
+    weights = [args.mask_span_perc, args.mask_sentence_perc,
+               args.mask_mention_perc, args.no_mask_perc]
     neg_map = {'easy_replace_source': 0, 'hard_replace_source': 1, 'easy_replace_target': 2,
                'hard_replace_target': 3, 'easy_replace_context': 4, 'hard_replace_context': 5}
     neg_map_rev = {value: key for key, value in neg_map.items()}
@@ -168,6 +168,7 @@ if __name__ == '__main__':
                                          nn.Linear(model.config.hidden_size, 2))
 
     tokenizer = AutoTokenizer.from_pretrained(args.model_name)
+    tokenizer.save_pretrained(output_dir)
 
     # store model weights to keep track of model distance
     model_weights = torch.cat([param.data.flatten()
@@ -317,12 +318,17 @@ if __name__ == '__main__':
         logger.info(f"Freezing first {args.freeze_layers} layers")
         for param in model.base_model.embeddings.parameters():
             param.requires_grad = False
+        logger.info('Embeddings frozen')
         for param in model.base_model.encoder.layer[:args.freeze_layers].parameters():
             param.requires_grad = False
+        logger.info('First layers frozen')
 
+    accelerator.wait_for_everyone()
     # prepare all objects with accelerator
     model, classification_head, optimizer, train_loader, val_loader, scheduler = accelerator.prepare(
         model, classification_head, optimizer, train_loader, val_loader, scheduler)
+    accelerator.wait_for_everyone()
+    logger.info('All objects prepared')
 
     logger.info("Starting training")
     step = 0
@@ -470,7 +476,7 @@ if __name__ == '__main__':
                             val_loss).to('cpu')
                         running_val_loss += val_loss.sum().item()
                         
-                        n_lists += len(labels)
+                        n_lists += len(val_logits)
 
                         # join positive and negative logits into one tensor containing the probability of label=1
                         # shape (batch_size, (neg_samples + 1), 2)
@@ -677,5 +683,4 @@ if __name__ == '__main__':
 
     # close logger
     logger.info("Training finished")
-    if accelerator.is_main_process:
-        writer.close()
+    if accelerato

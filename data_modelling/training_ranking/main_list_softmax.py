@@ -94,8 +94,8 @@ if __name__ == '__main__':
     if abs(args.no_mask_perc + args.mask_mention_perc + args.mask_sentence_perc + args.mask_span_perc - 1) > 1e-5:
         raise ValueError(
             "Noise percentages do not add up to 1")
-    weights = [args.mask_span_perc, args.no_mask_perc,
-               args.mask_mention_perc, args.mask_sentence_perc]
+    weights = [args.mask_span_perc, args.mask_sentence_perc,
+               args.mask_mention_perc, args.no_mask_perc]
     neg_map = {'easy_replace_source': 0, 'hard_replace_source': 1, 'easy_replace_target': 2,
                'hard_replace_target': 3, 'easy_replace_context': 4, 'hard_replace_context': 5}
     neg_map_rev = {value: key for key, value in neg_map.items()}
@@ -168,6 +168,7 @@ if __name__ == '__main__':
                                          nn.Linear(model.config.hidden_size, 1))
 
     tokenizer = AutoTokenizer.from_pretrained(args.model_name)
+    tokenizer.save_pretrained(output_dir)
 
     # store model weights to keep track of model distance
     model_weights = torch.cat([param.data.flatten()
