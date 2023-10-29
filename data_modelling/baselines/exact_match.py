@@ -3,7 +3,6 @@ def rank_contexts(contexts, target_mentions):
     for context in contexts:
         score = 0
         for mention in target_mentions:
-            if mention in context:
-                score += 1
+            score += context.lower().count(mention.lower())
         scores.append(score / len(context))
     return scores
