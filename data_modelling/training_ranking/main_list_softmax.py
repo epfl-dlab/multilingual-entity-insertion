@@ -6,6 +6,7 @@ import time
 import random
 import re
 
+import pandas as pd
 import multiprocess
 import torch
 import torch.nn as nn
@@ -22,6 +23,7 @@ from tqdm import tqdm
 from accelerate import DistributedDataParallelKwargs
 from torch.nn import Sequential
 import gc
+from urllib.parse import unquote
 
 multiprocess.set_start_method("spawn", force=True)
 
@@ -77,6 +79,7 @@ if __name__ == '__main__':
                         help='Number of negative samples for evaluation')
     parser.add_argument('--temperature', type=float, default=1,
                         help='Temperature for softmax')
+    parser.add_argument('--insert_mentions', type=str, choices=['none', 'target', 'candidates'], default='none', help='Where to insert mention knowledge')
     parser.set_defaults(resume=False)
 
     args = parser.parse_args()
@@ -230,8 +233,14 @@ if __name__ == '__main__':
                 item['link_context'] = item['link_context'].strip()
 
                 source_input = f"{item['source_title']}{tokenizer.sep_token}{item['source_lead']}"
-                context_input = f"{item['source_section']}{tokenizer.sep_token}{item['link_context']}"
-                target_input = f"{item['target_title']}{tokenizer.sep_token}{item['target_lead']}"
+                if args.insert_mentions == 'candidates':
+                    context_input = f"{item['source_section']}{tokenizer.sep_token}{mention_map[item['target_title']]}{tokenizer.sep_token}{item['link_context']}"
+                else:
+                    context_input = f"{item['source_section']}{tokenizer.sep_token}{item['link_context']}"
+                if args.insert_mentions == 'target':
+                    target_input = f"{item['target_title']}{tokenizer.sep_token}{mention_map[item['target_title']]}{tokenizer.sep_token}{item['target_lead']}"
+                else:
+                    target_input = f"{item['target_title']}{tokenizer.sep_token}{item['target_lead']}"
 
                 output['noises'].append(noise_map[noise_type])
                 output['sources'].append(source_input)
@@ -240,7 +249,10 @@ if __name__ == '__main__':
                 for i in range(args.neg_samples_train):
                     source_section_neg = item[f"source_section_neg_{i}"]
                     link_context_neg = item[f"link_context_neg_{i}"]
-                    context_input = f"{source_section_neg}{tokenizer.sep_token}{link_context_neg}"
+                    if args.insert_mentions == 'candidates':
+                        context_input = f"{source_section_neg}{tokenizer.sep_token}{mention_map[item['target_title']]}{tokenizer.sep_token}{link_context_neg}"
+                    else:
+                        context_input = f"{source_section_neg}{tokenizer.sep_token}{link_context_neg}"
                     output[f"contexts_neg_{i}"].append(context_input)
                     output[f"strategy_neg_{i}"].append(
                         neg_map[item[f'neg_type_neg_{i}']])
@@ -250,8 +262,14 @@ if __name__ == '__main__':
                 output[f"strategy_neg_{i}"] = []
             for item in input:
                 source_input = f"{item['source_title']}{tokenizer.sep_token}{item['source_lead']}"
-                context_input = f"{item['source_section']}{tokenizer.sep_token}{item['link_context']}"
-                target_input = f"{item['target_title']}{tokenizer.sep_token}{item['target_lead']}"
+                if args.insert_mentions == 'candidates':
+                    context_input = f"{item['source_section']}{tokenizer.sep_token}{mention_map[item['target_title']]}{tokenizer.sep_token}{item['link_context']}"
+                else:
+                    context_input = f"{item['source_section']}{tokenizer.sep_token}{item['link_context']}"
+                if args.insert_mentions == 'target':
+                    target_input = f"{item['target_title']}{tokenizer.sep_token}{mention_map[item['target_title']]}{tokenizer.sep_token}{item['target_lead']}"
+                else:
+                    target_input = f"{item['target_title']}{tokenizer.sep_token}{item['target_lead']}"
                 output['noises'].append(noise_map[item['noise_strategy']])
                 output['sources'].append(source_input)
                 output['contexts'].append(context_input)
@@ -259,7 +277,10 @@ if __name__ == '__main__':
                 for i in range(args.neg_samples_eval):
                     source_section_neg = item[f"source_section_neg_{i}"]
                     link_context_neg = item[f"link_context_neg_{i}"]
-                    context_input = f"{source_section_neg}{tokenizer.sep_token}{link_context_neg}"
+                    if args.insert_mentions == 'candidates':
+                        context_input = f"{source_section_neg}{tokenizer.sep_token}{mention_map[item['target_title']]}{tokenizer.sep_token}{link_context_neg}"
+                    else:
+                        context_input = f"{source_section_neg}{tokenizer.sep_token}{link_context_neg}"
                     output[f"contexts_neg_{i}"].append(context_input)
                     output[f"strategy_neg_{i}"].append(
                         neg_map[item[f'neg_type_neg_{i}']])
@@ -306,6 +327,17 @@ if __name__ == '__main__':
                             drop_last=True,
                             collate_fn=collator,
                             pin_memory=True)
+    
+    logger.info("Loading mention knowledge")
+    mentions = pd.read_parquet(os.path.join(args.data_dir, 'mentions.parquet')).to_dict('records')
+    mention_map = {}
+    for mention in mentions:
+        target_title = unquote(mention['target_title']).replace('_', ' ')
+        if target_title in mention_map:
+            mention_map[target_title] += ' ' + mention['mention']
+        else:
+            mention_map[target_title] = mention['mention']
+    
 
     if args.full_freeze_epochs > 0:
         logger.info(

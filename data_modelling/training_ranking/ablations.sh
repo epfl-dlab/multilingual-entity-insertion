@@ -1,19 +1,47 @@
-for FREEZE_LAYERS in 0 1 2 4 6
+for MENTION_STRATEGY in "target" "candidates"
 do
-  accelerate launch main.py \
+  accelerate launch main_list_softmax.py \
     --model_name bert-base-uncased \
-    --data_dir /scratch/tsoares/wikidumps/simplewiki-NS0-20231001/ml_data \
-    --num_epochs 1 \
+    --data_dir /scratch/tsoares/wikidumps/simplewiki-NS0-20230901/ml_data_large_train \
+    --num_epochs 2 \
     --batch_size 4 \
-    --num_workers 16 \
+    --num_workers 32 \
     --lr 0.00001 \
     --gamma_lr 0.9 \
-    --print_steps 50 \
-    --save_steps 2000 \
-    --eval_steps 500 \
-    --scheduler_steps 3000 \
-    --ga_steps 2 \
+    --print_steps 250 \
+    --save_steps 5000 \
+    --eval_steps 2000 \
+    --scheduler_steps 5000 \
+    --ga_steps 1 \
     --full_freeze_epochs 0 \
-    --freeze_layers $FREEZE_LAYERS \
-    --head_lr_factor 50
+    --freeze_layers 2 \
+    --head_lr_factor 50 \
+    --neg_samples_train 9 \
+    --neg_samples_eval 19 \
+    --temperature 1 \
+    --insert_mentions $MENTION_STRATEGY
+done \
+&& \
+for TEMPERATURE in 0.1 10 50 100
+do
+  accelerate launch main_list_softmax.py \
+    --model_name bert-base-uncased \
+    --data_dir /scratch/tsoares/wikidumps/simplewiki-NS0-20230901/ml_data_large_train \
+    --num_epochs 2 \
+    --batch_size 4 \
+    --num_workers 32 \
+    --lr 0.00001 \
+    --gamma_lr 0.9 \
+    --print_steps 250 \
+    --save_steps 5000 \
+    --eval_steps 2000 \
+    --scheduler_steps 5000 \
+    --ga_steps 1 \
+    --full_freeze_epochs 0 \
+    --freeze_layers 2 \
+    --head_lr_factor 50 \
+    --neg_samples_train 9 \
+    --neg_samples_eval 19 \
+    --temperature $TEMPERATURE \
+    --insert_mentions none
 done
