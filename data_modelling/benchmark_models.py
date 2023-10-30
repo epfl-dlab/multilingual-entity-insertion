@@ -121,16 +121,10 @@ if __name__ == '__main__':
     if 'fuzzy_match' in args.method_name:
         print('Calculating fuzzy match ranks')
         rank = []
-        counter = 0
         for context, title, lead in tqdm(zip(contexts, target_titles, target_leads), total=len(target_titles)):
-            print(context)
-            print(mention_map[title])
             scores = fuzzy_match.rank_contexts(context, mention_map[title])
             position = 1
             equals = 0
-            counter += 1
-            if counter == 10:
-                raise ValueError
             for score in scores[1:]:
                 if score > scores[0]:
                     position += 1
