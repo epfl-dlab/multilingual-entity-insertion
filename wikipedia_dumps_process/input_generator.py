@@ -35,8 +35,12 @@ def construct_negative_samples(positive_samples, neg_samples, page_sections):
         list_strategies = get_strategies(
             sample, strategies, neg_samples)
         new_samples = []
+        available_sentences = {}
+        for key in page_sections[sample['source_title']]:
+            available_sentences[key] = [i for i in range(len(page_sections[sample['source_title']][key]['sentences']))]
         for strategy in list_strategies:
             new_sample = sample.copy()
+            new_sample['label'] = 0
             if strategy == 'easy_replace_source':
                 new_sample = easy_replace_source(
                     new_sample, positive_samples)
@@ -51,11 +55,15 @@ def construct_negative_samples(positive_samples, neg_samples, page_sections):
             elif strategy == 'easy_replace_context':
                 new_sample = easy_replace_context(
                     new_sample, page_sections, pages)
+                while new_sample in new_samples:
+                    new_sample = easy_replace_context(
+                        new_sample, page_sections, pages)    
             elif strategy == 'hard_replace_context':
                 new_sample = hard_replace_context(
-                    new_sample, page_sections, pages)
-
-            new_sample['label'] = 0
+                    new_sample, page_sections, pages, available_sentences)
+                while new_sample in new_samples:
+                    new_sample = easy_replace_context(
+                        new_sample, page_sections, pages)
             new_samples.append(new_sample)
         negative_samples.extend(new_samples)
     return negative_samples
@@ -130,9 +138,9 @@ def easy_replace_context(link, page_sections, pages):
     return link
 
 
-def hard_replace_context(link, page_sections, pages):
+def hard_replace_context(link, page_sections, pages, available_sentences):
     new_context = replace_context(link['source_title'], link['target_title'], int(
-        link['depth'].split('.')[0]), page_sections)
+        link['depth'].split('.')[0]), page_sections, available_sentences)
     if new_context is None:
         link = easy_replace_context(link, page_sections, pages)
         link['neg_type'] = 'easy_replace_context'
@@ -143,11 +151,14 @@ def hard_replace_context(link, page_sections, pages):
     return link
 
 
-def replace_context(source_title, target_title, source_depth, page_sections):
+def replace_context(source_title, target_title, source_depth, page_sections, available_sentences=None):
     valid_section_ranges = {}
     for key in page_sections[source_title]:
         # don't sample from the same section
         if page_sections[source_title][key]['depth'] == source_depth:
+            continue
+        # if there are no more available sentences in this section, skip it
+        if available_sentences is not None and len(available_sentences[key]) == 0:
             continue
         good_sentences = []
         for i, sentence in enumerate(page_sections[source_title][key]['sentences']):
@@ -177,9 +188,20 @@ def replace_context(source_title, target_title, source_depth, page_sections):
             if end > start:
                 ranges.append((start, end))
         if ranges:
-            valid_section_ranges[key] = {}
-            valid_section_ranges[key]['ranges'] = ranges
-            valid_section_ranges[key]['depth'] = page_sections[source_title][key]['depth']
+            data = {'depth': page_sections[source_title][key]['depth'], 'ranges': []}
+            if available_sentences is not None:
+                for r in ranges:
+                    # find if range contains any of the available sentences
+                    range_available = []
+                    for index in available_sentences[key]:
+                        if index >= r[0] and index <= r[1]:
+                            range_available.append(index)
+                    if len(range_available) > 0:
+                        data['ranges'].append({'range': r, 'available': range_available})
+            else:
+                data['ranges'] = [{'range': r, 'available': [i for i in range(r[0], r[1] + 1)]} for r in ranges]
+            if len(data['ranges']) > 0:
+                valid_section_ranges[key] = data
 
     if len(valid_section_ranges) == 0:
         return None
@@ -190,10 +212,19 @@ def replace_context(source_title, target_title, source_depth, page_sections):
         new_section = random.choices(keys, weights=weights, k=1)[0]
         new_sentence_range = random.choices(
             valid_section_ranges[new_section]['ranges'], k=1)[0]
-        new_sentence_index = random.randint(
-            new_sentence_range[0], new_sentence_range[1])
-        new_context = " ".join(page_sections[source_title][new_section]['sentences'][max(
-            new_sentence_range[0], new_sentence_index - 5):min(new_sentence_index + 6, new_sentence_range[1] + 1)])
+        new_sentence_index = random.choices(new_sentence_range['available'], k=1)[0]
+        left_limit = max(new_sentence_range['range'][0], new_sentence_index - 5)
+        right_limit = min(new_sentence_index + 6, new_sentence_range['range'][1] + 1)
+        new_context = " ".join(page_sections[source_title][new_section]['sentences'][left_limit:right_limit])
+        # remove all the sentences from the available indices that would produce the same context
+        if available_sentences:
+            if left_limit == new_sentence_range['range'][0] and right_limit == new_sentence_range['range'][1] + 1:
+                for i in range(new_sentence_range['range'][1] - 5, new_sentence_range['range'][0] + 6):
+                    if i in available_sentences[new_section]:
+                        available_sentences[new_section].remove(i)
+            else:
+                available_sentences[new_section].remove(new_sentence_index)
+
         return {'context': new_context, 'section': new_section}
 
 
@@ -521,7 +552,8 @@ if __name__ == '__main__':
         for i, sample in enumerate(negative_samples_train):
             true_index = i // args.neg_samples_train
             rel_index = i % args.neg_samples_train
-            keys = ['link_context', 'label', 'neg_type', 'noise_strategy', 'source_section']
+            keys = ['link_context', 'label', 'neg_type',
+                    'noise_strategy', 'source_section']
             for key in keys:
                 if key in sample:
                     full_samples_train[true_index][f'{key}_neg_{rel_index}'] = sample[key]
@@ -533,7 +565,8 @@ if __name__ == '__main__':
         for i, sample in enumerate(negative_samples_val):
             true_index = i // args.neg_samples_val
             rel_index = i % args.neg_samples_val
-            keys = ['link_context', 'label', 'neg_type', 'noise_strategy', 'source_section']
+            keys = ['link_context', 'label', 'neg_type',
+                    'noise_strategy', 'source_section']
             for key in keys:
                 if key in sample:
                     full_samples_val[true_index][f'{key}_neg_{rel_index}'] = sample[key]
@@ -541,8 +574,10 @@ if __name__ == '__main__':
                     full_samples_val[true_index][f'{key}_neg_{rel_index}'] = None
         df_val_full = pd.DataFrame(full_samples_val)
 
-    df_val = df_val_full.sample(n=args.max_val_samples // (1 + args.neg_samples_val))
-    df_test = df_val_full.drop(df_val.index).sample(n=args.max_test_samples // (1 + args.neg_samples_val))
+    df_val = df_val_full.sample(
+        n=args.max_val_samples // (1 + args.neg_samples_val))
+    df_test = df_val_full.drop(df_val.index).sample(
+        n=args.max_test_samples // (1 + args.neg_samples_val))
 
     df_val = df_val.reset_index(drop=True)
     df_test = df_test.reset_index(drop=True)

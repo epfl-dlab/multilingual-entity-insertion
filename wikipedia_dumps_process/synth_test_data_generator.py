@@ -8,6 +8,11 @@ import random
 import urllib
 import re
 
+def update_targets(target_name, redirect_map):
+    if target_name in redirect_map:
+        return redirect_map[target_name]
+    return target_name
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(
         formatter_class=argparse.ArgumentDefaultsHelpFormatter)
@@ -35,7 +40,7 @@ if __name__ == '__main__':
         raise Exception('Second month directory does not exist')
     
     # check if percentage arguments are valid
-    if args.no_mask_perc + args.mask_mention_perc + args.mask_sentence_perc + args.mask_paragraph_perc != 1:
+    if abs(args.no_mask_perc + args.mask_mention_perc + args.mask_sentence_perc + args.mask_paragraph_perc - 1) > 1e-5:
         raise Exception('The sum of the masking percentages should be 1')
     if args.no_mask_perc < 0 or args.no_mask_perc > 1:
         raise Exception('The no mask percentage should be between 0 and 1')
@@ -58,13 +63,13 @@ if __name__ == '__main__':
     # get the page files for the second month
     second_month_page_files = glob(
         os.path.join(args.second_month_dir, "pages*"))
-
+    
     print('Loading data')
     dfs = []
     for file in tqdm(first_month_link_files):
         dfs.append(pd.read_parquet(file))
     df_1 = pd.concat(dfs)
-
+    
     dfs = []
     for file in tqdm(second_month_link_files):
         dfs.append(pd.read_parquet(file))
@@ -74,6 +79,11 @@ if __name__ == '__main__':
     for file in tqdm(second_month_page_files):
         dfs.append(pd.read_parquet(file))
     df_pages = pd.concat(dfs)
+    
+    redirect_map = pd.read_parquet(os.path.join(args.second_month_dir, 'redirect_map.parquet'))
+    redirect_map = redirect_map.to_dict()['redirect']
+    
+    df_1['target_title'] = df_1['target_title'].apply(lambda x: update_targets(x, redirect_map))
 
     print('Converting data into a better structure')
     df_links_1 = df_1.to_dict(orient='records')
@@ -120,39 +130,27 @@ if __name__ == '__main__':
     new_links = []
     no_id_found = 0
     no_id_not_found = 0
-
+    
     for source_page in tqdm(new_data):
         if source_page not in old_data:
             new_pages += 1
             new_page_links += len(new_data[source_page])
             continue
+        old_version = old_data[source_page][list(old_data[source_page].keys())[0]][0]['source_version']
+        if new_data[source_page][list(new_data[source_page].keys())[0]][0]['source_version'] == old_version:
+            continue
         for target_page in new_data[source_page]:
             if target_page not in old_data[source_page]:
-                new_links.extend(new_data[source_page][target_page])
-            else:
-                links_with_id = []
-                links_without_id = []
                 for mod_link in new_data[source_page][target_page]:
-                    if mod_link['link_ID'] is None:
-                        links_without_id.append(mod_link)
-                    else:
-                        links_with_id.append(mod_link)
-
-                for mod_link in links_with_id:
-                    found = False
-                    for old_link in old_data[source_page][target_page]:
-                        if mod_link['link_ID'] == old_link['link_ID']:
-                            found = True
-                            break
-                    if not found:
-                        new_links.append(mod_link)
-
+                    new_links.append(mod_link)
+                    new_links[-1]['old_version'] = old_version
+            else:
                 # try to find matches in the links without ID
                 used = set([])
-                for mod_link in links_without_id:
+                for mod_link in new_data[source_page][target_page]:
                     found = False
                     for i, old_link in enumerate(old_data[source_page][target_page]):
-                        if old_link['link_ID'] is None and old_link['mention'] == mod_link['mention'] and old_link['source_section'] == mod_link['source_section'] and i not in used:
+                        if old_link['mention'] == mod_link['mention'] and old_link['source_section'] == mod_link['source_section'] and i not in used:
                             used.add(i)
                             found = True
                             no_id_found += 1
@@ -160,11 +158,12 @@ if __name__ == '__main__':
                     if not found:
                         no_id_not_found += 1
                         new_links.append(mod_link)
+                        new_links[-1]['old_version'] = old_version
 
     print(
-        f"The new data has {new_pages} new pages and {new_page_links} in these new pages")
+        f"The new data has {new_pages} new pages and {new_page_links} links in these new pages")
     print(f"There are {len(new_links)} new links in the new data")
-    print(f"From the links without ID, {no_id_found} ({no_id_found / (no_id_found + no_id_not_found) * 100:.2f}%) were matched to old links, and {no_id_not_found} ({no_id_not_found / (no_id_found + no_id_not_found) * 100:.2f}%) were not matched")
+    print(f"From the links without ID, {no_id_found} ({no_id_found / (no_id_found + no_id_not_found) * 100:.2f}%) were matched to old links.")
 
     print('Cleaning the links')
     clean_links = []
