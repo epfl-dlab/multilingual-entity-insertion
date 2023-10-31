@@ -7,11 +7,21 @@ import bz2
 from xml.etree.ElementTree import iterparse
 from html import unescape
 import re
+import urllib
+from collections import Counter
 
 def update_targets(target_name, redirect_map):
     if target_name in redirect_map:
         return redirect_map[target_name]
     return target_name
+
+def fill_version(page_title, old_versions):
+    if page_title in old_versions:
+        return old_versions[page_title]
+    return None
+
+def process_title(title):
+    return urllib.parse.unquote(title).replace('_', ' ')
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -45,8 +55,10 @@ if __name__ == '__main__':
         os.path.join(args.second_month_dir, "links*"))
 
     # get the page files for the second month
+    first_month_page_files = glob(os.path.join(args.first_month_dir, "pages*"))
     second_month_page_files = glob(
         os.path.join(args.second_month_dir, "pages*"))
+    
 
     print('Loading data')
     dfs = []
@@ -60,144 +72,117 @@ if __name__ == '__main__':
     df_2 = pd.concat(dfs)
 
     dfs = []
-    for file in tqdm(second_month_page_files):
+    for file in tqdm(first_month_page_files):
         dfs.append(pd.read_parquet(file))
-    df_pages = pd.concat(dfs)
+    df_pages_1 = pd.concat(dfs)
     
     redirect_map = pd.read_parquet(os.path.join(args.second_month_dir, 'redirect_map.parquet'))
     redirect_map = redirect_map.to_dict()['redirect']
     
     df_1['target_title'] = df_1['target_title'].apply(lambda x: update_targets(x, redirect_map))
 
-    print('Converting data into a better structure')
-    df_links_1 = df_1.to_dict(orient='records')
-    df_links_2 = df_2.to_dict(orient='records')
+    df_1 = df_1[['source_title', 'target_title', 'source_ID', 'target_ID', 'source_QID', 'target_QID', 'source_version']]
+    df_2 = df_2[['source_title', 'target_title', 'source_ID', 'target_ID', 'source_QID', 'target_QID', 'source_version']]
 
-    for row in tqdm(df_links_1):
-        for key in row:
-            if 'index' in key and row[key] == row[key]:
-                row[key] = int(row[key])
+    # group the links by source and target and count the number of links
+    df_1 = df_1.groupby(['source_title', 'target_title', 'source_ID', 'target_ID', 'source_QID', 'target_QID', 'source_version']).size().reset_index(name='count')
+    df_2 = df_2.groupby(['source_title', 'target_title', 'source_ID', 'target_ID', 'source_QID', 'target_QID', 'source_version']).size().reset_index(name='count')
+    
+    # find all new links added in df_2. Consider two cases
+    # 1. The row is not present in df_1
+    # 2. The row is present in df_1 but the count is smaller in df_1
+    df_2 = df_2.merge(df_1, how='left', on=['source_title', 'target_title', 'source_ID', 'target_ID', 'source_QID', 'target_QID'], suffixes=('_2', '_1'))
+    df_2 = df_2[(df_2['count_1'].isna()) | (df_2['count_2'] > df_2['count_1'])]
+    df_2['count_1'] = df_2['count_1'].fillna(0)
+    df_2['count'] = df_2['count_2'] - df_2['count_1']
+    df_2 = df_2[['source_title', 'target_title', 'source_ID', 'target_ID', 'source_QID', 'target_QID', 'source_version_1', 'source_version_2', 'count']]
 
-    for row in tqdm(df_links_2):
-        for key in row:
-            if 'index' in key and row[key] == row[key]:
-                row[key] = int(row[key])
-
-    old_data = {}
-    for mod_link in tqdm(df_links_1):
-        if mod_link['source_title'] not in old_data:
-            old_data[mod_link['source_title']] = {}
-        if mod_link['target_title'] not in old_data[mod_link['source_title']]:
-            old_data[mod_link['source_title']][mod_link['target_title']] = []
-        old_data[mod_link['source_title']
-                 ][mod_link['target_title']].append(mod_link)
-
-    new_data = {}
-    for mod_link in tqdm(df_links_2):
-        if mod_link['source_title'] not in new_data:
-            new_data[mod_link['source_title']] = {}
-        if mod_link['target_title'] not in new_data[mod_link['source_title']]:
-            new_data[mod_link['source_title']][mod_link['target_title']] = []
-        new_data[mod_link['source_title']
-                 ][mod_link['target_title']].append(mod_link)
-
-    no_html = set(df_pages[(df_pages['HTML'].isna()) | (
-        df_pages['HTML'] == '')]['title'].tolist())
-    no_lead = set(df_pages[(df_pages['lead_paragraph'].isna()) | (
-        df_pages['lead_paragraph'] == '')]['title'].tolist())
-    short_lead = set(df_pages[df_pages['lead_paragraph'].apply(
+    no_html = set(df_pages_1[(df_pages_1['HTML'].isna()) | (
+        df_pages_1['HTML'] == '')]['title'].tolist())
+    no_qid = set(df_pages_1[df_pages_1['QID'].isna()]['title'].tolist())
+    no_lead = set(df_pages_1[(df_pages_1['lead_paragraph'].isna()) | (
+        df_pages_1['lead_paragraph'] == '')]['title'].tolist())
+    short_lead = set(df_pages_1[df_pages_1['lead_paragraph'].apply(
         lambda x: x is not None and len(x.split()) < 6)]['title'].tolist())
-
-    print('Finding new links')
-    new_pages = 0
-    new_page_links = 0
-    new_links = []
-    no_id_found = 0
-    no_id_not_found = 0
+    old_pages = set(df_pages_1['title'].tolist())
+    # create a dictionary with page title as key and version as value
+    old_versions = df_pages_1[['title', 'version']].set_index(
+        'title').to_dict()['version']
     
-    for source_page in tqdm(new_data):
-        if source_page not in old_data:
-            new_pages += 1
-            new_page_links += len(new_data[source_page])
-            continue
-        old_version = old_data[source_page][list(old_data[source_page].keys())[0]][0]['source_version']
-        if new_data[source_page][list(new_data[source_page].keys())[0]][0]['source_version'] == old_version:
-            continue
-        for target_page in new_data[source_page]:
-            if target_page not in old_data[source_page]:
-                for mod_link in new_data[source_page][target_page]:
-                    new_links.append(mod_link)
-                    new_links[-1]['old_version'] = old_version
-            else:
-                # try to find matches in the links without ID
-                used = set([])
-                for mod_link in new_data[source_page][target_page]:
-                    found = False
-                    for i, old_link in enumerate(old_data[source_page][target_page]):
-                        if old_link['mention'] == mod_link['mention'] and old_link['source_section'] == mod_link['source_section'] and i not in used:
-                            used.add(i)
-                            found = True
-                            no_id_found += 1
-                            break
-                    if not found:
-                        no_id_not_found += 1
-                        new_links.append(mod_link)
-                        new_links[-1]['old_version'] = old_version
-
-    print(
-        f"The new data has {new_pages} new pages and {new_page_links} links in these new pages")
-    print(f"There are {len(new_links)} new links in the new data")
-    print(f"From the links without ID, {no_id_found} ({no_id_found / (no_id_found + no_id_not_found) * 100:.2f}%) were matched to old links.")
-
-    print('Cleaning the links')
-    clean_links = []
-    for link in tqdm(new_links):
-        if link['target_ID'] is None:
-            continue
-        if link['source_QID'] is None:
-            continue
-        if link['source_title'] in no_lead:
-            continue
-        if link['source_title'] in short_lead:
-            continue
-        if link['target_QID'] is None:
-            continue
-        if link['target_title'] in no_html:
-            continue
-        if link['target_title'] in no_lead:
-            continue
-        if link['target_title'] in short_lead:
-            continue
-        if link['target_title'] == mod_link['source_title']:
-            continue
-        if link['context'] is None:
-            continue
-        link['context'] = "\n".join(
-            line for line in link['context'].split("\n") if line.strip() != '')
-        clean_links.append(link)
-
-    print(
-        f"Out of the {len(new_links)} new links, {len(clean_links)} ({len(clean_links) / len(new_links) * 100:.2f}%) are valid")
- 
+    df_2['source_version_1'] = df_2['source_title'].apply(lambda x: fill_version(x, old_versions))
     
+    initial_size = df_2['count'].sum()
+    print(f'Initially, there are {df_2["count"].sum()} new candidate links.')
+    
+    df_2_removed = df_2[~df_2['source_title'].isin(old_pages)]
+    df_2 = df_2[df_2['source_title'].isin(old_pages)]
+    print(f'Out of these, {df_2_removed["count"].sum()} were removed because the source page was not present in the old data.')
+    
+    df_2_removed = df_2[~df_2['target_title'].isin(old_pages)]
+    df_2 = df_2[df_2['target_title'].isin(old_pages)]
+    print(f'Out of these, {df_2_removed["count"].sum()} were removed because the target page was not present in the old data.')
+    
+    df_2_removed = df_2[df_2['source_title'].isin(no_html)]
+    df_2 = df_2[~df_2['source_title'].isin(no_html)]
+    print(f'Out of these, {df_2_removed["count"].sum()} were removed because the source page did not have HTML.')
+    
+    df_2_removed = df_2[df_2['target_title'].isin(no_html)]
+    df_2 = df_2[~df_2['target_title'].isin(no_html)]
+    print(f'Out of these, {df_2_removed["count"].sum()} were removed because the target page did not have HTML.')
+    
+    df_2_removed = df_2[df_2['source_title'].isin(no_qid)]
+    df_2 = df_2[~df_2['source_title'].isin(no_qid)]
+    print(f'Out of these, {df_2_removed["count"].sum()} were removed because the source page did not have a QID.')  
+    
+    df_2_removed = df_2[df_2['target_title'].isin(no_qid)]
+    df_2 = df_2[~df_2['target_title'].isin(no_qid)]
+    print(f'Out of these, {df_2_removed["count"].sum()} were removed because the target page did not have a QID.')  
+    
+    df_2_removed = df_2[df_2['source_title'].isin(no_lead)]
+    df_2 = df_2[~df_2['source_title'].isin(no_lead)]
+    print(f'Out of these, {df_2_removed["count"].sum()} were removed because the source page did not have a lead paragraph.')
+    
+    df_2_removed = df_2[df_2['target_title'].isin(no_lead)]
+    df_2 = df_2[~df_2['target_title'].isin(no_lead)]
+    print(f'Out of these, {df_2_removed["count"].sum()} were removed because the target page did not have a lead paragraph.')
+    
+    df_2_removed = df_2[df_2['source_title'].isin(short_lead)]
+    df_2 = df_2[~df_2['source_title'].isin(short_lead)]
+    print(f'Out of these, {df_2_removed["count"].sum()} were removed because the source page had a short lead paragraph.')
+    
+    df_2_removed = df_2[df_2['target_title'].isin(short_lead)]
+    df_2 = df_2[~df_2['target_title'].isin(short_lead)]
+    print(f'Out of these, {df_2_removed["count"].sum()} were removed because the target page had a short lead paragraph.')
+    
+    print(f'In the end, we were left with {df_2["count"].sum()} new candidate links, with {initial_size - df_2["count"].sum()} ({(initial_size - df_2["count"].sum()) / initial_size * 100:.2f}%) removed.')    
+    
+    source_pages = len(df_2['source_title'].unique())
+    
+    df_2 = df_2.to_dict('records')
+
     link_struc = {}
-    for link in clean_links:
+    for link in df_2:
         if link['source_ID'] in link_struc:
-            link_struc[int(link['source_ID'])]['links'].append(link)
+            if link['source_ID'] in link_struc:
+                link_struc[int(link['source_ID'])]['links'].append(link)
         else:
-            link_struc[int(link['source_ID'])] = {'links': [link], 'old_version': int(link['old_version'].split('oldid=')[-1]), 'new_version': int(link['source_version'].split('oldid=')[-1]), 'page_title': link['source_title']}
+            link_struc[int(link['source_ID'])] = {'links': [link], 
+                                                  'old_version': int(link['source_version_1'].split('&oldid=')[-1]), 
+                                                  'new_version': int(link['source_version_2'].split('&oldid=')[-1]), 
+                                                  'page_title': link['source_title']}
 
     
     # read the revision history
-    expected_links = 0
-    output_links = []
+    output = []
     print("Finding links in revision history")
     source_file = os.path.join(args.raw_data_dir, f'{args.lang}wiki-{args.date}-pages-meta-history.xml.bz2')
+    processed_pages = 0
+    prev_text = ''
     with bz2.open(source_file, 'rb') as f:
         pbar = tqdm(iterparse(f, events=('end',)))
         for i, (_, elem) in enumerate(pbar):
             if i % 100_000 == 0:
-                pbar.set_description(f"{len(output_links)}/{expected_links} links found")
+                pbar.set_description(f"{len(output)} candidate links found ({processed_pages}/{source_pages} pages processed)")
             if elem.tag.endswith('page'):
                 pages = []
                 current_id = None
@@ -213,7 +198,7 @@ if __name__ == '__main__':
 
                     if child.tag.endswith('revision'):
                         for revision_data in child:
-                            if revision_data.tag.endswith('id'):
+                            if revision_data.tag.endswith('id') and not revision_data.tag.endswith('parentid'):
                                 if int(revision_data.text) < link_struc[current_id]['old_version']:
                                     break
                                 elif int(revision_data.text) > link_struc[current_id]['new_version']:
@@ -225,65 +210,47 @@ if __name__ == '__main__':
                                 pages.append({'version': version_id, 'text': clean_text})
                 if not pages:
                     continue
-                pages = sorted(pages, key=lambda x: x['version'], reverse=True)
-                expected_links += len(link_struc[current_id]['links'])
                 
-                mention_count = [{'count': None, 'mention': link['mention'], 'target': link['target_title']} for link in link_struc[current_id]['links']]
-                prev_text = ''
-                prev_version = None
-                for i, page in enumerate(pages):
-                    if i == 0:
-                        for i, mention in enumerate(mention_count):
-                            mention_count[i]['count'] = page['text'].count(f"{mention['mention']}]]")
-                    else:
-                        for i, mention in enumerate(mention_count):
-                            new_count = page['text'].count(f"{mention['mention']}]]")
-                            if new_count > mention['count']:
-                                mention_count[i]['count'] = new_count
-                            if new_count < mention['count']:
-                                diff = differ.compare(prev_text.split(), page['text'].split())
-                                difference_words = [word for word in diff]
-                                removed_blocks = []
-                                in_delete = False
-                                fixed_text = ''
-                                curr_deletion = ''
-                                for word in difference_words:
-                                    if word.startswith('-'):
-                                        if in_delete:
-                                            curr_deletion += word[2:] + ' '
-                                        else:
-                                            in_delete = True
-                                            curr_deletion = word[2:] + ' '
-                                    elif word.startswith('+'):
-                                        continue
-                                    else:
-                                        if in_delete:
-                                            removed_blocks.append({'removed_text': curr_deletion, 'index': len(fixed_text)})
-                                            curr_deletion = ''
-                                            in_delete = False
-                                        fixed_text += word + ' '
-                                if in_delete:
-                                    removed_blocks.append({'removed_text': curr_deletion, 'index': len(fixed_text)})
+                pages = sorted(pages, key=lambda x: x['version'], reverse=True)
 
-                                for block in removed_blocks:
-                                    if f"{mention['mention']}]]" in block['removed_text']:
-                                        start_position = max(block['index'] - 1_000, 0)
-                                        end_position = min(block['index'] + 1_000, len(fixed_text))
-                                        context = fixed_text[start_position:end_position]
-                                        context = re.sub(r'\[\[(.*?)\]\]', r'\1', context)
-                                        context = re.sub(r'\'{2,3}', '', context)
-                                        context = re.sub(r'\[\[(.*?)\|(.*?)\]\]', r'\1', context)
-                                        context = re.sub(r'=(.*?)=', r'\1', context)
-                                        context = re.sub(r'==(.*?)==', r'\1', context)
-                                        context = re.sub(r'===(.*?)===', r'\1', context)
-                                        output_links.append({'source': link_struc[current_id]['page_title'], 'target': mention['target'], 'context': context, 'mention': mention['mention'], 'old_version': prev_version, 'new_version': page['version']})
-                                        print(output_links[-1])
-                                                                                
-                                mention_count[i]['count'] = new_count
-       
-                    prev_text = page['text']
+                counts = [{'count': None, 'found': 0, 'title': process_title(link['target_title']).lower()} for link in link_struc[current_id]['links']]
+                prev_version = None
+                prev_text = ''
+                for j, page in enumerate(pages):
+                    page['text'] = page['text'].lower()
+                    if len(page['text']) < 0.5 * len(prev_text): # avoids edit wars
+                        continue 
+                    # find all elements in brackets
+                    elems = re.findall(r'\[\[.*?\]\]', page['text'])
+                    for i in range(len(elems)):
+                        if '|' in elems[i]:
+                            elems[i] = elems[i].split('|')[0] + ']]'
+                    # send it to a counter
+                    counter = Counter(elems)
+                    if j == 0:
+                        for k, count in enumerate(counts):
+                            counts[k]['count'] = counter.get(f"[[{count['title']}]]", 0)
+                    else:
+                        for k, count in enumerate(counts):
+                            new_count = counter.get(f"[[{count['title']}]]", 0)
+                            if new_count > count['count']:
+                                counts[k]['count'] = new_count
+                            if new_count < count['count']:
+                                for _ in range(count['count'] - new_count):
+                                    output.append({'source_title': link_struc[current_id]['page_title'],
+                                                'target_title': link_struc[current_id]['links'][k]['target_title'],
+                                                'source_ID': current_id,
+                                                'target_ID': link_struc[current_id]['links'][k]['target_ID'],
+                                                'source_QID': link_struc[current_id]['links'][k]['source_QID'],
+                                                'target_QID': link_struc[current_id]['links'][k]['target_QID'],
+                                                'missing_version': prev_version,
+                                                'found_version': page['version']})
+                                    counts[k]['found'] += 1
+                                counts[k]['count'] = new_count
                     prev_version = page['version']
-    
-    print("Saving links")
-    output_df = pd.DataFrame(output_links)
-    output_df.to_parquet(os.path.join(args.output_dir, f"{args.date}_val_links.parquet"))
+                    prev_text = page['text']
+                processed_pages += 1
+
+    print("Saving versions")
+    output_df = pd.DataFrame(output)
+    output_df.to_parquet(os.path.join(args.output_dir, f"link_versions.parquet"))
