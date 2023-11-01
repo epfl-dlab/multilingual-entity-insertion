@@ -2,7 +2,7 @@ for MENTION_STRATEGY in "target" "candidates"
 do
   accelerate launch main_list_softmax.py \
     --model_name bert-base-uncased \
-    --data_dir /scratch/tsoares/wikidumps/simplewiki-NS0-20230901/ml_data_large_train \
+    --data_dir /scratch/tsoares/wikidumps/simplewiki-NS0-20230901/ml_data_synth_large_hard \
     --num_epochs 2 \
     --batch_size 4 \
     --num_workers 32 \
@@ -26,7 +26,7 @@ for TEMPERATURE in 0.1 10 50 100
 do
   accelerate launch main_list_softmax.py \
     --model_name bert-base-uncased \
-    --data_dir /scratch/tsoares/wikidumps/simplewiki-NS0-20230901/ml_data_large_train \
+    --data_dir /scratch/tsoares/wikidumps/simplewiki-NS0-20230901/ml_data_synth_large_hard \
     --num_epochs 2 \
     --batch_size 4 \
     --num_workers 32 \
