@@ -171,7 +171,7 @@ if __name__ == '__main__':
                                          nn.Linear(model.config.hidden_size, 1))
 
     tokenizer = AutoTokenizer.from_pretrained(args.model_name)
-    tokenizer.save_pretrained(output_dir)
+    tokenizer.save_pretrained(os.path.join(output_dir, 'tokenizer'))
 
     # store model weights to keep track of model distance
     model_weights = torch.cat([param.data.flatten()
