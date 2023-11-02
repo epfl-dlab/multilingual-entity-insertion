@@ -382,23 +382,11 @@ if __name__ == '__main__':
     df_sections_val = df_sections_val.to_dict(orient='records')
 
     print('Loading mention map')
-    mention_map_1 = pd.read_parquet(os.path.join(
+    mention_map = pd.read_parquet(os.path.join(
         args.input_dir_train, 'mention_map.parquet'))
-    mention_map_1 = mention_map_1.to_dict(orient='records')
-    mention_map_2 = pd.read_parquet(os.path.join(
-        args.input_month2_dir, 'mention_map.parquet'))
-    mention_map_2 = mention_map_2.to_dict(orient='records')
+    mention_map_dict = mention_map.to_dict(orient='records')
     entity_map = {}
-    for row in mention_map_1:
-        title = unencode_title(row['target_title'])
-        mention = row['mention']
-        if mention == '':
-            continue
-        if title in entity_map:
-            entity_map[title].add(mention)
-        else:
-            entity_map[title] = set([mention])
-    for row in mention_map_2:
+    for row in mention_map_dict:
         title = unencode_title(row['target_title'])
         mention = row['mention']
         if mention == '':
@@ -593,3 +581,6 @@ if __name__ == '__main__':
         args.output_dir, 'train', 'train.parquet'))
     df_val.to_parquet(os.path.join(args.output_dir, 'val', 'val.parquet'))
     df_test.to_parquet(os.path.join(args.output_dir, 'test', 'test.parquet'))
+    
+    # copy mention map to output directory
+    mention_map.to_parquet(os.path.join(args.output_dir, 'mention_map.parquet'))
