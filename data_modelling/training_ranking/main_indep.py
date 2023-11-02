@@ -5,6 +5,7 @@ import os
 import time
 import random
 import re
+import pandas as pd
 
 import multiprocess
 import torch
@@ -22,6 +23,7 @@ from tqdm import tqdm
 from accelerate import DistributedDataParallelKwargs
 from torch.nn import Sequential
 import gc
+from urllib.parse import unquote
 
 multiprocess.set_start_method("spawn", force=True)
 
@@ -77,7 +79,11 @@ if __name__ == '__main__':
                         help='Number of negative samples for evaluation')
     parser.add_argument('--temperature', type=float, default=1,
                         help='Temperature for softmax')
-    parser.set_defaults(resume=False)
+    parser.add_argument('--insert_mention', type=str, choices=[
+                        'none', 'target', 'candidates'], default='none', help='Where to insert mention knowledge')
+    parser.add_argument('--insert_section', action='store_true',
+                        help='Whether to insert section knowledge')
+    parser.set_defaults(resume=False, insert_section=False)
 
     args = parser.parse_args()
 
@@ -168,7 +174,7 @@ if __name__ == '__main__':
                                          nn.Linear(model.config.hidden_size, 2))
 
     tokenizer = AutoTokenizer.from_pretrained(args.model_name)
-    tokenizer.save_pretrained(output_dir)
+    tokenizer.save_pretrained(os.path.join(output_dir, 'tokenizer'))
 
     # store model weights to keep track of model distance
     model_weights = torch.cat([param.data.flatten()
@@ -230,8 +236,19 @@ if __name__ == '__main__':
                 item['link_context'] = item['link_context'].strip()
 
                 source_input = f"{item['source_title']}{tokenizer.sep_token}{item['source_lead']}"
-                context_input = f"{item['source_section']}{tokenizer.sep_token}{item['link_context']}"
-                target_input = f"{item['target_title']}{tokenizer.sep_token}{item['target_lead']}"
+                if args.insert_section:
+                    context_input = f"{item['source_section']}{tokenizer.sep_token}"
+                else:
+                    context_input = ''
+                if args.insert_mentions == 'candidates':
+                    context_input += f"{mention_map[item['target_title']]}{tokenizer.sep_token}{item['link_context']}"
+                else:
+                    context_input += f"{item['link_context']}"
+
+                if args.insert_mentions == 'target':
+                    target_input = f"{item['target_title']}{tokenizer.sep_token}{mention_map[item['target_title']]}{tokenizer.sep_token}{item['target_lead']}"
+                else:
+                    target_input = f"{item['target_title']}{tokenizer.sep_token}{item['target_lead']}"
 
                 output['noises'].append(noise_map[noise_type])
                 output['sources'].append(source_input)
@@ -240,7 +257,14 @@ if __name__ == '__main__':
                 for i in range(args.neg_samples_train):
                     source_section_neg = item[f"source_section_neg_{i}"]
                     link_context_neg = item[f"link_context_neg_{i}"]
-                    context_input = f"{source_section_neg}{tokenizer.sep_token}{link_context_neg}"
+                    if args.insert_section:
+                        context_input = f"{source_section_neg}{tokenizer.sep_token}"
+                    else:
+                        context_input = ''
+                    if args.insert_mentions == 'candidates':
+                        context_input += f"{mention_map[item['target_title']]}{tokenizer.sep_token}{link_context_neg}"
+                    else:
+                        context_input += f"{link_context_neg}"
                     output[f"contexts_neg_{i}"].append(context_input)
                     output[f"strategy_neg_{i}"].append(
                         neg_map[item[f'neg_type_neg_{i}']])
@@ -250,8 +274,20 @@ if __name__ == '__main__':
                 output[f"strategy_neg_{i}"] = []
             for item in input:
                 source_input = f"{item['source_title']}{tokenizer.sep_token}{item['source_lead']}"
-                context_input = f"{item['source_section']}{tokenizer.sep_token}{item['link_context']}"
-                target_input = f"{item['target_title']}{tokenizer.sep_token}{item['target_lead']}"
+                if args.insert_section:
+                    context_input = f"{item['source_section']}{tokenizer.sep_token}"
+                else:
+                    context_input = ''
+                if args.insert_mentions == 'candidates':
+                    context_input += f"{mention_map[item['target_title']]}{tokenizer.sep_token}{item['link_context']}"
+                else:
+                    context_input += f"{item['link_context']}"
+
+                if args.insert_mentions == 'target':
+                    target_input = f"{item['target_title']}{tokenizer.sep_token}{mention_map[item['target_title']]}{tokenizer.sep_token}{item['target_lead']}"
+                else:
+                    target_input = f"{item['target_title']}{tokenizer.sep_token}{item['target_lead']}"
+
                 output['noises'].append(noise_map[item['noise_strategy']])
                 output['sources'].append(source_input)
                 output['contexts'].append(context_input)
@@ -259,7 +295,14 @@ if __name__ == '__main__':
                 for i in range(args.neg_samples_eval):
                     source_section_neg = item[f"source_section_neg_{i}"]
                     link_context_neg = item[f"link_context_neg_{i}"]
-                    context_input = f"{source_section_neg}{tokenizer.sep_token}{link_context_neg}"
+                    if args.insert_section:
+                        context_input = f"{source_section_neg}{tokenizer.sep_token}"
+                    else:
+                        context_input = ''
+                    if args.insert_mentions == 'candidates':
+                        context_input += f"{mention_map[item['target_title']]}{tokenizer.sep_token}{link_context_neg}"
+                    else:
+                        context_input += f"{link_context_neg}"
                     output[f"contexts_neg_{i}"].append(context_input)
                     output[f"strategy_neg_{i}"].append(
                         neg_map[item[f'neg_type_neg_{i}']])
@@ -306,6 +349,17 @@ if __name__ == '__main__':
                             drop_last=True,
                             collate_fn=collator,
                             pin_memory=True)
+    
+    logger.info("Loading mention knowledge")
+    mentions = pd.read_parquet(os.path.join(
+        args.data_dir, 'mentions.parquet')).to_dict('records')
+    mention_map = {}
+    for mention in mentions:
+        target_title = unquote(mention['target_title']).replace('_', ' ')
+        if target_title in mention_map:
+            mention_map[target_title] += ' ' + mention['mention']
+        else:
+            mention_map[target_title] = mention['mention']
 
     if args.full_freeze_epochs > 0:
         logger.info(
@@ -318,17 +372,12 @@ if __name__ == '__main__':
         logger.info(f"Freezing first {args.freeze_layers} layers")
         for param in model.base_model.embeddings.parameters():
             param.requires_grad = False
-        logger.info('Embeddings frozen')
         for param in model.base_model.encoder.layer[:args.freeze_layers].parameters():
             param.requires_grad = False
-        logger.info('First layers frozen')
 
-    accelerator.wait_for_everyone()
     # prepare all objects with accelerator
     model, classification_head, optimizer, train_loader, val_loader, scheduler = accelerator.prepare(
         model, classification_head, optimizer, train_loader, val_loader, scheduler)
-    accelerator.wait_for_everyone()
-    logger.info('All objects prepared')
 
     logger.info("Starting training")
     step = 0
@@ -474,7 +523,7 @@ if __name__ == '__main__':
 
                         val_loss = accelerator.gather_for_metrics(
                             val_loss).to('cpu')
-                        running_val_loss += val_loss.sum().item()
+                        running_val_loss += val_loss.mean().item()
 
                         n_lists += len(val_logits)
 
@@ -596,7 +645,7 @@ if __name__ == '__main__':
                                 k: v / noise_perf[i]['n_lists'] for k, v in noise_perf[i]['hits'].items()}
                             noise_perf[i]['ndcg'] = {
                                 k: v / noise_perf[i]['n_lists'] for k, v in noise_perf[i]['ndcg'].items()}
-                    running_val_loss /= n_lists
+                    running_val_loss /= len(val_loader)
 
                     logger.info(f"MRR@1: {mrr_at_k['1']}")
                     logger.info(f"MRR@5: {mrr_at_k['5']}")

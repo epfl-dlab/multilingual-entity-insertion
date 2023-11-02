@@ -1,16 +1,16 @@
-for MENTION_STRATEGY in "target" "candidates"
+for MENTION_STRATEGY in "none"
 do
   accelerate launch main_list_softmax.py \
     --model_name bert-base-uncased \
     --data_dir /scratch/tsoares/wikidumps/simplewiki-NS0-20230901/ml_data_synth_large_hard \
     --num_epochs 2 \
-    --batch_size 4 \
+    --batch_size 3 \
     --num_workers 32 \
     --lr 0.00001 \
     --gamma_lr 0.9 \
     --print_steps 250 \
     --save_steps 5000 \
-    --eval_steps 2000 \
+    --eval_steps 4000 \
     --scheduler_steps 5000 \
     --ga_steps 1 \
     --full_freeze_epochs 0 \
@@ -28,13 +28,13 @@ do
     --model_name bert-base-uncased \
     --data_dir /scratch/tsoares/wikidumps/simplewiki-NS0-20230901/ml_data_synth_large_hard \
     --num_epochs 2 \
-    --batch_size 4 \
+    --batch_size 3 \
     --num_workers 32 \
     --lr 0.00001 \
     --gamma_lr 0.9 \
     --print_steps 250 \
     --save_steps 5000 \
-    --eval_steps 2000 \
+    --eval_steps 4000 \
     --scheduler_steps 5000 \
     --ga_steps 1 \
     --full_freeze_epochs 0 \
@@ -43,5 +43,5 @@ do
     --neg_samples_train 9 \
     --neg_samples_eval 19 \
     --temperature $TEMPERATURE \
-    --insert_mentions none
+    --insert_mentions candidates
 done
