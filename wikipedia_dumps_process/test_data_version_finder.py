@@ -22,6 +22,17 @@ def fill_version(page_title, old_versions):
         return old_versions[page_title]
     return None
 
+def clean_xml(text):
+    text = re.sub(r'<!--.*?-->', '', text, flags=re.DOTALL)
+    text = text.replace('\n*', '\n')
+    # find all {{...}} elements
+    templates = re.findall(r'{{[^}]*}}', text)
+    # remove all templates containing 0 | charaters or more than 2 | characters
+    templates = [t for t in templates if t.count('|') == 0 or t.count('|') > 2]
+    for t in templates:
+        text = text.replace(t, '')
+    text = text.strip()
+    return text
 
 def process_title(title):
     return urllib.parse.unquote(title).replace('_', ' ')
@@ -248,8 +259,7 @@ if __name__ == '__main__':
                                 clean_text = unescape(revision_data.text)
                                 # remove all comments
                                 # remove multi-line comments
-                                clean_text = re.sub(
-                                    r'<!--.*?-->', '', clean_text, flags=re.DOTALL)
+                                clean_text = clean_xml(clean_text)
                                 if old == 0:
                                     pages.append(
                                         {'version': version_id, 'text': clean_text})
