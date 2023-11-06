@@ -1,0 +1,418 @@
+from numpy import argsort
+import pandas as pd
+import argparse
+from bs4 import BeautifulSoup, Comment, MarkupResemblesLocatorWarning
+import re
+import urllib
+import difflib
+from nltk import sent_tokenize
+import math
+from tqdm import tqdm
+import os
+import warnings
+from multiprocessing import Pool, cpu_count
+tqdm.pandas()
+
+warnings.filterwarnings("ignore", category=MarkupResemblesLocatorWarning)
+
+
+def fix_target_titles(title, redirect_map_1, redirect_map_2):
+    counter = 0
+    while title in redirect_map_1:
+        title = redirect_map_1[title]
+        counter += 1
+        if counter == 10:
+            break
+
+    counter = 0
+    while title in redirect_map_2:
+        title = redirect_map_2[title]
+        counter += 1
+        if counter == 10:
+            break
+    return title
+
+
+def simplify_html(html):
+    # only keep the tag with class 'mw-parser-output'
+    html = html.find('div', {'class': 'mw-parser-output'})
+    # remove all figures, tables, captions, sup, style
+    # figures
+    for figure in html.find_all('figure'):
+        figure.decompose()
+    # tables
+    for table in html.find_all('table'):
+        table.decompose()
+    # captions
+    for caption in html.find_all('caption'):
+        caption.decompose()
+    # sup
+    for sup in html.find_all('sup'):
+        sup.decompose()
+    # style
+    for style in html.find_all('style'):
+        style.decompose()
+
+    # remove all comments
+    comments = html.find_all(string=lambda text: isinstance(text, Comment))
+    [comment.extract() for comment in comments]
+
+    # remove all tags with class 'mw-editsection'
+    for tag in html.find_all('span', {'class': 'mw-editsection'}):
+        tag.decompose()
+
+    # remove all tags with class 'metadata'
+    for tag in html.find_all('div', {'class': 'metadata'}):
+        tag.decompose()
+
+    # remove all tags with class 'reflist'
+    for tag in html.find_all('div', {'class': 'reflist'}):
+        tag.decompose()
+
+    # remove all links with class 'external text'
+    for tag in html.find_all('a', {'class': 'external text'}):
+        tag.decompose()
+
+    # remove all map tags
+    for tag in html.find_all('map'):
+        tag.decompose()
+    return html
+
+
+def fix_sentence_tokenizer(sentences):
+    # for each sentence, if it is less than 50 characters, merge it with the next and previous sentences
+    i = 0
+    if len(sentences) > 1:
+        while i < len(sentences):
+            if len(sentences[i]) < 20:
+                if i > 0 and i < len(sentences) - 1:
+                    sentences[i-1] = sentences[i-1] + ' ' + \
+                        sentences[i] + ' ' + sentences[i+1]
+                    del sentences[i]
+                    del sentences[i]
+                elif i == 0:
+                    sentences[i] = sentences[i] + ' ' + sentences[i+1]
+                    del sentences[i+1]
+                else:
+                    sentences[i-1] = sentences[i-1] + ' ' + sentences[i]
+                    del sentences[i]
+            else:
+                i += 1
+
+    # dont allow for links to be separated across sentences
+    i = 0
+    while i < len(sentences):
+        while sentences[i].count('<a ') > sentences[i].count('</a>'):
+            sentences[i] = sentences[i] + ' ' + sentences[i+1]
+            del sentences[i+1]
+        i += 1
+
+    # dont allow parenthesis to be separated across sentences
+    i = 0
+    while i < len(sentences) - 1:
+        # find right-most occurrence of ')' and '(' in sentences[i]
+        right_paren_before = sentences[i].rfind(')')
+        left_paren_before = sentences[i].rfind('(')
+        right_paren_before = right_paren_before if right_paren_before != -1 else 0
+        left_paren_before = left_paren_before if left_paren_before != -1 else 0
+        # find left-most occurrence of ')' and '(' in sentences[i+1]
+        right_paren_after = sentences[i+1].find(')')
+        left_paren_after = sentences[i+1].find('(')
+        right_parent_after = right_paren_after if right_paren_after != - \
+            1 else len(sentences[i+1])
+        left_parent_after = left_paren_after if left_paren_after != - \
+            1 else len(sentences[i+1])
+
+        if right_paren_before < left_paren_before and right_parent_after < left_paren_after:
+            sentences[i] = sentences[i] + ' ' + sentences[i+1]
+            del sentences[i+1]
+        else:
+            i += 1
+
+    # dont allow list items to be separated across sentences
+    i = 0
+    while i < len(sentences) - 1:
+        while sentences[i].count('<li>') > sentences[i].count('</li>'):
+            sentences[i] = sentences[i] + ' ' + sentences[i+1]
+            del sentences[i+1]
+        i += 1
+
+    # force </li> to act as a separator
+    i = 0
+    while i < len(sentences):
+        if '</li>' in sentences[i]:
+            extra_sentences = [
+                s.strip() + '</li>' for s in sentences[i].split('</li>') if s.strip() != '']
+            del sentences[i]
+            sentences = sentences[:i] + extra_sentences + sentences[i:]
+        i += 1
+
+    # dont allow h2 tags to be separated across sentences
+    i = 0
+    while i < len(sentences):
+        while sentences[i].count('<h2>') != sentences[i].count('</h2>'):
+            sentences[i] = sentences[i] + ' ' + sentences[i+1]
+            del sentences[i+1]
+        i += 1
+
+    # force <h2> to act as a separator
+    i = 0
+    while i < len(sentences):
+        if '<h2>' in sentences[i]:
+            extra_sentences = [s.strip() for s in sentences[i].split('<h2>')]
+            extra_sentences[1:] = ['<h2>' + s for s in extra_sentences[1:]]
+            extra_sentences = [s for s in extra_sentences if s != '']
+            del sentences[i]
+            sentences = sentences[:i] + extra_sentences + sentences[i:]
+        i += 1
+
+    return sentences
+
+
+def process_version(input):
+    output = []
+    d = difflib.Differ()
+    file_1 = os.path.join(
+        args.html_dir, f"{input['source_ID']}_{input['first_version']}.html")
+    with open(file_1, 'r') as f:
+        text_1 = f.read()
+    html_1 = BeautifulSoup(text_1, 'html.parser')
+    html_1_clean = simplify_html(html_1)
+    text_1 = "\n".join(
+        [line for line in html_1_clean.prettify().split('\n') if line.strip() != ''])
+    sentences_1 = sent_tokenize(text_1)
+    sentences_1 = fix_sentence_tokenizer(sentences_1)
+    for second_version in input['versions']:
+        file_2 = os.path.join(
+            args.html_dir, f"{input['source_ID']}_{second_version}.html")
+        with open(file_2, 'r') as f:
+            text_2 = f.read()
+        html_2 = BeautifulSoup(text_2, 'html.parser')
+        html_2_clean = simplify_html(html_2)
+        text_2 = "\n".join(
+            [line for line in html_2_clean.prettify().split('\n') if line.strip() != ''])
+        sentences_2 = sent_tokenize(text_2)
+        sentences_2 = fix_sentence_tokenizer(sentences_2)
+
+        original_lead = ''
+        original_sentences = []
+        new_sentences = []
+        section_original = 'Lead'
+        section_new = 'Lead'
+        diff = d.compare(sentences_1, sentences_2)
+        for line in diff:
+            if line.startswith('?'):
+                continue
+            elif line.startswith('+'):
+                soup = BeautifulSoup(line[2:].strip(), 'html.parser')
+                clean_text = soup.text.strip()
+                if clean_text == '':
+                    continue
+                h2 = soup.find('h2')
+                if h2 is not None:
+                    section_new = h2.text.strip()
+                new_sentences.append({'added': True,
+                                      'index': len(new_sentences),
+                                      'match': None,
+                                      'section': section_new,
+                                      'clean_sentence': clean_text,
+                                      'raw_sentence': line[2:].strip()})
+                words = [word.strip() for word in new_sentences[-1]['clean_sentence'].replace('\n', '').split(' ') if word != '']
+                freqs = {}
+                for word in words:
+                    freqs[word] = freqs.get(word, 0) + 1
+                norm = math.sqrt(sum([freqs[word]**2 for word in freqs]))
+                best_match = {'index': None, 'score': 0}
+                for i, sentence in enumerate(original_sentences):
+                    if not sentence['removed']:
+                        continue
+                    words = [word.strip() for word in sentence['clean_sentence'].replace('\n', '').split(' ') if word != '']
+                    freqs_2 = {}
+                    for word in words:
+                        freqs_2[word] = freqs_2.get(word, 0) + 1
+                    norm_2 = math.sqrt(
+                        sum([freqs_2[word]**2 for word in freqs_2]))
+                    score = 0
+                    for word in freqs:
+                        score += freqs[word] * freqs_2.get(word, 0)
+                    score /= (norm * norm_2)
+                    if score > best_match['score']:
+                        best_match['index'] = i
+                        best_match['score'] = score
+                    if best_match['score'] > 0.5:
+                        original_sentences[best_match['index']
+                                           ]['match'] = new_sentences[-1]['index']
+                        new_sentences[-1]['match'] = original_sentences[best_match['index']]['index']
+            elif line.startswith('-'):
+                soup = BeautifulSoup(line[2:].strip(), 'html.parser')
+                clean_text = soup.text.strip()
+                if clean_text == '':
+                    continue
+                h2 = soup.find('h2')
+                if h2 is not None:
+                    section_original = h2.text.strip()
+                original_sentences.append({'removed': True,
+                                           'index': len(original_sentences),
+                                           'match': None,
+                                           'section': section_original,
+                                           'clean_sentence': clean_text,
+                                           'raw_sentence': line[2:].strip()})
+            else:
+                soup = BeautifulSoup(line.strip(), 'html.parser')
+                clean_text = soup.text.strip()
+                if clean_text == '':
+                    continue
+                h2 = soup.find('h2')
+                if h2 is not None:
+                    section_original = h2.text.strip()
+                    section_new = h2.text.strip()
+                original_sentences.append({'removed': False,
+                                           'index': len(original_sentences),
+                                           'match': None,
+                                           'section': section_original,
+                                           'clean_sentence': clean_text,
+                                           'raw_sentence': line.strip()})
+                new_sentences.append({'added': False,
+                                      'index': len(new_sentences),
+                                      'match': None,
+                                      'section': section_new,
+                                      'clean_sentence': clean_text,
+                                      'raw_sentence': line.strip()})
+        for sentence in new_sentences:
+            if not sentence['added']:
+                continue
+            if sentence['match'] is None:
+                context = None
+                section = sentence['section']
+            else:
+                context = []
+                min_index = max(sentence['match'] - 5, 0)
+                max_index = min(
+                    sentence['match'] + 6, len(original_sentences))
+                for i in range(min_index, max_index):
+                    if original_sentences[i]['section'] != original_sentences[sentence['match']]['section']:
+                        continue
+                    context.append(original_sentences[i]['clean_sentence'])
+                context = ' '.join(context)
+                section = original_sentences[sentence['match']]['section']
+
+            if '<a ' not in sentence['raw_sentence']:
+                continue
+            soup = BeautifulSoup(sentence['raw_sentence'], 'html.parser')
+            links = soup.find_all('a')
+            for link in links:
+                # get href
+                href = link.get('href')
+                if href is None or not href.startswith('/wiki/'):
+                    continue
+                link_text = link.text.strip()
+                if sentence['match'] is None:
+                    present = None
+                else:
+                    if link_text in original_sentences[sentence['match']]['clean_sentence']:
+                        present = True
+                    else:
+                        present = False
+                # get target title
+                target_title = fix_target_titles(
+                    href[6:], redirect_1, redirect_2)
+                if target_title in input['versions'][second_version]:
+                    output.append({
+                        'source_title': input['source_title'],
+                        'source_ID': input['source_ID'],
+                        'target_title': target_title,
+                        'context': context,
+                        'section': section,
+                        'mention_present': present,
+                        'source_lead': original_lead,
+                        'first_version': input['first_version'],
+                        'second_version': second_version,
+                    })
+    return output
+
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--versions_file', type=str,
+                        required=True, help='Path to the versions file')
+    parser.add_argument('--html_dir', type=str, required=True,
+                        help='Path to the directory containing all the HTML files')
+    parser.add_argument('--redirect_1', type=str, required=True,
+                        help='Path to the first redirect file')
+    parser.add_argument('--redirect_2', type=str, required=True,
+                        help='Path to the second redirect file')
+    parser.add_argument('--output_dir', type=str, required=True,
+                        help='Path to the output directory')
+    parser.add_argument('--n_processes', type=int, default=1,
+                        help='Number of processes to use')
+
+    args = parser.parse_args()
+
+    # check if input files exist
+    if not os.path.exists(args.versions_file):
+        raise Exception('Versions file does not exist')
+    if not os.path.exists(args.html_dir):
+        raise Exception('HTML directory does not exist')
+    if not os.path.exists(args.redirect_1):
+        raise Exception('Redirect file 1 does not exist')
+    if not os.path.exists(args.redirect_2):
+        raise Exception('Redirect file 2 does not exist')
+
+    # create the output directory if it does not exist
+    if not os.path.exists(args.output_dir):
+        os.makedirs(args.output_dir)
+
+    df_versions = pd.read_parquet(args.versions_file)
+    redirect_1 = pd.read_parquet(args.redirect_1)
+    redirect_2 = pd.read_parquet(args.redirect_2)
+
+    redirect_1 = redirect_1.to_dict()['redirect']
+    redirect_2 = redirect_2.to_dict()['redirect']
+
+    print('Fixing target titles')
+    df_versions['target_title'] = df_versions['target_title'].progress_apply(
+        lambda x: fix_target_titles(x, redirect_1, redirect_2))
+
+    print('Creating revisions dictionary')
+    df_versions = df_versions.to_dict('records')
+    revisions = {}
+    for row in tqdm(df_versions):
+        if row['first_version'] not in revisions:
+            revisions[row['first_version']] = {
+                'source_title': row['source_title'],
+                'source_ID': row['source_ID'],
+                'versions': {
+                    row['second_version']: [row['target_title']]
+                }
+            }
+        else:
+            if row['second_version'] not in revisions[row['first_version']]['versions']:
+                revisions[row['first_version']]['versions'][row['second_version']] = [row['target_title']]
+            else:
+                revisions[row['first_version']]['versions'][row['second_version']].append(row['target_title'])
+    revisions_clean = []
+    for revision in revisions:
+        revisions_clean.append({
+            'first_version': revision,
+            'source_title': revisions[revision]['source_title'],
+            'source_ID': revisions[revision]['source_ID'],
+            'versions': revisions[revision]['versions']
+        })
+
+    def initializer():
+        global redirect_1
+        global redirect_2
+        redirect_1 = pd.read_parquet(args.redirect_1)
+        redirect_2 = pd.read_parquet(args.redirect_2)
+        redirect_1 = redirect_1.to_dict()['redirect']
+        redirect_2 = redirect_2.to_dict()['redirect']
+
+    output = []
+    pool = Pool(min(cpu_count(), args.n_processes), initializer=initializer)
+    for result in tqdm(pool.imap(process_version, revisions_clean), total=len(revisions_clean)):
+        output.extend(result)
+    pool.close()
+    pool.join()
+
+    df_output = pd.DataFrame(output)
+    df_output.to_parquet(os.path.join(args.output_dir, 'test_data.parquet'))
