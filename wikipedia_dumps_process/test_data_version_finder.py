@@ -320,25 +320,13 @@ if __name__ == '__main__':
                                                    'source_ID': current_id,
                                                    'target_ID': link_struc[current_id]['links'][k]['target_ID'],
                                                    'first_version': page['version'],
-                                                   'second_version': prev_version,
-                                                   'first_text': page['text'],
-                                                   'second_text': prev_text})
+                                                   'second_version': prev_version})
                                     counts[k]['found'] += 1
                                 counts[k]['count'] = new_count
                     prev_version = page['version']
                     prev_text = page['text']
                 processed_pages += 1
                 elem.clear()
-                # if len(output) - output_len < sum([link['count'] for link in link_struc[current_id]['links']]):
-                #     print(
-                #         F"Missing {sum([link['count'] for link in link_struc[current_id]['links']]) - (len(output) - output_len)} links in page {link_struc[current_id]['page_title']}")
-                #     print(counts)
-                #     print(
-                #         f"First version: {link_struc[current_id]['old_version']}")
-                #     print(
-                #         f"Second version: {link_struc[current_id]['new_version']}")
-                #     print(
-                #         f"Page versions: {[page['version'] for page in pages]}")
                 output_len = len(output)
 
     print("Saving versions")
