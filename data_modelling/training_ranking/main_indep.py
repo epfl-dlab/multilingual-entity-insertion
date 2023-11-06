@@ -79,7 +79,7 @@ if __name__ == '__main__':
                         help='Number of negative samples for evaluation')
     parser.add_argument('--temperature', type=float, default=1,
                         help='Temperature for softmax')
-    parser.add_argument('--insert_mention', type=str, choices=[
+    parser.add_argument('--insert_mentions', type=str, choices=[
                         'none', 'target', 'candidates'], default='none', help='Where to insert mention knowledge')
     parser.add_argument('--insert_section', action='store_true',
                         help='Whether to insert section knowledge')
