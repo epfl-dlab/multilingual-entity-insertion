@@ -1,3 +1,4 @@
+from calendar import c
 from numpy import argsort
 import pandas as pd
 import argparse
@@ -152,7 +153,11 @@ def fix_sentence_tokenizer(sentences):
     while i < len(sentences):
         if '</li>' in sentences[i]:
             extra_sentences = [
-                s.strip() + '</li>' for s in sentences[i].split('</li>') if s.strip() != '']
+                s.strip() for s in sentences[i].split('</li>')]
+            extra_sentences[:-1] = [s for s in extra_sentences[:-1] if s != '']
+            extra_sentences[:-1] = [s + '</li>' for s in extra_sentences[:-1]]
+            if extra_sentences[-1] == '':
+                extra_sentences.pop()
             del sentences[i]
             sentences = sentences[:i] + extra_sentences + sentences[i:]
         i += 1
@@ -211,25 +216,27 @@ def find_negative_contexts(section_sentences, mentions, curr_section, left_index
                     context = " ".join([s['clean_sentence']
                                        for s in curr_sentences]).strip()
                     if context != '':
-                        contexts.append(context)
+                        contexts.append(
+                            {'context': context, 'section': section})
                 else:
                     for i in range(len(curr_sentences) - 10):
                         context = " ".join([s['clean_sentence']
                                            for s in curr_sentences[i:i+11]]).strip()
                         if context != '':
-                            contexts.append(context)
+                            contexts.append(
+                                {'context': context, 'section': section})
                 curr_sentences = []
         if len(curr_sentences) < 11:
             context = " ".join([s['clean_sentence']
                                for s in curr_sentences]).strip()
             if context != '':
-                contexts.append(context)
+                contexts.append({'context': context, 'section': section})
         else:
             for i in range(len(curr_sentences) - 10):
                 context = " ".join([s['clean_sentence']
                                    for s in curr_sentences[i:i+11]]).strip()
                 if context != '':
-                    contexts.append(context)
+                    contexts.append({'context': context, 'section': section})
     return contexts
 
 
@@ -289,7 +296,7 @@ def process_version(input):
                 norm = math.sqrt(sum([freqs[word]**2 for word in freqs]))
                 best_match = {'index': None, 'score': 0}
                 for i, sentence in enumerate(all_sentences):
-                    if sentence['status'] != 'removed':
+                    if sentence['status'] != 'removed' or sentence['match'] is not None:
                         continue
                     words = [word.strip() for word in sentence['clean_sentence'].replace(
                         '\n', ' ').split(' ') if word != '']
@@ -305,10 +312,10 @@ def process_version(input):
                     if score > best_match['score']:
                         best_match['index'] = i
                         best_match['score'] = score
-                    if best_match['score'] > 0.5:
-                        all_sentences[best_match['index']
-                                      ]['match'] = all_sentences[-1]['index']
-                        all_sentences[-1]['match'] = all_sentences[best_match['index']]['index']
+                if best_match['score'] > 0.5:
+                    all_sentences[best_match['index']
+                                  ]['match'] = all_sentences[-1]['index']
+                    all_sentences[-1]['match'] = all_sentences[best_match['index']]['index']
             elif line.startswith('-'):
                 soup = BeautifulSoup(line[2:].strip(), 'html.parser')
                 clean_text = soup.text.strip(' ')
@@ -324,6 +331,36 @@ def process_version(input):
                                       'section_original': section_original,
                                       'clean_sentence': clean_text,
                                       'raw_sentence': line[2:].strip()})
+
+                words = [word.strip() for word in all_sentences[-1]
+                         ['clean_sentence'].replace('\n', ' ').split(' ') if word != '']
+                freqs = {}
+                for word in words:
+                    freqs[word] = freqs.get(word, 0) + 1
+                norm = math.sqrt(sum([freqs[word]**2 for word in freqs]))
+                best_match = {'index': None, 'score': 0}
+                for i, sentence in enumerate(all_sentences):
+                    if sentence['status'] != 'added' or sentence['match'] is not None:
+                        continue
+                    words = [word.strip() for word in sentence['clean_sentence'].replace(
+                        '\n', ' ').split(' ') if word != '']
+                    freqs_2 = {}
+                    for word in words:
+                        freqs_2[word] = freqs_2.get(word, 0) + 1
+                    norm_2 = math.sqrt(
+                        sum([freqs_2[word]**2 for word in freqs_2]))
+                    score = 0
+                    for word in freqs:
+                        score += freqs[word] * freqs_2.get(word, 0)
+                    score /= (norm * norm_2)
+                    if score > best_match['score']:
+                        best_match['index'] = i
+                        best_match['score'] = score
+                if best_match['score'] > 0.5:
+                    all_sentences[best_match['index']
+                                  ]['match'] = all_sentences[-1]['index']
+                    all_sentences[-1]['match'] = all_sentences[best_match['index']]['index']
+
                 if section_original == 'Lead':
                     original_lead += ' ' + all_sentences[-1]['clean_sentence']
             else:
@@ -359,13 +396,15 @@ def process_version(input):
             if sentence['match'] is None:
                 direct_match = False
                 section = sentence['section_original']
+                new_section = sentence['section_new']
                 # go through the previous 10 and next 10 sentences
                 # if any of these is neutral and has the same section, use it as context
                 # if any of these is added and has a match and has the same section, jump to the match and
                 left_index = sentence['index'] - 1
                 left_context = []
-                matched_removed = set([])
                 counter = 0
+                continuous_left_added_text = []
+                accept = True
                 while left_index >= 0 and counter < 10 and len(left_context) < 5:
                     counter += 1
                     if all_sentences[left_index]['section_original'] != sentence['section_original']:
@@ -373,16 +412,20 @@ def process_version(input):
                     if all_sentences[left_index]['status'] == 'neutral':
                         left_context.append(
                             all_sentences[left_index]['clean_sentence'])
-                    elif all_sentences[left_index]['status'] == 'added' and all_sentences[left_index]['match'] is not None:
-                        matched_removed.add(all_sentences[left_index]['match'])
-                    elif all_sentences[left_index]['status'] == 'removed' and all_sentences[left_index]['index'] in matched_removed:
-                        left_context.append(
+                        accept = False
+                    elif all_sentences[left_index]['status'] == 'added' and accept and all_sentences[left_index]['match'] is None:
+                        continuous_left_added_text.append(
                             all_sentences[left_index]['clean_sentence'])
+                    elif all_sentences[left_index]['status'] == 'removed':
+                        accept = False
+                        if all_sentences[left_index]['match'] is not None and all_sentences[left_index]['match'] < sentence['index'] + 11:
+                            left_context.append(
+                                all_sentences[left_index]['clean_sentence'])
                     left_index -= 1
                 right_index = sentence['index'] + 11
                 right_context = []
-                matched_removed = set([])
                 rightmost_index = sentence['index'] + 1
+                continuous_right_added_text = []
                 while right_index > sentence['index']:
                     if right_index >= len(all_sentences) or all_sentences[right_index]['section_original'] != sentence['section_original']:
                         right_index -= 1
@@ -390,19 +433,24 @@ def process_version(input):
                     if all_sentences[right_index]['status'] == 'neutral':
                         right_context.append(
                             all_sentences[right_index]['clean_sentence'])
+                        continuous_right_added_text = []
                         rightmost_index = max(rightmost_index, right_index)
-                    elif all_sentences[right_index]['status'] == 'added' and all_sentences[right_index]['match'] is not None:
-                        matched_removed.add(
-                            all_sentences[right_index]['match'])
-                    elif all_sentences[right_index]['status'] == 'removed' and all_sentences[right_index]['index'] in matched_removed:
-                        right_context.append(
+                    elif all_sentences[right_index]['status'] == 'added' and all_sentences[right_index]['match'] is None:
+                        continuous_right_added_text.append(
                             all_sentences[right_index]['clean_sentence'])
-                        rightmost_index = max(rightmost_index, right_index)
+                    elif all_sentences[right_index]['status'] == 'removed':
+                        continuous_right_added_text = []
+                        if all_sentences[right_index]['index'] is not None and all_sentences[right_index]['index'] > sentence['index'] - 11:
+                            right_context.append(
+                                all_sentences[right_index]['clean_sentence'])
+                            rightmost_index = max(rightmost_index, right_index)
                     right_index -= 1
                 right_context = right_context[-5:]
                 right_index = rightmost_index
                 context = ' '.join(
                     left_context[::-1]) + ' '.join(right_context[::-1])
+                # added_text = ' '.join(
+                #     continuous_left_added_text[::-1]) + sentence['clean_sentence'] + ' '.join(continuous_right_added_text[::-1])
             else:
                 direct_match = True
                 left_context = []
@@ -411,7 +459,7 @@ def process_version(input):
                     if all_sentences[left_index]['status'] == 'added':
                         left_index -= 1
                         continue
-                    if all_sentences[left_index]['section_original'] != all_sentences[sentence['match']]['section_original'] or all_sentences[left_index]['section_new'] != all_sentences[sentence['match']]['section_new']:
+                    if all_sentences[left_index]['section_original'] != all_sentences[sentence['match']]['section_original']:
                         break
                     left_context.append(
                         all_sentences[left_index]['clean_sentence'])
@@ -430,6 +478,7 @@ def process_version(input):
                 context = ' '.join(left_context[::-1]) + ' ' + all_sentences[sentence['match']
                                                                              ]['clean_sentence'] + ' ' + ' '.join(right_context)
                 section = all_sentences[sentence['match']]['section_original']
+                new_section = sentence['section_new']
 
             if '<a ' not in sentence['raw_sentence']:
                 continue
@@ -442,14 +491,28 @@ def process_version(input):
                     continue
                 link_text = link.text.strip()
                 if sentence['match'] is None:
-                    present = link_text.lower() in context.lower()
+                    present = False
+                    if new_section not in section_sentences:
+                        missing_category = 'missing_section'
+                    else:
+                        if continuous_left_added_text == [] and continuous_right_added_text == []:
+                            if sentence['clean_sentence'].lower().strip() == link_text.lower():
+                                missing_category = 'missing_mention'
+                            else:
+                                missing_category = 'missing_sentence'
+                        else:
+                            missing_category = 'missing_paragraph'
+
                 else:
                     present = link_text.lower(
                     ) in all_sentences[sentence['match']]['clean_sentence'].lower()
+                    missing_category = None if present else 'missing_mention'
+
                 # get target title
                 target_title = fix_target_titles(
                     href[6:], redirect_1, redirect_2)
-                mentions = mentions_map.get(target_title, [urllib.parse.unquote(target_title).replace('_', ' ')])
+                mentions = mentions_map.get(
+                    target_title, [urllib.parse.unquote(target_title).replace('_', ' ')])
                 negative_contexts = find_negative_contexts(
                     section_sentences, mentions, section, left_index, right_index)
                 if target_title in input['versions'][second_version]:
@@ -464,6 +527,7 @@ def process_version(input):
                         'first_version': input['first_version'],
                         'second_version': second_version,
                         'direct_match': direct_match,
+                        'missing_category': missing_category,
                         'negative_contexts': str(negative_contexts)
                     })
     return output

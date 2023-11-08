@@ -117,80 +117,81 @@ if __name__ == '__main__':
                       'source_title', 'target_title', 'source_ID', 'target_ID'], suffixes=('_2', '_1'))
     df_2 = df_2[(df_2['count_1'].isna()) | (df_2['count_2'] > df_2['count_1'])]
     df_2['count_1'] = df_2['count_1'].fillna(0)
+    df_2['source_version_1']= df_2['source_version_1'].fillna('&oldid=0')
     df_2['count'] = df_2['count_2'] - df_2['count_1']
     df_2 = df_2[['source_title', 'target_title', 'source_ID',
                  'target_ID', 'source_version_1', 'source_version_2', 'count']]
 
-    no_html = set(df_pages_1[(df_pages_1['HTML'].isna()) | (
-        df_pages_1['HTML'] == '')]['title'].tolist())
-    no_qid = set(df_pages_1[df_pages_1['QID'].isna()]['title'].tolist())
-    no_lead = set(df_pages_1[(df_pages_1['lead_paragraph'].isna()) | (
-        df_pages_1['lead_paragraph'] == '')]['title'].tolist())
-    short_lead = set(df_pages_1[df_pages_1['lead_paragraph'].apply(
-        lambda x: x is not None and len(x.split()) < 6)]['title'].tolist())
-    old_pages = set(df_pages_1['title'].tolist())
+    # no_html = set(df_pages_1[(df_pages_1['HTML'].isna()) | (
+    #     df_pages_1['HTML'] == '')]['title'].tolist())
+    # no_qid = set(df_pages_1[df_pages_1['QID'].isna()]['title'].tolist())
+    # no_lead = set(df_pages_1[(df_pages_1['lead_paragraph'].isna()) | (
+    #     df_pages_1['lead_paragraph'] == '')]['title'].tolist())
+    # short_lead = set(df_pages_1[df_pages_1['lead_paragraph'].apply(
+    #     lambda x: x is not None and len(x.split()) < 6)]['title'].tolist())
+    # old_pages = set(df_pages_1['title'].tolist())
     # create a dictionary with page title as key and version as value
-    old_versions = df_pages_1[['title', 'version']].set_index(
-        'title').to_dict()['version']
+    # old_versions = df_pages_1[['title', 'version']].set_index(
+    #     'title').to_dict()['version']
 
-    df_2['source_version_1'] = df_2['source_title'].apply(
-        lambda x: fill_version(x, old_versions))
+    # df_2['source_version_1'] = df_2['source_title'].apply(
+    #     lambda x: fill_version(x, old_versions))
 
     initial_size = df_2['count'].sum()
     print(f'Initially, there are {df_2["count"].sum()} new candidate links.')
 
-    df_2_removed = df_2[~df_2['source_title'].isin(old_pages)]
-    df_2 = df_2[df_2['source_title'].isin(old_pages)]
-    print(
-        f'Out of these, {df_2_removed["count"].sum()} were removed because the source page was not present in the old data.')
+    # df_2_removed = df_2[~df_2['source_title'].isin(old_pages)]
+    # df_2 = df_2[df_2['source_title'].isin(old_pages)]
+    # print(
+    #     f'Out of these, {df_2_removed["count"].sum()} were removed because the source page was not present in the old data.')
 
-    df_2_removed = df_2[~df_2['target_title'].isin(old_pages)]
-    df_2 = df_2[df_2['target_title'].isin(old_pages)]
-    print(
-        f'Out of these, {df_2_removed["count"].sum()} were removed because the target page was not present in the old data.')
+    # df_2_removed = df_2[~df_2['target_title'].isin(old_pages)]
+    # df_2 = df_2[df_2['target_title'].isin(old_pages)]
+    # print(
+    #     f'Out of these, {df_2_removed["count"].sum()} were removed because the target page was not present in the old data.')
 
-    df_2_removed = df_2[df_2['source_title'].isin(no_html)]
-    df_2 = df_2[~df_2['source_title'].isin(no_html)]
-    print(
-        f'Out of these, {df_2_removed["count"].sum()} were removed because the source page did not have HTML.')
+    # df_2_removed = df_2[df_2['source_title'].isin(no_html)]
+    # df_2 = df_2[~df_2['source_title'].isin(no_html)]
+    # print(
+    #     f'Out of these, {df_2_removed["count"].sum()} were removed because the source page did not have HTML.')
 
-    df_2_removed = df_2[df_2['target_title'].isin(no_html)]
-    df_2 = df_2[~df_2['target_title'].isin(no_html)]
-    print(
-        f'Out of these, {df_2_removed["count"].sum()} were removed because the target page did not have HTML.')
+    # df_2_removed = df_2[df_2['target_title'].isin(no_html)]
+    # df_2 = df_2[~df_2['target_title'].isin(no_html)]
+    # print(
+    #     f'Out of these, {df_2_removed["count"].sum()} were removed because the target page did not have HTML.')
 
-    df_2_removed = df_2[df_2['source_title'].isin(no_qid)]
-    df_2 = df_2[~df_2['source_title'].isin(no_qid)]
-    print(
-        f'Out of these, {df_2_removed["count"].sum()} were removed because the source page did not have a QID.')
+    # df_2_removed = df_2[df_2['source_title'].isin(no_qid)]
+    # df_2 = df_2[~df_2['source_title'].isin(no_qid)]
+    # print(
+    #     f'Out of these, {df_2_removed["count"].sum()} were removed because the source page did not have a QID.')
 
-    df_2_removed = df_2[df_2['target_title'].isin(no_qid)]
-    df_2 = df_2[~df_2['target_title'].isin(no_qid)]
-    print(
-        f'Out of these, {df_2_removed["count"].sum()} were removed because the target page did not have a QID.')
+    # df_2_removed = df_2[df_2['target_title'].isin(no_qid)]
+    # df_2 = df_2[~df_2['target_title'].isin(no_qid)]
+    # print(
+    #     f'Out of these, {df_2_removed["count"].sum()} were removed because the target page did not have a QID.')
 
-    df_2_removed = df_2[df_2['source_title'].isin(no_lead)]
-    df_2 = df_2[~df_2['source_title'].isin(no_lead)]
-    print(
-        f'Out of these, {df_2_removed["count"].sum()} were removed because the source page did not have a lead paragraph.')
+    # df_2_removed = df_2[df_2['source_title'].isin(no_lead)]
+    # df_2 = df_2[~df_2['source_title'].isin(no_lead)]
+    # print(
+    #     f'Out of these, {df_2_removed["count"].sum()} were removed because the source page did not have a lead paragraph.')
 
-    df_2_removed = df_2[df_2['target_title'].isin(no_lead)]
-    df_2 = df_2[~df_2['target_title'].isin(no_lead)]
-    print(
-        f'Out of these, {df_2_removed["count"].sum()} were removed because the target page did not have a lead paragraph.')
+    # df_2_removed = df_2[df_2['target_title'].isin(no_lead)]
+    # df_2 = df_2[~df_2['target_title'].isin(no_lead)]
+    # print(
+    #     f'Out of these, {df_2_removed["count"].sum()} were removed because the target page did not have a lead paragraph.')
 
-    df_2_removed = df_2[df_2['source_title'].isin(short_lead)]
-    df_2 = df_2[~df_2['source_title'].isin(short_lead)]
-    print(
-        f'Out of these, {df_2_removed["count"].sum()} were removed because the source page had a short lead paragraph.')
+    # df_2_removed = df_2[df_2['source_title'].isin(short_lead)]
+    # df_2 = df_2[~df_2['source_title'].isin(short_lead)]
+    # print(
+    #     f'Out of these, {df_2_removed["count"].sum()} were removed because the source page had a short lead paragraph.')
 
-    df_2_removed = df_2[df_2['target_title'].isin(short_lead)]
-    df_2 = df_2[~df_2['target_title'].isin(short_lead)]
-    print(
-        f'Out of these, {df_2_removed["count"].sum()} were removed because the target page had a short lead paragraph.')
+    # df_2_removed = df_2[df_2['target_title'].isin(short_lead)]
+    # df_2 = df_2[~df_2['target_title'].isin(short_lead)]
+    # print(
+    #     f'Out of these, {df_2_removed["count"].sum()} were removed because the target page had a short lead paragraph.')
 
-    print(
-        f'In the end, we were left with {df_2["count"].sum()} new candidate links, with {initial_size - df_2["count"].sum()} ({(initial_size - df_2["count"].sum()) / initial_size * 100:.2f}%) removed.')
+    # print(
+    #     f'In the end, we were left with {df_2["count"].sum()} new candidate links, with {initial_size - df_2["count"].sum()} ({(initial_size - df_2["count"].sum()) / initial_size * 100:.2f}%) removed.')
 
     source_pages = len(df_2['source_title'].unique())
 
@@ -278,7 +279,7 @@ if __name__ == '__main__':
                 prev_version = None
                 prev_text = ''
                 for j, page in enumerate(pages):
-                    if len(page['text']) < 0.5 * len(prev_text):  # avoids edit wars
+                    if len(page['text']) < 0.5 * len(prev_text) or len(page['text']) > 5 * len(prev_text):  # avoids edit wars
                         continue
                     # find all elements in brackets
                     elems_1 = re.findall(r'\[\[.*?\]\]', page['text'])
