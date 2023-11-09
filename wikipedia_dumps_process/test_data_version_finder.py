@@ -12,8 +12,12 @@ from collections import Counter
 
 
 def update_targets(target_name, redirect_map):
-    if target_name in redirect_map:
-        return redirect_map[target_name]
+    counter = 0
+    while target_name in redirect_map:
+        target_name = redirect_map[target_name]
+        counter += 1
+        if counter > 10:
+            break
     return target_name
 
 
@@ -21,6 +25,7 @@ def fill_version(page_title, old_versions):
     if page_title in old_versions:
         return old_versions[page_title]
     return None
+
 
 def clean_xml(text):
     text = re.sub(r'<!--.*?-->', '', text, flags=re.DOTALL)
@@ -33,6 +38,7 @@ def clean_xml(text):
         text = text.replace(t, '')
     text = text.strip()
     return text
+
 
 def process_title(title):
     return urllib.parse.unquote(title).replace('_', ' ')
@@ -50,8 +56,10 @@ if __name__ == '__main__':
                         required=True, help='Output directory')
     parser.add_argument('--lang', type=str, required=True,
                         help='language of the wikipedia dump')
-    parser.add_argument('--date', type=str, required=True,
-                        help='date of the latest wikipedia dump in the format YYYYMMDD')
+    parser.add_argument('--first_date', type=str, required=True,
+                        help='date of the first wikipedia dump in the format YYYYMMDD')
+    parser.add_argument('--second_date', type=str, required=True,
+                        help='date of the second wikipedia dump in the format YYYYMMDD')
 
     args = parser.parse_args()
     # check if input directories exist
@@ -98,6 +106,8 @@ if __name__ == '__main__':
 
     df_1['target_title'] = df_1['target_title'].apply(
         lambda x: update_targets(x, redirect_map))
+    df_2['target_title'] = df_2['target_title'].apply(
+        lambda x: update_targets(x, redirect_map))
 
     df_1 = df_1[['source_title', 'target_title',
                  'source_ID', 'target_ID', 'source_version']]
@@ -117,7 +127,7 @@ if __name__ == '__main__':
                       'source_title', 'target_title', 'source_ID', 'target_ID'], suffixes=('_2', '_1'))
     df_2 = df_2[(df_2['count_1'].isna()) | (df_2['count_2'] > df_2['count_1'])]
     df_2['count_1'] = df_2['count_1'].fillna(0)
-    df_2['source_version_1']= df_2['source_version_1'].fillna('&oldid=0')
+    df_2['source_version_1'] = df_2['source_version_1'].fillna('&oldid=0')
     df_2['count'] = df_2['count_2'] - df_2['count_1']
     df_2 = df_2[['source_title', 'target_title', 'source_ID',
                  'target_ID', 'source_version_1', 'source_version_2', 'count']]
@@ -138,7 +148,7 @@ if __name__ == '__main__':
     #     lambda x: fill_version(x, old_versions))
 
     initial_size = df_2['count'].sum()
-    print(f'Initially, there are {df_2["count"].sum()} new candidate links.')
+    print(f'Initially, there are {df_2["count"].sum()} new candidate links, from {len(df_2)} src-tgt pairs.')
 
     # df_2_removed = df_2[~df_2['source_title'].isin(old_pages)]
     # df_2 = df_2[df_2['source_title'].isin(old_pages)]
@@ -203,15 +213,15 @@ if __name__ == '__main__':
             link_struc[int(link['source_ID'])]['links'].append(link)
         else:
             link_struc[int(link['source_ID'])] = {'links': [link],
-                                                  'old_version': int(link['source_version_1'].split('&oldid=')[-1]),
-                                                  'new_version': int(link['source_version_2'].split('&oldid=')[-1]),
+                                                  #   'old_version': int(link['source_version_1'].split('&oldid=')[-1]),
+                                                  #   'new_version': int(link['source_version_2'].split('&oldid=')[-1]),
                                                   'page_title': link['source_title']}
 
     # read the revision history
     output = []
     print("Finding links in revision history")
     source_file = os.path.join(
-        args.raw_data_dir, f'{args.lang}wiki-{args.date}-pages-meta-history.xml.bz2')
+        args.raw_data_dir, f'{args.lang}wiki-{args.second_date}-pages-meta-history.xml.bz2')
     processed_pages = 0
     prev_text = ''
     with bz2.open(source_file, 'rb') as f:
@@ -242,20 +252,35 @@ if __name__ == '__main__':
                     elem.clear()
                     continue
                 # go through all the children of elem in reverse order
-                old = 0
+                old = False
+                leave = False
                 for child in reversed(elem):
                     if child.tag.endswith('revision'):
                         for revision_data in child:
-                            if old == 5:
-                                break
-                            if revision_data.tag.endswith('id') and not revision_data.tag.endswith('parentid'):
-                                if int(revision_data.text) < link_struc[current_id]['old_version']:
-                                    old += 1
-                                    version_id = int(revision_data.text)
-                                elif int(revision_data.text) > link_struc[current_id]['new_version']:
+                            if revision_data.tag.endswith('timestamp'):
+                                # timestamp has format 2019-01-01T00:00:00Z
+                                # compare the timestamp with the date of the first dump and the second dump
+                                timestamp = revision_data.text
+                                timestamp = pd.to_datetime(
+                                    timestamp).tz_convert(None)
+                                first_date = pd.to_datetime(args.first_date)
+                                second_date = pd.to_datetime(args.second_date)
+                                if timestamp > second_date:
                                     break
-                                else:
-                                    version_id = int(revision_data.text)
+                                elif timestamp < first_date:
+                                    old = True
+
+                                # if timestamp is more than 1 month before the first date, set leave to True
+                                if timestamp < first_date - pd.DateOffset(months=1):
+                                    leave = True
+                            if revision_data.tag.endswith('id') and not revision_data.tag.endswith('parentid'):
+                                # if int(revision_data.text) < link_struc[current_id]['old_version']:
+                                #     old += 1
+                                #     version_id = int(revision_data.text)
+                                # elif int(revision_data.text) > link_struc[current_id]['new_version']:
+                                #     break
+                                # else:
+                                version_id = int(revision_data.text)
                             if revision_data.tag.endswith('text') and revision_data.text is not None:
                                 clean_text = unescape(revision_data.text)
                                 # remove all comments
@@ -267,6 +292,8 @@ if __name__ == '__main__':
                                 else:
                                     older_pages.append(
                                         {'version': version_id, 'text': clean_text})
+                        if leave:
+                            break
                 if not pages:
                     elem.clear()
                     continue
@@ -279,7 +306,7 @@ if __name__ == '__main__':
                 prev_version = None
                 prev_text = ''
                 for j, page in enumerate(pages):
-                    if len(page['text']) < 0.5 * len(prev_text) or len(page['text']) > 5 * len(prev_text):  # avoids edit wars
+                    if len(page['text']) < 0.5 * len(prev_text):  # avoids edit wars
                         continue
                     # find all elements in brackets
                     elems_1 = re.findall(r'\[\[.*?\]\]', page['text'])

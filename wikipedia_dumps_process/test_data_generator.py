@@ -35,8 +35,6 @@ def fix_target_titles(title, redirect_map_1, redirect_map_2):
 
 
 def simplify_html(html):
-    # only keep the tag with class 'mw-parser-output'
-    html = html.find('div', {'class': 'mw-parser-output'})
     # remove all figures, tables, captions, sup, style
     # figures
     for figure in html.find_all('figure'):
@@ -248,6 +246,9 @@ def process_version(input):
     with open(file_1, 'r') as f:
         text_1 = f.read()
     html_1 = BeautifulSoup(text_1, 'html.parser')
+    html_1 = html_1.find('div', {'class': 'mw-parser-output'})
+    if html_1 is None:
+        return []
     html_1_clean = simplify_html(html_1)
     text_1 = "\n".join(
         [line for line in str(html_1_clean).split('\n') if line.strip() != ''])
@@ -259,6 +260,9 @@ def process_version(input):
         with open(file_2, 'r') as f:
             text_2 = f.read()
         html_2 = BeautifulSoup(text_2, 'html.parser')
+        html_2 = html_2.find('div', {'class': 'mw-parser-output'})
+        if html_2 is None:
+            continue
         html_2_clean = simplify_html(html_2)
         text_2 = "\n".join(
             [line for line in str(html_2_clean).split('\n') if line.strip() != ''])
@@ -501,7 +505,7 @@ def process_version(input):
                             else:
                                 missing_category = 'missing_sentence'
                         else:
-                            missing_category = 'missing_paragraph'
+                            missing_category = 'missing_span'
 
                 else:
                     present = link_text.lower(
