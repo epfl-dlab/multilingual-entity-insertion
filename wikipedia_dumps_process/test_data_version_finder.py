@@ -12,8 +12,12 @@ from collections import Counter
 
 
 def update_targets(target_name, redirect_map):
-    if target_name in redirect_map:
-        return redirect_map[target_name]
+    counter = 0
+    while target_name in redirect_map:
+        target_name = redirect_map[target_name]
+        counter += 1
+        if counter > 10:
+            break
     return target_name
 
 
@@ -21,6 +25,7 @@ def fill_version(page_title, old_versions):
     if page_title in old_versions:
         return old_versions[page_title]
     return None
+
 
 def clean_xml(text):
     text = re.sub(r'<!--.*?-->', '', text, flags=re.DOTALL)
@@ -33,6 +38,7 @@ def clean_xml(text):
         text = text.replace(t, '')
     text = text.strip()
     return text
+
 
 def process_title(title):
     return urllib.parse.unquote(title).replace('_', ' ')
@@ -50,8 +56,10 @@ if __name__ == '__main__':
                         required=True, help='Output directory')
     parser.add_argument('--lang', type=str, required=True,
                         help='language of the wikipedia dump')
-    parser.add_argument('--date', type=str, required=True,
-                        help='date of the latest wikipedia dump in the format YYYYMMDD')
+    parser.add_argument('--first_date', type=str, required=True,
+                        help='date of the first wikipedia dump in the format YYYYMMDD')
+    parser.add_argument('--second_date', type=str, required=True,
+                        help='date of the second wikipedia dump in the format YYYYMMDD')
 
     args = parser.parse_args()
     # check if input directories exist
@@ -98,6 +106,8 @@ if __name__ == '__main__':
 
     df_1['target_title'] = df_1['target_title'].apply(
         lambda x: update_targets(x, redirect_map))
+    df_2['target_title'] = df_2['target_title'].apply(
+        lambda x: update_targets(x, redirect_map))
 
     df_1 = df_1[['source_title', 'target_title',
                  'source_ID', 'target_ID', 'source_version']]
@@ -117,80 +127,81 @@ if __name__ == '__main__':
                       'source_title', 'target_title', 'source_ID', 'target_ID'], suffixes=('_2', '_1'))
     df_2 = df_2[(df_2['count_1'].isna()) | (df_2['count_2'] > df_2['count_1'])]
     df_2['count_1'] = df_2['count_1'].fillna(0)
+    df_2['source_version_1'] = df_2['source_version_1'].fillna('&oldid=0')
     df_2['count'] = df_2['count_2'] - df_2['count_1']
     df_2 = df_2[['source_title', 'target_title', 'source_ID',
                  'target_ID', 'source_version_1', 'source_version_2', 'count']]
 
-    no_html = set(df_pages_1[(df_pages_1['HTML'].isna()) | (
-        df_pages_1['HTML'] == '')]['title'].tolist())
-    no_qid = set(df_pages_1[df_pages_1['QID'].isna()]['title'].tolist())
-    no_lead = set(df_pages_1[(df_pages_1['lead_paragraph'].isna()) | (
-        df_pages_1['lead_paragraph'] == '')]['title'].tolist())
-    short_lead = set(df_pages_1[df_pages_1['lead_paragraph'].apply(
-        lambda x: x is not None and len(x.split()) < 6)]['title'].tolist())
-    old_pages = set(df_pages_1['title'].tolist())
+    # no_html = set(df_pages_1[(df_pages_1['HTML'].isna()) | (
+    #     df_pages_1['HTML'] == '')]['title'].tolist())
+    # no_qid = set(df_pages_1[df_pages_1['QID'].isna()]['title'].tolist())
+    # no_lead = set(df_pages_1[(df_pages_1['lead_paragraph'].isna()) | (
+    #     df_pages_1['lead_paragraph'] == '')]['title'].tolist())
+    # short_lead = set(df_pages_1[df_pages_1['lead_paragraph'].apply(
+    #     lambda x: x is not None and len(x.split()) < 6)]['title'].tolist())
+    # old_pages = set(df_pages_1['title'].tolist())
     # create a dictionary with page title as key and version as value
-    old_versions = df_pages_1[['title', 'version']].set_index(
-        'title').to_dict()['version']
+    # old_versions = df_pages_1[['title', 'version']].set_index(
+    #     'title').to_dict()['version']
 
-    df_2['source_version_1'] = df_2['source_title'].apply(
-        lambda x: fill_version(x, old_versions))
+    # df_2['source_version_1'] = df_2['source_title'].apply(
+    #     lambda x: fill_version(x, old_versions))
 
     initial_size = df_2['count'].sum()
-    print(f'Initially, there are {df_2["count"].sum()} new candidate links.')
+    print(f'Initially, there are {df_2["count"].sum()} new candidate links, from {len(df_2)} src-tgt pairs.')
 
-    df_2_removed = df_2[~df_2['source_title'].isin(old_pages)]
-    df_2 = df_2[df_2['source_title'].isin(old_pages)]
-    print(
-        f'Out of these, {df_2_removed["count"].sum()} were removed because the source page was not present in the old data.')
+    # df_2_removed = df_2[~df_2['source_title'].isin(old_pages)]
+    # df_2 = df_2[df_2['source_title'].isin(old_pages)]
+    # print(
+    #     f'Out of these, {df_2_removed["count"].sum()} were removed because the source page was not present in the old data.')
 
-    df_2_removed = df_2[~df_2['target_title'].isin(old_pages)]
-    df_2 = df_2[df_2['target_title'].isin(old_pages)]
-    print(
-        f'Out of these, {df_2_removed["count"].sum()} were removed because the target page was not present in the old data.')
+    # df_2_removed = df_2[~df_2['target_title'].isin(old_pages)]
+    # df_2 = df_2[df_2['target_title'].isin(old_pages)]
+    # print(
+    #     f'Out of these, {df_2_removed["count"].sum()} were removed because the target page was not present in the old data.')
 
-    df_2_removed = df_2[df_2['source_title'].isin(no_html)]
-    df_2 = df_2[~df_2['source_title'].isin(no_html)]
-    print(
-        f'Out of these, {df_2_removed["count"].sum()} were removed because the source page did not have HTML.')
+    # df_2_removed = df_2[df_2['source_title'].isin(no_html)]
+    # df_2 = df_2[~df_2['source_title'].isin(no_html)]
+    # print(
+    #     f'Out of these, {df_2_removed["count"].sum()} were removed because the source page did not have HTML.')
 
-    df_2_removed = df_2[df_2['target_title'].isin(no_html)]
-    df_2 = df_2[~df_2['target_title'].isin(no_html)]
-    print(
-        f'Out of these, {df_2_removed["count"].sum()} were removed because the target page did not have HTML.')
+    # df_2_removed = df_2[df_2['target_title'].isin(no_html)]
+    # df_2 = df_2[~df_2['target_title'].isin(no_html)]
+    # print(
+    #     f'Out of these, {df_2_removed["count"].sum()} were removed because the target page did not have HTML.')
 
-    df_2_removed = df_2[df_2['source_title'].isin(no_qid)]
-    df_2 = df_2[~df_2['source_title'].isin(no_qid)]
-    print(
-        f'Out of these, {df_2_removed["count"].sum()} were removed because the source page did not have a QID.')
+    # df_2_removed = df_2[df_2['source_title'].isin(no_qid)]
+    # df_2 = df_2[~df_2['source_title'].isin(no_qid)]
+    # print(
+    #     f'Out of these, {df_2_removed["count"].sum()} were removed because the source page did not have a QID.')
 
-    df_2_removed = df_2[df_2['target_title'].isin(no_qid)]
-    df_2 = df_2[~df_2['target_title'].isin(no_qid)]
-    print(
-        f'Out of these, {df_2_removed["count"].sum()} were removed because the target page did not have a QID.')
+    # df_2_removed = df_2[df_2['target_title'].isin(no_qid)]
+    # df_2 = df_2[~df_2['target_title'].isin(no_qid)]
+    # print(
+    #     f'Out of these, {df_2_removed["count"].sum()} were removed because the target page did not have a QID.')
 
-    df_2_removed = df_2[df_2['source_title'].isin(no_lead)]
-    df_2 = df_2[~df_2['source_title'].isin(no_lead)]
-    print(
-        f'Out of these, {df_2_removed["count"].sum()} were removed because the source page did not have a lead paragraph.')
+    # df_2_removed = df_2[df_2['source_title'].isin(no_lead)]
+    # df_2 = df_2[~df_2['source_title'].isin(no_lead)]
+    # print(
+    #     f'Out of these, {df_2_removed["count"].sum()} were removed because the source page did not have a lead paragraph.')
 
-    df_2_removed = df_2[df_2['target_title'].isin(no_lead)]
-    df_2 = df_2[~df_2['target_title'].isin(no_lead)]
-    print(
-        f'Out of these, {df_2_removed["count"].sum()} were removed because the target page did not have a lead paragraph.')
+    # df_2_removed = df_2[df_2['target_title'].isin(no_lead)]
+    # df_2 = df_2[~df_2['target_title'].isin(no_lead)]
+    # print(
+    #     f'Out of these, {df_2_removed["count"].sum()} were removed because the target page did not have a lead paragraph.')
 
-    df_2_removed = df_2[df_2['source_title'].isin(short_lead)]
-    df_2 = df_2[~df_2['source_title'].isin(short_lead)]
-    print(
-        f'Out of these, {df_2_removed["count"].sum()} were removed because the source page had a short lead paragraph.')
+    # df_2_removed = df_2[df_2['source_title'].isin(short_lead)]
+    # df_2 = df_2[~df_2['source_title'].isin(short_lead)]
+    # print(
+    #     f'Out of these, {df_2_removed["count"].sum()} were removed because the source page had a short lead paragraph.')
 
-    df_2_removed = df_2[df_2['target_title'].isin(short_lead)]
-    df_2 = df_2[~df_2['target_title'].isin(short_lead)]
-    print(
-        f'Out of these, {df_2_removed["count"].sum()} were removed because the target page had a short lead paragraph.')
+    # df_2_removed = df_2[df_2['target_title'].isin(short_lead)]
+    # df_2 = df_2[~df_2['target_title'].isin(short_lead)]
+    # print(
+    #     f'Out of these, {df_2_removed["count"].sum()} were removed because the target page had a short lead paragraph.')
 
-    print(
-        f'In the end, we were left with {df_2["count"].sum()} new candidate links, with {initial_size - df_2["count"].sum()} ({(initial_size - df_2["count"].sum()) / initial_size * 100:.2f}%) removed.')
+    # print(
+    #     f'In the end, we were left with {df_2["count"].sum()} new candidate links, with {initial_size - df_2["count"].sum()} ({(initial_size - df_2["count"].sum()) / initial_size * 100:.2f}%) removed.')
 
     source_pages = len(df_2['source_title'].unique())
 
@@ -202,15 +213,15 @@ if __name__ == '__main__':
             link_struc[int(link['source_ID'])]['links'].append(link)
         else:
             link_struc[int(link['source_ID'])] = {'links': [link],
-                                                  'old_version': int(link['source_version_1'].split('&oldid=')[-1]),
-                                                  'new_version': int(link['source_version_2'].split('&oldid=')[-1]),
+                                                  #   'old_version': int(link['source_version_1'].split('&oldid=')[-1]),
+                                                  #   'new_version': int(link['source_version_2'].split('&oldid=')[-1]),
                                                   'page_title': link['source_title']}
 
     # read the revision history
     output = []
     print("Finding links in revision history")
     source_file = os.path.join(
-        args.raw_data_dir, f'{args.lang}wiki-{args.date}-pages-meta-history.xml.bz2')
+        args.raw_data_dir, f'{args.lang}wiki-{args.second_date}-pages-meta-history.xml.bz2')
     processed_pages = 0
     prev_text = ''
     with bz2.open(source_file, 'rb') as f:
@@ -241,20 +252,35 @@ if __name__ == '__main__':
                     elem.clear()
                     continue
                 # go through all the children of elem in reverse order
-                old = 0
+                old = False
+                leave = False
                 for child in reversed(elem):
                     if child.tag.endswith('revision'):
                         for revision_data in child:
-                            if old == 5:
-                                break
-                            if revision_data.tag.endswith('id') and not revision_data.tag.endswith('parentid'):
-                                if int(revision_data.text) < link_struc[current_id]['old_version']:
-                                    old += 1
-                                    version_id = int(revision_data.text)
-                                elif int(revision_data.text) > link_struc[current_id]['new_version']:
+                            if revision_data.tag.endswith('timestamp'):
+                                # timestamp has format 2019-01-01T00:00:00Z
+                                # compare the timestamp with the date of the first dump and the second dump
+                                timestamp = revision_data.text
+                                timestamp = pd.to_datetime(
+                                    timestamp).tz_convert(None)
+                                first_date = pd.to_datetime(args.first_date)
+                                second_date = pd.to_datetime(args.second_date)
+                                if timestamp > second_date:
                                     break
-                                else:
-                                    version_id = int(revision_data.text)
+                                elif timestamp < first_date:
+                                    old = True
+
+                                # if timestamp is more than 1 month before the first date, set leave to True
+                                if timestamp < first_date - pd.DateOffset(months=1):
+                                    leave = True
+                            if revision_data.tag.endswith('id') and not revision_data.tag.endswith('parentid'):
+                                # if int(revision_data.text) < link_struc[current_id]['old_version']:
+                                #     old += 1
+                                #     version_id = int(revision_data.text)
+                                # elif int(revision_data.text) > link_struc[current_id]['new_version']:
+                                #     break
+                                # else:
+                                version_id = int(revision_data.text)
                             if revision_data.tag.endswith('text') and revision_data.text is not None:
                                 clean_text = unescape(revision_data.text)
                                 # remove all comments
@@ -266,6 +292,8 @@ if __name__ == '__main__':
                                 else:
                                     older_pages.append(
                                         {'version': version_id, 'text': clean_text})
+                        if leave:
+                            break
                 if not pages:
                     elem.clear()
                     continue
@@ -320,25 +348,13 @@ if __name__ == '__main__':
                                                    'source_ID': current_id,
                                                    'target_ID': link_struc[current_id]['links'][k]['target_ID'],
                                                    'first_version': page['version'],
-                                                   'second_version': prev_version,
-                                                   'first_text': page['text'],
-                                                   'second_text': prev_text})
+                                                   'second_version': prev_version})
                                     counts[k]['found'] += 1
                                 counts[k]['count'] = new_count
                     prev_version = page['version']
                     prev_text = page['text']
                 processed_pages += 1
                 elem.clear()
-                # if len(output) - output_len < sum([link['count'] for link in link_struc[current_id]['links']]):
-                #     print(
-                #         F"Missing {sum([link['count'] for link in link_struc[current_id]['links']]) - (len(output) - output_len)} links in page {link_struc[current_id]['page_title']}")
-                #     print(counts)
-                #     print(
-                #         f"First version: {link_struc[current_id]['old_version']}")
-                #     print(
-                #         f"Second version: {link_struc[current_id]['new_version']}")
-                #     print(
-                #         f"Page versions: {[page['version'] for page in pages]}")
                 output_len = len(output)
 
     print("Saving versions")
