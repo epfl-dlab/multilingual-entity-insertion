@@ -213,27 +213,27 @@ def find_negative_contexts(section_sentences, mentions, curr_section, left_index
                 if len(curr_sentences) < 11:
                     context = " ".join([s['clean_sentence']
                                        for s in curr_sentences]).strip()
-                    if context != '':
+                    if len(context.split(' ')) > 10:
                         contexts.append(
                             {'context': context, 'section': section})
                 else:
                     for i in range(len(curr_sentences) - 10):
                         context = " ".join([s['clean_sentence']
                                            for s in curr_sentences[i:i+11]]).strip()
-                        if context != '':
+                        if len(context.split(' ')) > 10:
                             contexts.append(
                                 {'context': context, 'section': section})
                 curr_sentences = []
         if len(curr_sentences) < 11:
             context = " ".join([s['clean_sentence']
                                for s in curr_sentences]).strip()
-            if context != '':
+            if len(context.split(' ')) > 10:
                 contexts.append({'context': context, 'section': section})
         else:
             for i in range(len(curr_sentences) - 10):
                 context = " ".join([s['clean_sentence']
                                    for s in curr_sentences[i:i+11]]).strip()
-                if context != '':
+                if len(context.split(' ')) > 10:
                     contexts.append({'context': context, 'section': section})
     return contexts
 
