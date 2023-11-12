@@ -23,9 +23,56 @@ from tqdm import tqdm
 from accelerate import DistributedDataParallelKwargs
 from torch.nn import Sequential
 import gc
+from nltk import sent_tokenize
 from urllib.parse import unquote
 
 multiprocess.set_start_method("spawn", force=True)
+
+
+def mask_negative_contexts(context, probs):
+    sentences = [sentence.strip()
+                 for sentence in sent_tokenize(context) if sentence.strip()]
+    if len(sentences) <= 2:
+        probs['mask_span'] = 0
+    if len(sentences) == 1:
+        probs['mask_sentence'] = 0
+    words = []
+    for sentence in sentences:
+        words.extend([word for word in sentence.replace(
+            '\n', ' ').split() if word.strip()])
+    if len(words) == 1:
+        probs['mask_word'] = 0
+
+    if probs['mask_span'] + probs['mask_sentence'] + probs['mask_word'] + probs['no_mask'] == 0:
+        probs['no_mask'] = 1
+
+    mask_strategy = random.choices(['mask_span', 'mask_sentence', 'mask_mention', 'no_mask'],
+                                   weights=[probs['mask_span'], probs['mask_sentence'],
+                                            probs['mask_mention'], probs['no_mask']],
+                                   k=1)[0]
+    if mask_strategy == 'no_mask':
+        return context
+    if mask_strategy == 'mask_mention':
+        sentence_index = random.randint(0, len(sentences) - 1)
+        words = sentences[sentence_index].split(' ')
+        mask_index = random.randint(0, len(words) - 1)
+        masked_context = ''
+        for i, sentence in sentences:
+            if i != sentence_index:
+                masked_context += sentence + ' '
+            else:
+                masked_context += " ".join(
+                    [word for j, word in enumerate(words) if j != mask_index]) + ' '
+        return masked_context[:-1]
+
+    if mask_strategy == 'mask_sentence':
+        mask_index = random.randint(0, len(sentences) - 1)
+        return " ".join(sentences[:mask_index]) + " " + " ".join(sentences[mask_index+1:])
+    if mask_strategy == 'mask_span':
+        mask_length = random.randint(2, len(sentences) - 1)
+        start_index = random.randint(0, len(sentences) - mask_length)
+        return " ".join(sentences[:start_index]) + " " + " ".join(sentences[start_index + mask_length:])
+
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(
@@ -58,7 +105,7 @@ if __name__ == '__main__':
     parser.add_argument('--ga_steps', type=int, default=1,
                         help='Number of steps for gradient accumulation')
     parser.add_argument('--full_freeze_epochs', type=int, default=0,
-                        help='Number of epochs to freeze all lazyers except classification head')
+                        help='Number of epochs to freeze all layers except classification head')
     parser.add_argument('--freeze_layers', type=int, default=2,
                         help='Number of initial layers to freeze')
     parser.add_argument('--head_lr_factor', type=float, default=1,
@@ -83,7 +130,10 @@ if __name__ == '__main__':
                         'none', 'target', 'candidates'], default='none', help='Where to insert mention knowledge')
     parser.add_argument('--insert_section', action='store_true',
                         help='Whether to insert section title')
-    parser.set_defaults(resume=False, insert_section=False)
+    parser.add_argument('--mask_negatives', action='store_true',
+                        help='Whether to apply masking to negative samples')
+    parser.set_defaults(resume=False, insert_section=False,
+                        mask_negatives=False)
 
     args = parser.parse_args()
 
@@ -254,13 +304,21 @@ if __name__ == '__main__':
                 output['sources'].append(source_input)
                 output['contexts'].append(context_input)
                 output['targets'].append(target_input)
+
+                mask_probs = {'no_mask': args.no_mask_perc, 'mask_mention': args.mask_mention_perc,
+                              'mask_sentence': args.mask_sentence_perc, 'mask_span': args.mask_span_perc}
                 for i in range(args.neg_samples_train):
                     source_section_neg = item[f"source_section_neg_{i}"]
                     link_context_neg = item[f"link_context_neg_{i}"]
+                    if args.mask_negatives:
+                        link_context_neg = mask_negative_contexts(
+                            link_context_neg, mask_probs)
+
                     if args.insert_section:
                         context_input = f"{source_section_neg}{tokenizer.sep_token}"
                     else:
                         context_input = ''
+
                     if args.insert_mentions == 'candidates':
                         context_input += f"{mention_map[item['target_title']]}{tokenizer.sep_token}{link_context_neg}"
                     else:
@@ -292,13 +350,20 @@ if __name__ == '__main__':
                 output['sources'].append(source_input)
                 output['contexts'].append(context_input)
                 output['targets'].append(target_input)
+                mask_probs = {'no_mask': args.no_mask_perc, 'mask_mention': args.mask_mention_perc,
+                              'mask_sentence': args.mask_sentence_perc, 'mask_span': args.mask_span_perc}
                 for i in range(args.neg_samples_eval):
                     source_section_neg = item[f"source_section_neg_{i}"]
                     link_context_neg = item[f"link_context_neg_{i}"]
+                    if args.mask_negatives:
+                        link_context_neg = mask_negative_contexts(
+                            link_context_neg, mask_probs)
+
                     if args.insert_section:
                         context_input = f"{source_section_neg}{tokenizer.sep_token}"
                     else:
                         context_input = ''
+
                     if args.insert_mentions == 'candidates':
                         context_input += f"{mention_map[item['target_title']]}{tokenizer.sep_token}{link_context_neg}"
                     else:
