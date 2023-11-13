@@ -39,8 +39,9 @@ if __name__ == '__main__':
                         action='store_true', help='Use random section title in input')
     parser.add_argument('--use_mentions', action='store_true',
                         help='Use mentions in input')
+    parser.add_argument('--mask_negatives', help='Mask negative examples', action='store_true')
     parser.set_defaults(use_corruption=False, use_section_title=False,
-                        use_section_title_random=False, use_mentions=False)
+                        use_section_title_random=False, use_mentions=False, mask_negatives=False)
 
     args = parser.parse_args()
 
@@ -62,6 +63,8 @@ if __name__ == '__main__':
         model_name += '_section'
     if args.use_mentions:
         model_name += '_mentions'
+    if args.mask_negatives:
+        model_name += '_negmask'
 
     # load model
     dir = os.path.join(args.models_dir, model_name)

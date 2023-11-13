@@ -81,10 +81,15 @@ if __name__ == '__main__':
         for context, title, lead in tqdm(zip(contexts, target_titles, target_leads), total=len(target_titles)):
             scores = bm25.rank_contexts(context, title, lead)
             position = 1
-            for score in scores[1:]:
+            tied = 0
+            if max(scores) < 0:
+                scores = [-score for score in scores]
+            for i, score in enumerate(scores[1:]):
                 if score > scores[0]:
                     position += 1
-            rank.append(position)
+                elif abs(score - scores[0]) < 0.00001:
+                    tied += 1
+            rank.append(position + random.randint(0, tied))
         df['bm25_rank'] = rank
     if 'bm25_mentions' in args.method_name:
         print('Calculation bm25 with mention knowledge')
@@ -94,10 +99,15 @@ if __name__ == '__main__':
                 mention_map[title] = [title]
             scores = bm25.rank_contexts(context, title, lead, mention_map[title])
             position = 1
-            for score in scores[1:]:
+            tied = 0
+            if max(scores) < 0:
+                scores = [-score for score in scores]
+            for i, score in enumerate(scores[1:]):
                 if score > scores[0]:
                     position += 1
-            rank.append(position)
+                elif abs(score - scores[0]) < 0.00001:
+                    tied += 1
+            rank.append(position + random.randint(0, tied))
         df['bm25_mentions_rank'] = rank
     if 'exact_match' in args.method_name:
         print('Calculating exact match ranks')
