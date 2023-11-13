@@ -46,13 +46,13 @@ def mask_negative_contexts(context, probs):
     if probs['mask_span'] + probs['mask_sentence'] + probs['mask_word'] + probs['no_mask'] == 0:
         probs['no_mask'] = 1
 
-    mask_strategy = random.choices(['mask_span', 'mask_sentence', 'mask_mention', 'no_mask'],
+    mask_strategy = random.choices(['mask_span', 'mask_sentence', 'mask_word', 'no_mask'],
                                    weights=[probs['mask_span'], probs['mask_sentence'],
-                                            probs['mask_mention'], probs['no_mask']],
+                                            probs['mask_word'], probs['no_mask']],
                                    k=1)[0]
     if mask_strategy == 'no_mask':
         return context
-    if mask_strategy == 'mask_mention':
+    if mask_strategy == 'mask_word':
         sentence_index = random.randint(0, len(sentences) - 1)
         words = sentences[sentence_index].split(' ')
         mask_index = random.randint(0, len(words) - 1)
@@ -305,7 +305,7 @@ if __name__ == '__main__':
                 output['contexts'].append(context_input)
                 output['targets'].append(target_input)
 
-                mask_probs = {'no_mask': args.no_mask_perc, 'mask_mention': args.mask_mention_perc,
+                mask_probs = {'no_mask': args.no_mask_perc, 'mask_word': args.mask_mention_perc,
                               'mask_sentence': args.mask_sentence_perc, 'mask_span': args.mask_span_perc}
                 for i in range(args.neg_samples_train):
                     source_section_neg = item[f"source_section_neg_{i}"]
@@ -350,7 +350,7 @@ if __name__ == '__main__':
                 output['sources'].append(source_input)
                 output['contexts'].append(context_input)
                 output['targets'].append(target_input)
-                mask_probs = {'no_mask': args.no_mask_perc, 'mask_mention': args.mask_mention_perc,
+                mask_probs = {'no_mask': args.no_mask_perc, 'mask_word': args.mask_mention_perc,
                               'mask_sentence': args.mask_sentence_perc, 'mask_span': args.mask_span_perc}
                 for i in range(args.neg_samples_eval):
                     source_section_neg = item[f"source_section_neg_{i}"]
