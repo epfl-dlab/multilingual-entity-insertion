@@ -22,7 +22,9 @@ def process_title(title):
 def process_sql_page(input, language):
     with open(input) as f:
         data = f.readlines()
-        data = [x for x in data if x.startswith('INSERT INTO')]
+        # read only lines that start with "INSERT INTO"
+        # these are the lines containing the data
+        data = [x.strip() for x in data if x.startswith('INSERT INTO')]
 
     pages = []
     redirects = {}
@@ -54,7 +56,9 @@ def process_sql_page(input, language):
 def process_sql_redirects(input, redirects):
     with open(input) as f:
         data = f.readlines()
-        data = [x for x in data if x.startswith('INSERT INTO')]
+        # read only lines that start with "INSERT INTO"
+        # these are the lines containing the data
+        data = [x.strip() for x in data if x.startswith('INSERT INTO')]
 
     for line in tqdm(data):
         # remove the "INSERT INTO `redirect` VALUES (" part and the last semicolon
@@ -75,8 +79,10 @@ def process_sql_redirects(input, redirects):
 
 
 def process_sql_page_props(input, pages):
-    with open(input, encoding='latin-1') as f:
+    with open(input) as f:
         data = f.readlines()
+        # read only lines that start with "INSERT INTO"
+        # these are the lines containing the data
         data = [x for x in data if x.startswith('INSERT INTO')]
 
     qids_map = {}

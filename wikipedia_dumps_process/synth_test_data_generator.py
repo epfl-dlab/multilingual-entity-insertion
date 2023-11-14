@@ -9,8 +9,12 @@ import urllib
 import re
 
 def update_targets(target_name, redirect_map):
-    if target_name in redirect_map:
-        return redirect_map[target_name]
+    counter = 0
+    while target_name in redirect_map:
+        target_name = redirect_map[target_name]
+        counter += 1
+        if counter > 10:
+            break
     return target_name
 
 if __name__ == '__main__':
@@ -145,7 +149,6 @@ if __name__ == '__main__':
                     new_links.append(mod_link)
                     new_links[-1]['old_version'] = old_version
             else:
-                # try to find matches in the links without ID
                 used = set([])
                 for mod_link in new_data[source_page][target_page]:
                     found = False
