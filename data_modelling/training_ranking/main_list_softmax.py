@@ -242,32 +242,43 @@ if __name__ == '__main__':
     # define loss
     loss_fn = nn.CrossEntropyLoss()
 
+    noise_backlog = {'no_mask': 0, 'mask_mention': 0, 'mask_sentence': 0, 'mask_span': 0}
     def collator(input):
         output = {'sources': [], 'contexts': [], 'targets': [], 'noises': []}
         if input[0]['split'] == 'train':
             for i in range(args.neg_samples_train):
                 output[f"contexts_neg_{i}"] = []
                 output[f"strategy_neg_{i}"] = []
+            noise_types = ['mask_span', 'mask_sentence', 'mask_mention', 'no_mask']
             for item in input:
                 found = False
                 if (item['link_context'][:item['context_span_start_index']] + item['link_context'][item['context_span_end_index']:]).strip() != '':
                     if item['context_span_start_index'] <= item['context_sentence_start_index'] and item['context_span_end_index'] >= item['context_sentence_end_index']:
-                        noise_types = [
+                        valid_noise_types = [
                             'mask_span', 'mask_sentence', 'mask_mention', 'no_mask']
                         found = True
                 if not found and (item['link_context'][:item['context_sentence_start_index']] + item['link_context'][item['context_sentence_end_index']:]).strip() != '':
                     if item['context_sentence_start_index'] <= item['context_mention_start_index'] and item['context_sentence_end_index'] > item['context_mention_end_index'] + 1:
-                        noise_types = ['mask_sentence',
+                        valid_noise_types = ['mask_sentence',
                                        'mask_mention', 'no_mask']
                         found = True
                 if not found and (item['link_context'][:item['context_mention_start_index']] + item['link_context'][item['context_mention_end_index']:]).strip() != '':
-                    noise_types = ['mask_mention', 'no_mask']
+                    valid_noise_types = ['mask_mention', 'no_mask']
                     found = True
                 if not found:
-                    noise_types = ['no_mask']
+                    valid_noise_types = ['no_mask']
 
-                noise_type = random.choices(
-                    noise_types, weights=weights[-len(noise_types):], k=1)[0]
+                noise_type = None
+                for category in noise_types:
+                    if noise_backlog[category] > 0 and category in valid_noise_types:
+                        noise_type = category
+                        noise_backlog[category] -= 1
+                        break
+                if noise_type is None:
+                    noise_type = random.choices(noise_types, weights=weights, k=1)[0]
+                    if noise_type not in valid_noise_types:
+                        noise_backlog[noise_type] += 1
+                        noise_type = random.choices(valid_noise_types, weights=weights[-len(valid_noise_types):], k=1)[0]
                 if noise_type == 'mask_span':
                     item['link_context'] = item['link_context'][:int(
                         item['context_span_start_index'])] + item['link_context'][int(item['context_span_end_index']):]
@@ -284,7 +295,7 @@ if __name__ == '__main__':
                 item['link_context'] = re.sub(
                     '\n+', '\n', item['link_context'])
                 item['link_context'] = item['link_context'].strip()
-
+                
                 source_input = f"{item['source_title']}{tokenizer.sep_token}{item['source_lead']}"
                 if args.insert_section:
                     context_input = f"{item['source_section']}{tokenizer.sep_token}"
