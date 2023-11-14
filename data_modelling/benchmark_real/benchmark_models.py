@@ -180,11 +180,6 @@ if __name__ == '__main__':
                                     truncation=True, max_length=256).to('cuda' if torch.cuda.is_available() else 'cpu')
                 input_embeddings = model(
                     **inputs)['last_hidden_state'][:, 0, :]
-                # expand the dimensions of source and target embeddings to match the batch size
-                # source_embeddings = source_embeddings.unsqueeze(0).expand(
-                #     len(inputs), -1, -1)[:, 0, :]
-                # target_embeddings = target_embeddings.unsqueeze(0).expand(
-                #     len(inputs), -1, -1)[:, 0, :]
                 source_embeddings = source_embeddings[:input_embeddings.shape[0], :]
                 target_embeddings = target_embeddings[:input_embeddings.shape[0], :]
                 input = torch.cat(
