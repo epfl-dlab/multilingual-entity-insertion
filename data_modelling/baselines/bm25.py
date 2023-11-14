@@ -8,20 +8,15 @@ def rank_contexts(contexts, target_title, target_lead, mentions = None):
     punctuation = '!"#&\'()*+,./:;<=>?@[\\]^_`{|}~'
     tokenized_contexts = [word_tokenize(context.lower().replace('\n', ' ').translate(str.maketrans(punctuation, ' '*len(punctuation)))) for context in contexts]
     tokenized_contexts = [[word for word in context if word not in stop_words] for context in tokenized_contexts]
-    # tokenized_contexts = [context.lower().replace('\n', ' ').split(" ") for context in contexts]
     bm25 = BM25Okapi(tokenized_contexts)
-    # tokenized_target_lead = word_tokenize(target_title.lower().replace('\n', ' ').translate(str.maketrans('', '', string.punctuation)))
+    tokenized_target_lead = word_tokenize(target_lead.lower().replace('\n', ' ').translate(str.maketrans('', '', string.punctuation)))
+    tokenized_target_lead = [word for word in tokenized_target_lead if word not in stop_words]
     if mentions is None:
-        tokenized_query = [target_title.lower()]
-        # tokenized_query = [target_title.lower()]
+        tokenized_query = [target_title.lower()] + tokenized_target_lead
     else:
-        # mentions = [mention.lower().split(" ") for mention in mentions]
-        # mentions = [word for mention in mentions for word in mention]
-        # tokenized_query = target_title.lower().split(" ") + target_lead.lower().replace('\n', ' ').split(" ") + mentions
         mentions = [word_tokenize(mention.lower().replace('\n', ' ').translate(str.maketrans(punctuation, ' '*len(punctuation)))) for mention in mentions]
-        mentions = [word for mention in mentions for word in mention]
-        tokenized_query = [target_title.lower()] + mentions
-        tokenized_query = [word for word in tokenized_query if word not in stop_words]
+        mentions = [word for mention in mentions for word in mention if word not in stop_words]        
+        tokenized_query = [target_title.lower()] + mentions + tokenized_target_lead
 
     scores = bm25.get_scores(tokenized_query)
     return scores
