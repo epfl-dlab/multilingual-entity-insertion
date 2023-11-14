@@ -195,46 +195,48 @@ def fix_text(text):
     return text
 
 
-def find_negative_contexts(section_sentences, mentions, curr_section, left_index, right_index):
+def find_negative_contexts(section_sentences, mentions, curr_section, index):
     contexts = []
     for section in section_sentences:
         curr_sentences = []
-        for sentence in section_sentences[section]:
+        for i, sentence in enumerate(section_sentences[section]):
             found = False
             for mention in mentions:
                 if mention.lower() in sentence['clean_sentence'].lower():
                     found = True
                     break
-            if section == curr_section and left_index <= sentence['index'] <= right_index:
+            if section == curr_section and sentence['index'] == index:
                 found = True
+
             if not found:
                 curr_sentences.append(sentence)
             else:
-                if len(curr_sentences) < 11:
+                new_contexts = []
+                for i in range(len(curr_sentences)):
+                    min_index = max(0, i - 5)
+                    max_index = min(len(curr_sentences), i + 6)
                     context = " ".join([s['clean_sentence']
-                                       for s in curr_sentences]).strip()
+                                        for s in curr_sentences[min_index:max_index]]).strip()
                     if len(context.split(' ')) > 10:
-                        contexts.append(
-                            {'context': context, 'section': section})
-                else:
-                    for i in range(len(curr_sentences) - 10):
-                        context = " ".join([s['clean_sentence']
-                                           for s in curr_sentences[i:i+11]]).strip()
-                        if len(context.split(' ')) > 10:
-                            contexts.append(
-                                {'context': context, 'section': section})
-                curr_sentences = []
-        if len(curr_sentences) < 11:
-            context = " ".join([s['clean_sentence']
-                               for s in curr_sentences]).strip()
-            if len(context.split(' ')) > 10:
-                contexts.append({'context': context, 'section': section})
-        else:
-            for i in range(len(curr_sentences) - 10):
-                context = " ".join([s['clean_sentence']
-                                   for s in curr_sentences[i:i+11]]).strip()
-                if len(context.split(' ')) > 10:
+                        new_contexts.append(context)
+                new_contexts = list(set(new_contexts))
+                for context in new_contexts:
                     contexts.append({'context': context, 'section': section})
+                curr_sentences = []
+
+        if len(curr_sentences) != 0:
+            new_contexts = []
+            for i in range(len(curr_sentences)):
+                min_index = max(0, i - 5)
+                max_index = min(len(curr_sentences), i + 6)
+                context = " ".join([s['clean_sentence']
+                                    for s in curr_sentences[min_index:max_index]]).strip()
+                if len(context.split(' ')) > 10:
+                    new_contexts.append(context)
+            new_contexts = list(set(new_contexts))
+            for context in new_contexts:
+                contexts.append({'context': context, 'section': section})
+
     return contexts
 
 
@@ -403,7 +405,7 @@ def process_version(input):
                 new_section = sentence['section_new']
                 # go through the previous 10 and next 10 sentences
                 # if any of these is neutral and has the same section, use it as context
-                # if any of these is added and has a match and has the same section, jump to the match and
+                # if any of these is added and has a match and has the same section, use it as context
                 left_index = sentence['index'] - 1
                 left_context = []
                 counter = 0
@@ -428,7 +430,7 @@ def process_version(input):
                     left_index -= 1
                 right_index = sentence['index'] + 11
                 right_context = []
-                rightmost_index = sentence['index'] + 1
+                # rightmost_index = sentence['index'] + 1
                 continuous_right_added_text = []
                 while right_index > sentence['index']:
                     if right_index >= len(all_sentences) or all_sentences[right_index]['section_original'] != sentence['section_original']:
@@ -438,7 +440,7 @@ def process_version(input):
                         right_context.append(
                             all_sentences[right_index]['clean_sentence'])
                         continuous_right_added_text = []
-                        rightmost_index = max(rightmost_index, right_index)
+                        # rightmost_index = max(rightmost_index, right_index)
                     elif all_sentences[right_index]['status'] == 'added' and all_sentences[right_index]['match'] is None:
                         continuous_right_added_text.append(
                             all_sentences[right_index]['clean_sentence'])
@@ -447,10 +449,10 @@ def process_version(input):
                         if all_sentences[right_index]['index'] is not None and all_sentences[right_index]['index'] > sentence['index'] - 11:
                             right_context.append(
                                 all_sentences[right_index]['clean_sentence'])
-                            rightmost_index = max(rightmost_index, right_index)
+                            # rightmost_index = max(rightmost_index, right_index)
                     right_index -= 1
                 right_context = right_context[-5:]
-                right_index = rightmost_index
+                # right_index = rightmost_index
                 context = ' '.join(
                     left_context[::-1]) + ' '.join(right_context[::-1])
                 # added_text = ' '.join(
@@ -518,7 +520,7 @@ def process_version(input):
                 mentions = mentions_map.get(
                     target_title, [urllib.parse.unquote(target_title).replace('_', ' ')])
                 negative_contexts = find_negative_contexts(
-                    section_sentences, mentions, section, left_index, right_index)
+                    section_sentences, mentions, section, sentence['index'])
                 if target_title in input['versions'][second_version]:
                     output.append({
                         'source_title': input['source_title'],
