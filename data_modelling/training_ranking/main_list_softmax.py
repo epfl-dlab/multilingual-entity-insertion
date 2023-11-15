@@ -69,7 +69,7 @@ def mask_negative_contexts(context, probs):
         mask_index = random.randint(0, len(sentences) - 1)
         return " ".join(sentences[:mask_index]) + " " + " ".join(sentences[mask_index+1:])
     if mask_strategy == 'mask_span':
-        mask_length = random.randint(2, len(sentences) - 1)
+        mask_length = random.randint(2, min(len(sentences) - 1, 5))
         start_index = random.randint(0, len(sentences) - mask_length)
         return " ".join(sentences[:start_index]) + " " + " ".join(sentences[start_index + mask_length:])
 

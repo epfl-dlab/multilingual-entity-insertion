@@ -62,12 +62,12 @@ if __name__ == '__main__':
                       basename.replace('pages', 'good_pages')))
 
     print('Building auxiliary data structures')
-    no_html = df_pages[(df_pages['HTML'].isna()) | (
-        df_pages['HTML'] == '')]['title'].tolist()
-    no_lead = df_pages[(df_pages['lead_paragraph'].isna()) | (
-        df_pages['lead_paragraph'] == '')]['title'].tolist()
-    short_lead = df_pages[(df_pages['lead_paragraph'].apply(
-        lambda x: split_text(x) < 6))]['title'].tolist()
+    no_html = set(df_pages[(df_pages['HTML'].isna()) | (
+        df_pages['HTML'] == '')]['title'].tolist())
+    no_lead = set(df_pages[(df_pages['lead_paragraph'].isna()) | (
+        df_pages['lead_paragraph'] == '')]['title'].tolist())
+    short_lead = set(df_pages[(df_pages['lead_paragraph'].apply(
+        lambda x: split_text(x) < 6))]['title'].tolist())
 
     print('Saving good links')
     for file in tqdm(link_files):

@@ -27,19 +27,57 @@ def process_title(title):
 
 
 def invalid_parent(parent):
-    if parent.name in ['table', 'figure', 'sup']:
-        return True
-    if parent.get("class") == ["mw-editsection"]:
-        return True
-    if parent.get("class") == ["side-box-text", "plainlist"]:
-        return True
-    if parent.get("class") == ["legend"]:
-        return True
-    if parent.get("role") == "note" or parent.get("role") == "navigation":
-        return True
-    if parent.get("class") == ["navbox-styles", "nomobile"]:
+    # hard-coded invalid classes found by manual inspection
+    invalid_classes = ["mw-editsection", "metadata", "mw-jump-link", "reflist", "side-box-text plainlist", "legend",
+                       "navbox-styles nomobile", "thumbcaption", "side-box", "side-box-right", "plainlinks", "sistersitebox", "navbox"]
+    if parent.name in ['table', 'figure', 'sup', 'caption', 'map'] or parent.get("role") in ["note", "navigation"] or parent.get("class") in invalid_classes:
         return True
     return False
+
+
+def fix_sentence_tokenizer(sentences):
+    # dont allow parenthesis to be separated across sentences
+    i = 0
+    while i < len(sentences) - 1:
+        # find right-most occurrence of ')' and '(' in sentences[i]
+        right_paren_before = sentences[i].rfind(')')
+        left_paren_before = sentences[i].rfind('(')
+        right_paren_before = right_paren_before if right_paren_before != -1 else 0
+        left_paren_before = left_paren_before if left_paren_before != -1 else 0
+        # find left-most occurrence of ')' and '(' in sentences[i+1]
+        right_paren_after = sentences[i+1].find(')')
+        left_paren_after = sentences[i+1].find('(')
+        right_parent_after = right_paren_after if right_paren_after != - \
+            1 else len(sentences[i+1])
+        left_paren_after = left_paren_after if left_paren_after != - \
+            1 else len(sentences[i+1])
+
+        if right_paren_before < left_paren_before and right_parent_after < left_paren_after:
+            sentences[i] = sentences[i] + ' ' + sentences[i+1]
+            del sentences[i+1]
+        else:
+            i += 1
+        
+    # for each sentence, if it is less than 10 characters, merge it with the next and previous sentences
+    i = 0
+    if len(sentences) > 1:
+        while i < len(sentences):
+            if len(sentences[i]) < 10:
+                if i > 0 and i < len(sentences) - 1:
+                    sentences[i-1] = sentences[i-1] + ' ' + \
+                        sentences[i] + ' ' + sentences[i+1]
+                    del sentences[i]
+                    del sentences[i]
+                elif i == 0:
+                    sentences[i] = sentences[i] + ' ' + sentences[i+1]
+                    del sentences[i+1]
+                else:
+                    sentences[i-1] = sentences[i-1] + ' ' + sentences[i]
+                    del sentences[i]
+            else:
+                i += 1
+
+    return sentences
 
 
 def extract_links(source_page):
@@ -84,7 +122,8 @@ def extract_links(source_page):
     depth = [0, 0, 0]
     sections = ["Lead"]
     section_links = []
-    section_text = {'Lead': {'text': '', 'depth': 0, 'title': source_page['title']}}
+    section_text = {'Lead': {'text': '',
+                             'depth': 0, 'title': source_page['title']}}
     search_index_link = 0
     # iterate through all tags
     for section in content.children:
@@ -99,39 +138,18 @@ def extract_links(source_page):
                 if tag.name == 'h2':
                     if section_links:
                         # save all the links from this section
-                        current_text = section_text[sections[0]]['text'].strip()
+                        current_text = section_text[sections[0]]['text'].strip(
+                        )
                         current_text = re.sub(r'\[.*?\]', '', current_text)
-                        # current_text = re.sub(r'\n', ' ', current_text)
                         current_text = re.sub(r' +', ' ', current_text)
                         temp = [
-                            elem.strip() + "\n" for elem in current_text.split('\n') if elem != '']
+                            elem.strip() + "\n" for elem in current_text.split('\n') if elem.strip() != '']
                         if temp:
                             temp[-1] = temp[-1][:-1]
                         section_sentences = []
                         for sentence in temp:
-                            new_sentences = []
-                            split_sentences = sent_tokenize(sentence)
-                            clean_split_sentences = []
-                            i = 0
-                            while i < len(split_sentences):
-                                if len(split_sentences[i]) < 10:
-                                    if i > 0 and i < len(split_sentences) - 1:
-                                        clean_split_sentences[-1] += ' ' + split_sentences[i] + ' ' + split_sentences[i+1]
-                                        i += 2
-                                    elif i == 0 and i < len(split_sentences) - 1:
-                                        clean_split_sentences.append(split_sentences[i] + ' ' + split_sentences[i+1])
-                                        i += 2
-                                    elif i > 0 and i == len(split_sentences) - 1:
-                                        clean_split_sentences[-1] += ' ' + split_sentences[i]
-                                        i += 1
-                                    else:
-                                        clean_split_sentences.append(split_sentences[i])
-                                        i += 1
-                                else:
-                                    clean_split_sentences.append(split_sentences[i])
-                                    i += 1
-                            for s in clean_split_sentences:
-                                new_sentences.append(s)
+                            new_sentences = sent_tokenize(sentence)
+                            new_sentences = fix_sentence_tokenizer(new_sentences)
                             if new_sentences:
                                 new_sentences[-1] += '\n'
                                 section_sentences.extend(new_sentences)
@@ -209,12 +227,14 @@ def extract_links(source_page):
                         [re.sub(r'\[.*?\]', '', tag.text).strip()]
                     depth[1] += 1
                     depth[2] = 0
-                    section_text[sections[0]]['text'] += re.sub(r'\[.*?\]', '', tag.text).strip() + '\n'
+                    section_text[sections[0]]['text'] += re.sub(
+                        r'\[.*?\]', '', tag.text).strip() + '\n'
                 elif tag.name == 'h4':
                     sections = sections[:2] + \
                         [re.sub(r'\[.*?\]', '', tag.text).strip()]
                     depth[2] += 1
-                    section_text[sections[0]]['text'] += re.sub(r'\[.*?\]', '', tag.text).strip() + '\n'
+                    section_text[sections[0]]['text'] += re.sub(
+                        r'\[.*?\]', '', tag.text).strip() + '\n'
                 if sections in [["Notes"], ["References"], ["Sources"], ["External links"], ["Further reading"], ["Other websites"], ["Sources and references"]]:
                     break
 
@@ -228,9 +248,11 @@ def extract_links(source_page):
                     break
             if not skip_text:
                 if tag.name == 'p' or tag.name == 'dl':
-                    section_text[sections[0]]['text'] += urllib.parse.unquote(tag.text).replace('_', ' ') + ' '
+                    section_text[sections[0]]['text'] += urllib.parse.unquote(
+                        tag.text).replace('_', ' ') + ' '
                 elif tag.name == 'li' or tag.name == 'span':
-                    section_text[sections[0]]['text'] += urllib.parse.unquote(tag.text).replace('_', ' ') + ' \n'
+                    section_text[sections[0]]['text'] += urllib.parse.unquote(
+                        tag.text).replace('_', ' ') + ' \n'
                 else:
                     tags = tag.find_all(['p', 'li', 'dl', 'span'])
                     for t in tags:
@@ -241,15 +263,19 @@ def extract_links(source_page):
                         if skip:
                             continue
                         if tag.name == 'p':
-                            section_text[sections[0]]['text'] += urllib.parse.unquote(t.text).replace('_', ' ') + ' '
+                            section_text[sections[0]]['text'] += urllib.parse.unquote(
+                                t.text).replace('_', ' ') + ' '
                         elif tag.name == 'dl' and tag.get("role") != "note" and tag.get("class") != ["navbox-styles", "nomobile"]:
-                            section_text[sections[0]]['text'] += urllib.parse.unquote(t.text).replace('_', ' ') + ' '
+                            section_text[sections[0]]['text'] += urllib.parse.unquote(
+                                t.text).replace('_', ' ') + ' '
                             break
                         elif tag.name == 'span':
-                            section_text[sections[0]]['text'] += urllib.parse.unquote(t.text).replace('_', ' ') + ' \n'
+                            section_text[sections[0]]['text'] += urllib.parse.unquote(
+                                t.text).replace('_', ' ') + ' \n'
                             break
                         else:
-                            section_text[sections[0]]['text'] += urllib.parse.unquote(t.text).replace('_', ' ') + ' \n'
+                            section_text[sections[0]]['text'] += urllib.parse.unquote(
+                                t.text).replace('_', ' ') + ' \n'
 
             # find links
             links = tag.find_all('a')
@@ -293,8 +319,10 @@ def extract_links(source_page):
                     link_data['target_section'] = "Lead".replace("\\'", "'")
                 link_data['target_title'] = process_title(
                     link_data['target_title'])
-                if link_data['target_title'] in redirect_map:
+                counter = 0
+                while link_data['target_title'] in redirect_map and counter < 10:
                     link_data['target_title'] = redirect_map[link_data['target_title']]
+                    counter += 1
                 link_data['source_title'] = source_page['title']
 
                 if 'redlink' in link_data['target_title'] or link.get("class") == ["new"]:
@@ -454,9 +482,8 @@ def extract_links(source_page):
             temp[-1] = temp[-1][:-1]
         section_sentences = []
         for sentence in temp:
-            new_sentences = []
-            for s in sent_tokenize(sentence):
-                new_sentences.append(s)
+            new_sentences = sent_tokenize(sentence)
+            new_sentences = fix_sentence_tokenizer(new_sentences)
             if new_sentences:
                 new_sentences[-1] += '\n'
                 section_sentences.extend(new_sentences)
