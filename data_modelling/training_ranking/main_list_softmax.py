@@ -29,27 +29,35 @@ from urllib.parse import unquote
 multiprocess.set_start_method("spawn", force=True)
 
 
-def mask_negative_contexts(context, probs):
+def mask_negative_contexts(context, probs, backlog):
     sentences = [sentence.strip()
                  for sentence in sent_tokenize(context) if sentence.strip()]
+    strategies = ['mask_span', 'mask_sentence', 'mask_word', 'no_mask']
+    valid_strategies = ['mask_span', 'mask_sentence', 'mask_word', 'no_mask']
     if len(sentences) <= 2:
-        probs['mask_span'] = 0
+        valid_strategies.remove('mask_span')
     if len(sentences) == 1:
-        probs['mask_sentence'] = 0
+        valid_strategies.remove('mask_sentence')
     words = []
     for sentence in sentences:
         words.extend([word for word in sentence.replace(
             '\n', ' ').split() if word.strip()])
     if len(words) == 1:
-        probs['mask_word'] = 0
-
-    if probs['mask_span'] + probs['mask_sentence'] + probs['mask_word'] + probs['no_mask'] == 0:
-        probs['no_mask'] = 1
-
-    mask_strategy = random.choices(['mask_span', 'mask_sentence', 'mask_word', 'no_mask'],
-                                   weights=[probs['mask_span'], probs['mask_sentence'],
-                                            probs['mask_word'], probs['no_mask']],
-                                   k=1)[0]
+        valid_strategies.remove('mask_word')
+    
+    mask_strategy = None
+    for strategy in valid_strategies:
+        if backlog[strategy] > 0:
+            mask_strategy = strategy
+            backlog[strategy] -= 1
+            break
+    if mask_strategy is None:
+        if valid_strategies == ['no_mask']:
+            probs['no_mask'] = 1
+        mask_strategy = random.choices(strategies, weights=[probs[strategy] for strategy in strategies], k=1)[0]
+        if mask_strategy not in valid_strategies:
+            backlog[mask_strategy] += 1
+            mask_strategy = random.choices(valid_strategies, weights=[probs[strategy] for strategy in valid_strategies], k=1)[0]
     if mask_strategy == 'no_mask':
         return context
     if mask_strategy == 'mask_word':
@@ -278,6 +286,7 @@ if __name__ == '__main__':
 
     noise_backlog = {'no_mask': 0, 'mask_mention': 0,
                      'mask_sentence': 0, 'mask_span': 0}
+    neg_noise_backlog = {'no_mask': 0, 'mask_word': 0, 'mask_sentence': 0, 'mask_span': 0}
 
     def collator(input):
         output = {'sources': [], 'contexts': [], 'targets': [], 'noises': []}
@@ -362,7 +371,7 @@ if __name__ == '__main__':
                     link_context_neg = item[f"link_context_neg_{i}"]
                     if args.mask_negatives:
                         link_context_neg = mask_negative_contexts(
-                            link_context_neg, mask_probs)
+                            link_context_neg, mask_probs, neg_noise_backlog)
 
                     if args.insert_section:
                         context_input = f"{source_section_neg}{tokenizer.sep_token}"
@@ -524,7 +533,6 @@ if __name__ == '__main__':
             step += 1
             # multiple forward passes accumulate gradients
             # source: https://discuss.pytorch.org/t/multiple-model-forward-followed-by-one-loss-backward/20868
-            # print(accelerator.device, "Computing embeddings")
             if args.split_models:
                 output_source = model_articles(**data['sources'])
                 output_context_pos = model_contexts(**data['contexts'])
@@ -533,13 +541,14 @@ if __name__ == '__main__':
                 output_source = model(**data['sources'])
                 output_context_pos = model(**data['contexts'])
                 output_target = model(**data['targets'])
-            # print(accelerator.device, "Computing logits")
             embeddings_pos = [output_source['last_hidden_state'][:, 0, :],
                               output_context_pos['last_hidden_state'][:, 0, :],
                               output_target['last_hidden_state'][:, 0, :]]
             embeddings_pos = torch.cat(embeddings_pos, dim=1)
-            logits = [classification_head(embeddings_pos).squeeze()]
-            # print(accelerator.device, "Computing neg logits")
+            logit = classification_head(embeddings_pos).squeeze()
+            if len(logit.shape) == 0:
+                logit = logit.unsqueeze(0)
+            logits = [logit]
             for i in range(args.neg_samples_train):
                 if args.split_models:
                     output_context_neg = model_contexts(
@@ -550,7 +559,10 @@ if __name__ == '__main__':
                                   output_context_neg['last_hidden_state'][:, 0, :],
                                   output_target['last_hidden_state'][:, 0, :]]
                 embeddings_neg = torch.cat(embeddings_neg, dim=1)
-                logits.append(classification_head(embeddings_neg).squeeze())
+                logit = classification_head(embeddings_neg).squeeze()
+                if len(logit.shape) == 0:
+                    logit = logit.unsqueeze(0)
+                logits.append(logit)
             logits = torch.stack(logits, dim=1)
             labels = torch.zeros_like(logits)
             labels[:, 0] = 1
@@ -558,16 +570,12 @@ if __name__ == '__main__':
             indices = torch.randperm(logits.shape[1])
             logits = logits[:, indices]
             labels = labels[:, indices]
-            # print(accelerator.device, "Computing loss")
             loss = loss_fn(logits / args.temperature, labels) / args.ga_steps
-            # print(accelerator.device, "Computing backward")
             accelerator.backward(loss)
             if (index + 1) % args.ga_steps == 0:
-                # print(accelerator.device, "Computing optimizer step")
                 optimizer.step()
                 optimizer.zero_grad()
             # save running loss
-            # print(accelerator.device, "Saving loss")
             running_loss += loss.item() * args.ga_steps
             # print loss
             if step % args.print_steps == 0:
