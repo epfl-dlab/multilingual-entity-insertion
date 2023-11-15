@@ -29,6 +29,7 @@ if __name__ == '__main__':
                         help='Limit the number of rows to use')
     parser.add_argument('--column_name', type=str, required=True, help='Name of column to add to dataframe')
     parser.add_argument('--batch_size', type=int, default=1, help='Batch size')
+    parser.add_argument('--model_name', type=str, default='', help='Name of model to use')
     parser.add_argument('--loss_function', type=str, required=True, choices=[
                         'ranking', 'indep'], help='Selected loss function used for training')
     parser.add_argument('--use_corruption', action='store_true',
@@ -56,15 +57,18 @@ if __name__ == '__main__':
         raise ValueError('Models dir does not exist')
 
     # find model name
-    model_name = args.loss_function
-    if args.use_corruption:
-        model_name += '_corrupt'
-    if args.use_section_title or args.use_section_title_random:
-        model_name += '_section'
-    if args.use_mentions:
-        model_name += '_mentions'
-    if args.mask_negatives:
-        model_name += '_negmask'
+    if args.model_name == '':
+        model_name = args.loss_function
+        if args.use_corruption:
+            model_name += '_corrupt'
+        if args.use_section_title or args.use_section_title_random:
+            model_name += '_section'
+        if args.use_mentions:
+            model_name += '_mentions'
+        if args.mask_negatives:
+            model_name += '_negmask'
+    else:
+        model_name = args.model_name
 
     # load model
     dir = os.path.join(args.models_dir, model_name)
@@ -209,4 +213,4 @@ if __name__ == '__main__':
             rank.append(position)
         
     df[args.column_name] = rank
-    df.to_parquet('test_ranking_scores.parquet')
+    df.to_parquet('test_ranking_scores_all.parquet')

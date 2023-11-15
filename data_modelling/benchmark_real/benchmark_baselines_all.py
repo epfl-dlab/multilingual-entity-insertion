@@ -142,4 +142,4 @@ if __name__ == '__main__':
             rank.append(position + random.randint(0, equals))
         df['fuzzy_match_rank'] = rank
 
-    df.to_parquet('test_ranking_scores.parquet')
+    df.to_parquet('test_ranking_scores_all.parquet')
