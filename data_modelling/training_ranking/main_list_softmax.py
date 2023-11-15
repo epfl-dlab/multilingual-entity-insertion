@@ -524,6 +524,7 @@ if __name__ == '__main__':
             step += 1
             # multiple forward passes accumulate gradients
             # source: https://discuss.pytorch.org/t/multiple-model-forward-followed-by-one-loss-backward/20868
+            # print(accelerator.device, "Computing embeddings")
             if args.split_models:
                 output_source = model_articles(**data['sources'])
                 output_context_pos = model_contexts(**data['contexts'])
@@ -532,11 +533,13 @@ if __name__ == '__main__':
                 output_source = model(**data['sources'])
                 output_context_pos = model(**data['contexts'])
                 output_target = model(**data['targets'])
+            # print(accelerator.device, "Computing logits")
             embeddings_pos = [output_source['last_hidden_state'][:, 0, :],
                               output_context_pos['last_hidden_state'][:, 0, :],
                               output_target['last_hidden_state'][:, 0, :]]
             embeddings_pos = torch.cat(embeddings_pos, dim=1)
             logits = [classification_head(embeddings_pos).squeeze()]
+            # print(accelerator.device, "Computing neg logits")
             for i in range(args.neg_samples_train):
                 if args.split_models:
                     output_context_neg = model_contexts(
@@ -555,12 +558,16 @@ if __name__ == '__main__':
             indices = torch.randperm(logits.shape[1])
             logits = logits[:, indices]
             labels = labels[:, indices]
+            # print(accelerator.device, "Computing loss")
             loss = loss_fn(logits / args.temperature, labels) / args.ga_steps
+            # print(accelerator.device, "Computing backward")
             accelerator.backward(loss)
             if (index + 1) % args.ga_steps == 0:
+                # print(accelerator.device, "Computing optimizer step")
                 optimizer.step()
                 optimizer.zero_grad()
             # save running loss
+            # print(accelerator.device, "Saving loss")
             running_loss += loss.item() * args.ga_steps
             # print loss
             if step % args.print_steps == 0:
@@ -598,7 +605,11 @@ if __name__ == '__main__':
             # evaluate model
             if step % args.eval_steps == 0:
                 logger.info(f"Step {step}: evaluating model")
-                model.eval()
+                if args.split_models:
+                    model_articles.eval()
+                    model_contexts.eval()
+                else:
+                    model.eval()
                 with torch.no_grad():
                     # compare current model weights to initial model weights
                     # current_model_weights = torch.cat(
@@ -906,7 +917,11 @@ if __name__ == '__main__':
                                 writer.add_scalar(
                                     f'val_noise/{noise_map_rev[i]}_ndcg@max', noise_perf[i]['ndcg']['max'], step)
 
-                model.train()
+                if args.split_models:
+                    model_articles.train()
+                    model_contexts.train()
+                else:
+                    model.train()
                 torch.cuda.empty_cache()
                 gc.collect()
 
