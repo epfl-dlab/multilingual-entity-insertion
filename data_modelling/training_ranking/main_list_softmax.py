@@ -132,8 +132,10 @@ if __name__ == '__main__':
                         help='Whether to insert section title')
     parser.add_argument('--mask_negatives', action='store_true',
                         help='Whether to apply masking to negative samples')
+    parser.add_argument('--split_models', action='store_true',
+                        help='If set, use a different encoder for articles and contexts')
     parser.set_defaults(resume=False, insert_section=False,
-                        mask_negatives=False)
+                        mask_negatives=False, split_models=False)
 
     args = parser.parse_args()
 
@@ -196,16 +198,31 @@ if __name__ == '__main__':
     if args.resume:
         logger.info("Loading model")
         try:
-            model = AutoModel.from_pretrained(args.checkpoint_dir)
+            if args.split_models:
+                model_articles = AutoModel.from_pretrained(
+                    os.path.join(args.checkpoint_dir, 'model_articles'))
+                model_contexts = AutoModel.from_pretrained(
+                    os.path.join(args.checkpoint_dir, 'model_contexts'))
+            else:
+                model = AutoModel.from_pretrained(args.checkpoint_dir, 'model')
             logger.info("Model loaded from checkpoint directory")
         except OSError:
             logger.info("Could not load model from checkpoint directory")
             logger.info("Initializing model from provided model name")
-            model = AutoModel.from_pretrained(args.model_name)
+            if args.split_models:
+                model_articles = AutoModel.from_pretrained(args.model_name)
+                model_contexts = AutoModel.from_pretrained(args.model_name)
+            else:
+                model = AutoModel.from_pretrained(args.model_name)
         try:
-            classification_head = Sequential(nn.Linear(model.config.hidden_size * 3, model.config.hidden_size),
-                                             nn.ReLU(),
-                                             nn.Linear(model.config.hidden_size, 1))
+            if args.split_models:
+                classification_head = Sequential(nn.Linear(model_articles.config.hidden_size * 2 + model_contexts.config.hidden_size, model_articles.config.hidden_size),
+                                                 nn.ReLU(),
+                                                 nn.Linear(model_articles.config.hidden_size, 1))
+            else:
+                classification_head = Sequential(nn.Linear(model.config.hidden_size * 3, model.config.hidden_size),
+                                                 nn.ReLU(),
+                                                 nn.Linear(model.config.hidden_size, 1))
             classification_head.load_state_dict(torch.load(os.path.join(
                 args.checkpoint_dir, 'classification_head.pth'), map_location='cpu'))
             logger.info("Classification head loaded from checkpoint directory")
@@ -213,25 +230,42 @@ if __name__ == '__main__':
             logger.info(
                 "Could not load classification head from checkpoint directory")
             logger.info("Initializing classification head with random weights")
+            if args.split_models:
+                classification_head = Sequential(nn.Linear(model_articles.config.hidden_size * 2 + model_contexts.config.hidden_size, model_articles.config.hidden_size),
+                                                 nn.ReLU(),
+                                                 nn.Linear(model_articles.config.hidden_size, 1))
+            else:
+                classification_head = Sequential(nn.Linear(model.config.hidden_size * 3, model.config.hidden_size),
+                                                 nn.ReLU(),
+                                                 nn.Linear(model.config.hidden_size, 1))
+    else:
+        logger.info("Initializing model")
+        if args.split_models:
+            model_articles = AutoModel.from_pretrained(args.model_name)
+            model_contexts = AutoModel.from_pretrained(args.model_name)
+            classification_head = Sequential(nn.Linear(model_articles.config.hidden_size * 2 + model_contexts.config.hidden_size, model_articles.config.hidden_size),
+                                             nn.ReLU(),
+                                             nn.Linear(model_articles.config.hidden_size, 1))
+        else:
+            model = AutoModel.from_pretrained(args.model_name)
             classification_head = Sequential(nn.Linear(model.config.hidden_size * 3, model.config.hidden_size),
                                              nn.ReLU(),
                                              nn.Linear(model.config.hidden_size, 1))
-    else:
-        logger.info("Initializing model")
-        model = AutoModel.from_pretrained(args.model_name)
-        classification_head = Sequential(nn.Linear(model.config.hidden_size * 3, model.config.hidden_size),
-                                         nn.ReLU(),
-                                         nn.Linear(model.config.hidden_size, 1))
 
     tokenizer = AutoTokenizer.from_pretrained(args.model_name)
     tokenizer.save_pretrained(os.path.join(output_dir, 'tokenizer'))
 
     # store model weights to keep track of model distance
-    model_weights = torch.cat([param.data.flatten()
-                              for param in model.parameters()]).to('cpu')
+    # model_weights = torch.cat([param.data.flatten()
+    #                           for param in model.parameters()]).to('cpu')
 
     logger.info("Initializing optimizer")
-    optimizer = optim.Adam(model.parameters(), lr=args.lr)
+    if args.split_models:
+        optimizer = optim.Adam(model_articles.parameters(), lr=args.lr)
+        optimizer.add_param_group(
+            {'params': model_contexts.parameters(), 'lr': args.lr})
+    else:
+        optimizer = optim.Adam(model.parameters(), lr=args.lr)
     # add classification head to optimizer
     optimizer.add_param_group(
         {'params': classification_head.parameters(), 'lr': args.lr * args.head_lr_factor})
@@ -242,14 +276,17 @@ if __name__ == '__main__':
     # define loss
     loss_fn = nn.CrossEntropyLoss()
 
-    noise_backlog = {'no_mask': 0, 'mask_mention': 0, 'mask_sentence': 0, 'mask_span': 0}
+    noise_backlog = {'no_mask': 0, 'mask_mention': 0,
+                     'mask_sentence': 0, 'mask_span': 0}
+
     def collator(input):
         output = {'sources': [], 'contexts': [], 'targets': [], 'noises': []}
         if input[0]['split'] == 'train':
             for i in range(args.neg_samples_train):
                 output[f"contexts_neg_{i}"] = []
                 output[f"strategy_neg_{i}"] = []
-            noise_types = ['mask_span', 'mask_sentence', 'mask_mention', 'no_mask']
+            noise_types = ['mask_span', 'mask_sentence',
+                           'mask_mention', 'no_mask']
             for item in input:
                 found = False
                 if (item['link_context'][:item['context_span_start_index']] + item['link_context'][item['context_span_end_index']:]).strip() != '':
@@ -260,7 +297,7 @@ if __name__ == '__main__':
                 if not found and (item['link_context'][:item['context_sentence_start_index']] + item['link_context'][item['context_sentence_end_index']:]).strip() != '':
                     if item['context_sentence_start_index'] <= item['context_mention_start_index'] and item['context_sentence_end_index'] > item['context_mention_end_index'] + 1:
                         valid_noise_types = ['mask_sentence',
-                                       'mask_mention', 'no_mask']
+                                             'mask_mention', 'no_mask']
                         found = True
                 if not found and (item['link_context'][:item['context_mention_start_index']] + item['link_context'][item['context_mention_end_index']:]).strip() != '':
                     valid_noise_types = ['mask_mention', 'no_mask']
@@ -275,10 +312,12 @@ if __name__ == '__main__':
                         noise_backlog[category] -= 1
                         break
                 if noise_type is None:
-                    noise_type = random.choices(noise_types, weights=weights, k=1)[0]
+                    noise_type = random.choices(
+                        noise_types, weights=weights, k=1)[0]
                     if noise_type not in valid_noise_types:
                         noise_backlog[noise_type] += 1
-                        noise_type = random.choices(valid_noise_types, weights=weights[-len(valid_noise_types):], k=1)[0]
+                        noise_type = random.choices(
+                            valid_noise_types, weights=weights[-len(valid_noise_types):], k=1)[0]
                 if noise_type == 'mask_span':
                     item['link_context'] = item['link_context'][:int(
                         item['context_span_start_index'])] + item['link_context'][int(item['context_span_end_index']):]
@@ -295,7 +334,7 @@ if __name__ == '__main__':
                 item['link_context'] = re.sub(
                     '\n+', '\n', item['link_context'])
                 item['link_context'] = item['link_context'].strip()
-                
+
                 source_input = f"{item['source_title']}{tokenizer.sep_token}{item['source_lead']}"
                 if args.insert_section:
                     context_input = f"{item['source_section']}{tokenizer.sep_token}"
@@ -440,20 +479,42 @@ if __name__ == '__main__':
     if args.full_freeze_epochs > 0:
         logger.info(
             f"Freezing all layers except classification head for {args.full_freeze_epochs} epochs")
-        for param in model.parameters():
-            param.requires_grad = False
-        for param in classification_head.parameters():
-            param.requires_grad = True
+        if args.split_models:
+            for param in model_articles.parameters():
+                param.requires_grad = False
+            for param in model_contexts.parameters():
+                param.requires_grad = False
+            for param in classification_head.parameters():
+                param.requires_grad = True
+        else:
+            for param in model.parameters():
+                param.requires_grad = False
+            for param in classification_head.parameters():
+                param.requires_grad = True
     else:
         logger.info(f"Freezing first {args.freeze_layers} layers")
-        for param in model.base_model.embeddings.parameters():
-            param.requires_grad = False
-        for param in model.base_model.encoder.layer[:args.freeze_layers].parameters():
-            param.requires_grad = False
+        if args.split_models:
+            for param in model_articles.base_model.embeddings.parameters():
+                param.requires_grad = False
+            for param in model_articles.base_model.encoder.layer[:args.freeze_layers].parameters():
+                param.requires_grad = False
+            for param in model_contexts.base_model.embeddings.parameters():
+                param.requires_grad = False
+            for param in model_contexts.base_model.encoder.layer[:args.freeze_layers].parameters():
+                param.requires_grad = False
+        else:
+            for param in model.base_model.embeddings.parameters():
+                param.requires_grad = False
+            for param in model.base_model.encoder.layer[:args.freeze_layers].parameters():
+                param.requires_grad = False
 
     # prepare all objects with accelerator
-    model, classification_head, optimizer, train_loader, val_loader, scheduler = accelerator.prepare(
-        model, classification_head, optimizer, train_loader, val_loader, scheduler)
+    if args.split_models:
+        model_articles, model_contexts, classification_head, optimizer, train_loader, val_loader, scheduler = accelerator.prepare(
+            model_articles, model_contexts, classification_head, optimizer, train_loader, val_loader, scheduler)
+    else:
+        model, classification_head, optimizer, train_loader, val_loader, scheduler = accelerator.prepare(
+            model, classification_head, optimizer, train_loader, val_loader, scheduler)
 
     logger.info("Starting training")
     step = 0
@@ -463,16 +524,25 @@ if __name__ == '__main__':
             step += 1
             # multiple forward passes accumulate gradients
             # source: https://discuss.pytorch.org/t/multiple-model-forward-followed-by-one-loss-backward/20868
-            output_source = model(**data['sources'])
-            output_context_pos = model(**data['contexts'])
-            output_target = model(**data['targets'])
+            if args.split_models:
+                output_source = model_articles(**data['sources'])
+                output_context_pos = model_contexts(**data['contexts'])
+                output_target = model_articles(**data['targets'])
+            else:
+                output_source = model(**data['sources'])
+                output_context_pos = model(**data['contexts'])
+                output_target = model(**data['targets'])
             embeddings_pos = [output_source['last_hidden_state'][:, 0, :],
                               output_context_pos['last_hidden_state'][:, 0, :],
                               output_target['last_hidden_state'][:, 0, :]]
             embeddings_pos = torch.cat(embeddings_pos, dim=1)
             logits = [classification_head(embeddings_pos).squeeze()]
             for i in range(args.neg_samples_train):
-                output_context_neg = model(**data[f"contexts_neg_{i}"])
+                if args.split_models:
+                    output_context_neg = model_contexts(
+                        **data[f"contexts_neg_{i}"])
+                else:
+                    output_context_neg = model(**data[f"contexts_neg_{i}"])
                 embeddings_neg = [output_source['last_hidden_state'][:, 0, :],
                                   output_context_neg['last_hidden_state'][:, 0, :],
                                   output_target['last_hidden_state'][:, 0, :]]
@@ -505,17 +575,23 @@ if __name__ == '__main__':
                 logger.info(f"Step {step}: scheduler step")
                 scheduler.step()
                 logger.info(
-                    f"Encoder learning rate: {scheduler.get_last_lr()[0]}")
+                    f"Encoders learning rate: {scheduler.get_last_lr()[0]}")
                 logger.info(
-                    f"Classification head learning rate: {scheduler.get_last_lr()[1]}")
+                    f"Classification head learning rate: {scheduler.get_last_lr()[2]}")
 
             # save model
             if step % args.save_steps == 0:
                 logger.info(f"Step {step}: saving model")
                 accelerator.wait_for_everyone()
                 # accelerator needs to unwrap model and classification head
-                accelerator.unwrap_model(model).save_pretrained(os.path.join(
-                    output_dir, f"model_{step}"))
+                if args.split_models:
+                    accelerator.unwrap_model(model_articles).save_pretrained(os.path.join(
+                        output_dir, f"model_articles_{step}"))
+                    accelerator.unwrap_model(model_contexts).save_pretrained(os.path.join(
+                        output_dir, f"model_contexts_{step}"))
+                else:
+                    accelerator.unwrap_model(model).save_pretrained(os.path.join(
+                        output_dir, f"model_{step}"))
                 torch.save(accelerator.unwrap_model(classification_head).state_dict(), os.path.join(
                     output_dir, f"classification_head_{step}.pth"))
 
@@ -525,10 +601,10 @@ if __name__ == '__main__':
                 model.eval()
                 with torch.no_grad():
                     # compare current model weights to initial model weights
-                    current_model_weights = torch.cat(
-                        [param.data.flatten() for param in model.parameters()]).to('cpu')
-                    model_distance = torch.norm(
-                        current_model_weights - model_weights) / torch.norm(model_weights)
+                    # current_model_weights = torch.cat(
+                    #     [param.data.flatten() for param in model.parameters()]).to('cpu')
+                    # model_distance = torch.norm(
+                    #     current_model_weights - model_weights) / torch.norm(model_weights)
 
                     true_pos = 0
                     true_neg = 0
@@ -549,9 +625,14 @@ if __name__ == '__main__':
                         if j % 20 == 0:
                             pbar.set_description(
                                 f"True pos: {true_pos}, True neg: {true_neg}, False pos: {false_pos}, False neg: {false_neg}, Total: {total}")
-                        output_source = model(**val_data['sources'])
-                        output_context = model(**val_data['contexts'])
-                        output_target = model(**val_data['targets'])
+                        if args.split_models:
+                            output_source = model_articles(**val_data['sources'])
+                            output_context = model_contexts(**val_data['contexts'])
+                            output_target = model_articles(**val_data['targets'])
+                        else:
+                            output_source = model(**val_data['sources'])
+                            output_context = model(**val_data['contexts'])
+                            output_target = model(**val_data['targets'])
                         val_embeddings = [output_source['last_hidden_state'][:, 0, :],
                                           output_context['last_hidden_state'][:, 0, :],
                                           output_target['last_hidden_state'][:, 0, :]]
@@ -563,8 +644,12 @@ if __name__ == '__main__':
                         for i in range(args.neg_samples_eval):
                             neg_strategies.append(
                                 val_data[f"strategy_neg_{i}"])
-                            output_context_neg = model(
-                                **val_data[f"contexts_neg_{i}"])
+                            if args.split_models:
+                                output_context_neg = model_contexts(
+                                    **val_data[f"contexts_neg_{i}"])
+                            else:
+                                output_context_neg = model(
+                                    **val_data[f"contexts_neg_{i}"])
                             val_embeddings_neg = [output_source['last_hidden_state'][:, 0, :],
                                                   output_context_neg['last_hidden_state'][:, 0, :],
                                                   output_target['last_hidden_state'][:, 0, :]]
@@ -770,7 +855,7 @@ if __name__ == '__main__':
                     logger.info(f"Recall: {recall}")
                     logger.info(f"F1: {f1}")
                     logger.info(f"Validation loss: {running_val_loss}")
-                    logger.info(f"Model distance: {model_distance}")
+                    # logger.info(f"Model distance: {model_distance}")
 
                     if accelerator.is_main_process:
                         writer.add_scalar('val/mrr@1', mrr_at_k['1'], step)
@@ -792,8 +877,8 @@ if __name__ == '__main__':
                         writer.add_scalar('val/recall', recall, step)
                         writer.add_scalar('val/f1', f1, step)
                         writer.add_scalar('val/loss', running_val_loss, step)
-                        writer.add_scalar('model/distance',
-                                          model_distance, step)
+                        # writer.add_scalar('model/distance',
+                        #                   model_distance, step)
                         for i in range(len(noise_map)):
                             if noise_perf[i]['n_lists'] > 0:
                                 writer.add_scalar(
@@ -827,18 +912,49 @@ if __name__ == '__main__':
 
         # unfreeze model if necessary
         if epoch + 1 == args.full_freeze_epochs:
-            model = accelerator.unwrap_model(model)
             logger.info(
                 f"Unfreezing model except first {args.freeze_layers} layers")
-            for param in model.parameters():
-                param.requires_grad = True
-            for param in model.base_model.embeddings.parameters():
-                param.requires_grad = False
-            for param in model.base_model.encoder.layer[:args.freeze_layers].parameters():
-                param.requires_grad = False
-            model = accelerator.prepare(model)
+            if args.split_models:
+                model_articles = accelerator.unwrap_model(model_articles)
+                model_contexts = accelerator.unwrap_model(model_contexts)
+                for param in model_articles.parameters():
+                    param.requires_grad = True
+                for param in model_contexts.parameters():
+                    param.requires_grad = True
+                for param in model_articles.base_model.embeddings.parameters():
+                    param.requires_grad = False
+                for param in model_articles.base_model.encoder.layer[:args.freeze_layers].parameters():
+                    param.requires_grad = False
+                for param in model_contexts.base_model.embeddings.parameters():
+                    param.requires_grad = False
+                for param in model_contexts.base_model.encoder.layer[:args.freeze_layers].parameters():
+                    param.requires_grad = False
+                model_articles = accelerator.prepare(model_articles)
+                model_contexts = accelerator.prepare(model_contexts)
+            else:
+                model = accelerator.unwrap_model(model)
+                for param in model.parameters():
+                    param.requires_grad = True
+                for param in model.base_model.embeddings.parameters():
+                    param.requires_grad = False
+                for param in model.base_model.encoder.layer[:args.freeze_layers].parameters():
+                    param.requires_grad = False
+                model = accelerator.prepare(model)
 
     # close logger
     logger.info("Training finished")
     if accelerator.is_main_process:
         writer.close()
+
+    accelerator.wait_for_everyone()
+    # save last version of models
+    if args.split_models:
+        accelerator.unwrap_model(model_articles).save_pretrained(os.path.join(
+            output_dir, f"model_articles"))
+        accelerator.unwrap_model(model_contexts).save_pretrained(os.path.join(
+            output_dir, f"model_contexts"))
+    else:
+        accelerator.unwrap_model(model).save_pretrained(os.path.join(
+            output_dir, f"model"))
+    torch.save(accelerator.unwrap_model(classification_head).state_dict(), os.path.join(
+        output_dir, f"classification_head.pth"))
