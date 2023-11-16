@@ -23,10 +23,12 @@ from tqdm import tqdm
 from accelerate import DistributedDataParallelKwargs
 from torch.nn import Sequential
 import gc
+import nltk
 from nltk import sent_tokenize
 from urllib.parse import unquote
 
 multiprocess.set_start_method("spawn", force=True)
+nltk.download('punkt')
 
 
 def mask_negative_contexts(context, probs, backlog):
