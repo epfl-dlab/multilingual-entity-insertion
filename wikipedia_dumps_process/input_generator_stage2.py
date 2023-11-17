@@ -37,10 +37,7 @@ if __name__ == '__main__':
                         help='Maximum number of train samples to generate')
     parser.add_argument('--max_val_samples', type=int, default=None,
                         help='Maximum number of validation samples to generate.')
-    parser.add_argument('--join_samples', action='store_true',
-                        help='Join positive and its negative samples into one row')
 
-    parser.set_defaults(join_samples=False)
     args = parser.parse_args()
 
     if not os.path.exists(args.output_dir):
@@ -88,37 +85,50 @@ if __name__ == '__main__':
             entity_map[title].add(mention)
         else:
             entity_map[title] = set([mention])
-            
+
     print('Processing lead paragraphs')
     page_leads = {row['title']: row['lead_paragraph'] for row in df_pages}
 
     if not args.max_train_samples and not args.max_val_samples:
-        args.max_train_samples = len(df_links) * 0.8 * (1 + args.neg_samples_train)
+        args.max_train_samples = len(
+            df_links) * 0.8 * (1 + args.neg_samples_train)
         args.max_val_samples = len(df_links) * 0.2 * (1 + args.neg_samples_val)
+        print(f'Setting max_train_samples to {args.max_train_samples} and max_val_samples to {args.max_val_samples}')
     elif not args.max_train_samples:
-        args.max_train_samples = len(df_links) - args.max_val_samples // (1 + args.neg_samples_val)
+        args.max_train_samples = len(
+            df_links) - args.max_val_samples // (1 + args.neg_samples_val)
         if args.max_train_samples < 0:
-            args.max_train_samples = len(df_links) * 0.8 * (1 + args.neg_samples_train)
-            args.max_val_samples = len(df_links) * 0.2 * (1 + args.neg_samples_val)
-            print(f'Warning: max_val_samples is too large. Setting max_train_samples to {args.max_train_samples} and max_val_samples to {args.max_val_samples}')
+            args.max_train_samples = len(
+                df_links) * 0.8 * (1 + args.neg_samples_train)
+            args.max_val_samples = len(df_links) * \
+                0.2 * (1 + args.neg_samples_val)
+            print(
+                f'Warning: max_val_samples is too large. Setting max_train_samples to {args.max_train_samples} and max_val_samples to {args.max_val_samples}')
     elif not args.max_val_samples:
-        args.max_val_samples = len(df_links) - args.max_train_samples // (1 + args.neg_samples_train)
+        args.max_val_samples = len(
+            df_links) - args.max_train_samples // (1 + args.neg_samples_train)
         if args.max_val_samples < 0:
-            args.max_train_samples = len(df_links) * 0.8 * (1 + args.neg_samples_train)
-            args.max_val_samples = len(df_links) * 0.2 * (1 + args.neg_samples_val)
-            print(f'Warning: max_train_samples is too large. Setting max_train_samples to {args.max_train_samples} and max_val_samples to {args.max_val_samples}')
+            args.max_train_samples = len(
+                df_links) * 0.8 * (1 + args.neg_samples_train)
+            args.max_val_samples = len(df_links) * \
+                0.2 * (1 + args.neg_samples_val)
+            print(
+                f'Warning: max_train_samples is too large. Setting max_train_samples to {args.max_train_samples} and max_val_samples to {args.max_val_samples}')
     else:
         if args.max_train_samples // (1 + args.neg_samples_train) + args.max_val_samples // (1 + args.neg_samples_val) > len(df_links):
-            args.max_train_samples = len(df_links) * 0.8 * (1 + args.neg_samples_train)
-            args.max_val_samples = len(df_links) * 0.2 * (1 + args.neg_samples_val)
-            print(f'Warning: max_train_samples and max_val_samples are too large. Setting max_train_samples to {args.max_train_samples} and max_val_samples to {args.max_val_samples}')
+            args.max_train_samples = len(
+                df_links) * 0.8 * (1 + args.neg_samples_train)
+            args.max_val_samples = len(df_links) * \
+                0.2 * (1 + args.neg_samples_val)
+            print(
+                f'Warning: max_train_samples and max_val_samples are too large. Setting max_train_samples to {args.max_train_samples} and max_val_samples to {args.max_val_samples}')
 
     print('Processing all contexts')
     all_contexts = []
     all_sections = []
     for link in tqdm(df_links):
         all_contexts.append(link['context'])
-        all_sections.append(link['source_section'])
+        all_sections.append(link['section'])
         for negative_context in literal_eval(link['negative_contexts']):
             all_contexts.append(negative_context['context'])
             all_sections.append(negative_context['section'])
@@ -127,14 +137,14 @@ if __name__ == '__main__':
     random.shuffle(df_links)
     train_links = []
     val_links = []
-    while len(train_links) < args.max_train_samples / (1 + args.neg_samples_train):
+    while len(train_links) < args.max_train_samples / (1 + args.neg_samples_train) and len(df_links) != 0:
         link = df_links.pop()
         if link['target_title'] not in page_leads:
             continue
         train_links.append({'source_title': link['source_title'],
                             'target_title': link['target_title'],
                             'source_lead': link['source_lead'],
-                            'target_lead': page_leads[link['target_title']]
+                            'target_lead': page_leads[link['target_title']],
                             'link_context': link['context'],
                             'section': link['section'],
                             'missing_category': link['missing_category']})
@@ -155,21 +165,22 @@ if __name__ == '__main__':
                 neg_context = all_contexts[index]
                 neg_section = all_sections[index]
                 if link['target_title'] not in entity_map:
-                    entity_map[link['target_title']] = set([link['target_title']])
+                    entity_map[link['target_title']] = set(
+                        [link['target_title']])
                 for mention in entity_map[link['target_title']]:
                     if mention in neg_context:
                         continue
                 train_links[-1][f'source_section_neg_{counter}'] = neg_section
                 train_links[-1][f'link_context_neg_{counter}'] = neg_context
                 counter += 1
-    while len(val_links) < args.max_val_samples / (1 + args.neg_samples_val):
+    while len(val_links) < args.max_val_samples / (1 + args.neg_samples_val) and len(df_links) != 0:
         link = df_links.pop()
         if link['target_title'] not in page_leads:
             continue
         val_links.append({'source_title': link['source_title'],
                           'target_title': link['target_title'],
                           'source_lead': link['source_lead'],
-                          'target_lead': page_leads[link['target_title']]
+                          'target_lead': page_leads[link['target_title']],
                           'link_context': link['context'],
                           'section': link['section'],
                           'missing_category': link['missing_category']})
@@ -190,7 +201,8 @@ if __name__ == '__main__':
                 neg_context = all_contexts[index]
                 neg_section = all_sections[index]
                 if link['target_title'] not in entity_map:
-                    entity_map[link['target_title']] = set([link['target_title']])
+                    entity_map[link['target_title']] = set(
+                        [link['target_title']])
                 for mention in entity_map[link['target_title']]:
                     if mention in neg_context:
                         continue
