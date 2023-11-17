@@ -8,9 +8,9 @@ export IMAGE_TAG="prod"
 export IMAGE="ic-registry.epfl.ch/dlab/${IMAGE_CREATOR}/${IMAGE_NAME}:${IMAGE_TAG}"
 export NODE_TYPE="G10"
 export NUM_GPUS=1
-export NUM_CPUS=8
-export MEMORY="128G"
-export SLEEP_TIME="24h"
+export NUM_CPUS=4
+export MEMORY="48G"
+export SLEEP_TIME="70h"
 EXP_NAME="runai-${IMAGE_NAME}-${IMAGE_TAG}-${SLEEP_TIME}-${NODE_TYPE}-${NUM_GPUS}-${NUM_CPUS}-${MEMORY}"
 # lowercase EXP_NAME, because k8s doesn't allow uppercase letters in the name
 # shellcheck disable=SC2155
@@ -20,7 +20,7 @@ export EXP_NAME=$(echo "$EXP_NAME" | tr '[:upper:]' '[:lower:]')
 TIMESTAMP=$(date +"%Y-%m-%d %H:%M:%S")
 OUTPUT_DIR="history/${IMAGE_NAME}/${EXP_NAME}_${TIMESTAMP}"
 mkdir -p "$OUTPUT_DIR"
-envsubst < runai_deploy_template.yaml > "${OUTPUT_DIR}/config.yaml"
+envsubst < runai_deploy_conf.yaml > "${OUTPUT_DIR}/config.yaml"
 
 # Save the deploy script in the history directory
 cat runai_deploy.sh > "${OUTPUT_DIR}/deploy.sh"
