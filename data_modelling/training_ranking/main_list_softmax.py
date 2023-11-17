@@ -1,7 +1,7 @@
 import argparse
 import logging
-from operator import is_
 import os
+import sys
 import time
 import random
 import re
@@ -28,7 +28,8 @@ from nltk import sent_tokenize
 from urllib.parse import unquote
 
 multiprocess.set_start_method("spawn", force=True)
-nltk.download('punkt')
+nltk.download('punkt', download_dir='/dlabdata1/tsoares/nltk_data')
+nltk.data.path.append('/dlabdata1/tsoares/nltk_data')
 
 
 def mask_negative_contexts(context, probs, backlog):
@@ -46,7 +47,7 @@ def mask_negative_contexts(context, probs, backlog):
             '\n', ' ').split() if word.strip()])
     if len(words) == 1:
         valid_strategies.remove('mask_word')
-    
+
     mask_strategy = None
     for strategy in valid_strategies:
         if backlog[strategy] > 0:
@@ -56,10 +57,12 @@ def mask_negative_contexts(context, probs, backlog):
     if mask_strategy is None:
         if valid_strategies == ['no_mask']:
             probs['no_mask'] = 1
-        mask_strategy = random.choices(strategies, weights=[probs[strategy] for strategy in strategies], k=1)[0]
+        mask_strategy = random.choices(
+            strategies, weights=[probs[strategy] for strategy in strategies], k=1)[0]
         if mask_strategy not in valid_strategies:
             backlog[mask_strategy] += 1
-            mask_strategy = random.choices(valid_strategies, weights=[probs[strategy] for strategy in valid_strategies], k=1)[0]
+            mask_strategy = random.choices(valid_strategies, weights=[
+                                           probs[strategy] for strategy in valid_strategies], k=1)[0]
     if mask_strategy == 'no_mask':
         return context
     if mask_strategy == 'mask_word':
@@ -91,35 +94,39 @@ if __name__ == '__main__':
                         default='bert-base-uncased', help='Model name or path to model')
     parser.add_argument('--data_dir', type=str,
                         required=True, help='Data directory')
-    parser.add_argument('--num_epochs', type=int,
-                        default=1, help='Number of epochs')
+    parser.add_argument('--data_dir_2', type=str, default='',
+                        help='Data directory for second stage')
+    # make num_epochs a list argument
+    parser.add_argument('--num_epochs', nargs='+', type=int,
+                        default=[1], help='Number of epochs')
     parser.add_argument('--batch_size', type=int, default=4,
                         help='Batch size')
     parser.add_argument('--num_workers', type=int, default=16,
                         help='Number of workers for dataloader')
-    parser.add_argument('--lr', type=float, default=1e-5, help='Learning rate')
-    parser.add_argument('--gamma_lr', type=float,
-                        default=0.9, help='Gamma for lr scheduler')
-    parser.add_argument('--print_steps', type=int, default=1_000,
+    parser.add_argument('--lr', nargs='+', type=float,
+                        default=[1e-5], help='Learning rate')
+    parser.add_argument('--gamma_lr', nargs='+', type=float,
+                        default=[0.9], help='Gamma for lr scheduler')
+    parser.add_argument('--print_steps', nargs='+', type=int, default=[1_000],
                         help='Number of steps between printing loss')
-    parser.add_argument('--save_steps', type=int, default=5_000,
+    parser.add_argument('--save_steps', nargs='+', type=int, default=[5_000],
                         help='Number of steps between saving model')
-    parser.add_argument('--eval_steps', type=int, default=5_000,
+    parser.add_argument('--eval_steps', nargs='+', type=int, default=[5_000],
                         help='Number of steps between evaluating model on validation set')
-    parser.add_argument('--scheduler_steps', type=int, default=10_000,
+    parser.add_argument('--scheduler_steps', nargs='+', type=int, default=[10_000],
                         help='Number of steps between scheduler steps')
     parser.add_argument('--resume', action='store_true',
                         help='Resume training from checkpoint (needs --checkpoint_dir)')
     parser.add_argument('--checkpoint_dir', type=str,
                         help='Directory with checkpoint to resume training from')
-    parser.add_argument('--ga_steps', type=int, default=1,
+    parser.add_argument('--ga_steps', nargs='+', type=int, default=[1],
                         help='Number of steps for gradient accumulation')
-    parser.add_argument('--full_freeze_epochs', type=int, default=0,
+    parser.add_argument('--full_freeze_epochs', nargs='+', type=int, default=[0],
                         help='Number of epochs to freeze all layers except classification head')
-    parser.add_argument('--freeze_layers', type=int, default=2,
-                        help='Number of initial layers to freeze')
-    parser.add_argument('--head_lr_factor', type=float, default=1,
-                        help='Factor for learning rate of classification head')
+    parser.add_argument('--freeze_layers', nargs='+', type=int,
+                        default=[2], help='Number of initial layers to freeze')
+    parser.add_argument('--head_lr_factor', nargs='+', type=float,
+                        default=[1], help='Factor forfearning rate of classification head')
     parser.add_argument('--no_mask_perc', type=float, default=0.4,
                         help='Percentage of examples to not mask')
     parser.add_argument('--mask_mention_perc', type=float, default=0.2,
@@ -130,11 +137,11 @@ if __name__ == '__main__':
                         help='Percentage of spans to mask')
     parser.add_argument('--max_tokens', type=int, default=256,
                         help='Maximum number of tokens')
-    parser.add_argument('--neg_samples_train', type=int, default=1,
+    parser.add_argument('--neg_samples_train', nargs='+', type=int, default=[1],
                         help='Number of negative samples for training')
-    parser.add_argument('--neg_samples_eval', type=int, default=20,
+    parser.add_argument('--neg_samples_eval', nargs='+', type=int, default=[20],
                         help='Number of negative samples for evaluation')
-    parser.add_argument('--temperature', type=float, default=1,
+    parser.add_argument('--temperature', nargs='+', type=float, default=[1],
                         help='Temperature for softmax')
     parser.add_argument('--insert_mentions', type=str, choices=[
                         'none', 'target', 'candidates'], default='none', help='Where to insert mention knowledge')
@@ -144,6 +151,8 @@ if __name__ == '__main__':
                         help='Whether to apply masking to negative samples')
     parser.add_argument('--split_models', action='store_true',
                         help='If set, use a different encoder for articles and contexts')
+    parser.add_argument('--two_stage', action='store_true',
+                        help='If set, use two-stage training')
     parser.set_defaults(resume=False, insert_section=False,
                         mask_negatives=False, split_models=False)
 
@@ -157,6 +166,15 @@ if __name__ == '__main__':
         if not os.path.exists(args.checkpoint_dir):
             raise ValueError(
                 f"Checkpoint directory {args.checkpoint_dir} does not exist")
+
+    # check if data_dir exists
+    if not os.path.exists(args.data_dir):
+        raise ValueError(f"Data directory {args.data_dir} does not exist")
+
+    # check if data_dir_2 exists if two_stage is set
+    if args.two_stage and not os.path.exists(args.data_dir_2):
+        raise ValueError(
+            f"Data directory {args.data_dir_2} does not exist. It is required for two-stage training")
 
     # check if noise percentages add up to 1
     if abs(args.no_mask_perc + args.mask_mention_perc + args.mask_sentence_perc + args.mask_span_perc - 1) > 1e-5:
@@ -199,6 +217,13 @@ if __name__ == '__main__':
                         handlers=[logging.FileHandler(os.path.join(output_dir, 'log.txt')),
                                   logging.StreamHandler()])
     logger = get_logger(__name__, log_level="INFO")
+
+    # if using two stage pipeline, make sure all relevant arguments have length 2
+    # if they don't, repeat the first element
+    for arg in vars(args):
+        if isinstance(getattr(args, arg), list):
+            if len(getattr(args, arg)) == 1:
+                setattr(args, arg, getattr(args, arg) * 2)
 
     # log arguments
     logger.info("Arguments:")
@@ -271,29 +296,30 @@ if __name__ == '__main__':
 
     logger.info("Initializing optimizer")
     if args.split_models:
-        optimizer = optim.Adam(model_articles.parameters(), lr=args.lr)
+        optimizer = optim.Adam(model_articles.parameters(), lr=args.lr[0])
         optimizer.add_param_group(
-            {'params': model_contexts.parameters(), 'lr': args.lr})
+            {'params': model_contexts.parameters(), 'lr': args.lr[0]})
     else:
-        optimizer = optim.Adam(model.parameters(), lr=args.lr)
+        optimizer = optim.Adam(model.parameters(), lr=args.lr[0])
     # add classification head to optimizer
     optimizer.add_param_group(
-        {'params': classification_head.parameters(), 'lr': args.lr * args.head_lr_factor})
+        {'params': classification_head.parameters(), 'lr': args.lr[0] * args.head_lr_factor[0]})
 
     # set-up scheduler
-    scheduler = ExponentialLR(optimizer, gamma=args.gamma_lr)
+    scheduler = ExponentialLR(optimizer, gamma=args.gamma_lr[0])
 
     # define loss
     loss_fn = nn.CrossEntropyLoss()
 
     noise_backlog = {'no_mask': 0, 'mask_mention': 0,
                      'mask_sentence': 0, 'mask_span': 0}
-    neg_noise_backlog = {'no_mask': 0, 'mask_word': 0, 'mask_sentence': 0, 'mask_span': 0}
+    neg_noise_backlog = {'no_mask': 0, 'mask_word': 0,
+                         'mask_sentence': 0, 'mask_span': 0}
 
     def collator(input):
         output = {'sources': [], 'contexts': [], 'targets': [], 'noises': []}
         if input[0]['split'] == 'train':
-            for i in range(args.neg_samples_train):
+            for i in range(args.neg_samples_train[0]):
                 output[f"contexts_neg_{i}"] = []
                 output[f"strategy_neg_{i}"] = []
             noise_types = ['mask_span', 'mask_sentence',
@@ -368,7 +394,7 @@ if __name__ == '__main__':
 
                 mask_probs = {'no_mask': args.no_mask_perc, 'mask_word': args.mask_mention_perc,
                               'mask_sentence': args.mask_sentence_perc, 'mask_span': args.mask_span_perc}
-                for i in range(args.neg_samples_train):
+                for i in range(args.neg_samples_train[0]):
                     source_section_neg = item[f"source_section_neg_{i}"]
                     link_context_neg = item[f"link_context_neg_{i}"]
                     if args.mask_negatives:
@@ -388,7 +414,7 @@ if __name__ == '__main__':
                     output[f"strategy_neg_{i}"].append(
                         neg_map[item[f'neg_type_neg_{i}']])
         else:
-            for i in range(args.neg_samples_eval):
+            for i in range(args.neg_samples_eval[0]):
                 output[f"contexts_neg_{i}"] = []
                 output[f"strategy_neg_{i}"] = []
             for item in input:
@@ -413,12 +439,12 @@ if __name__ == '__main__':
                 output['targets'].append(target_input)
                 mask_probs = {'no_mask': args.no_mask_perc, 'mask_word': args.mask_mention_perc,
                               'mask_sentence': args.mask_sentence_perc, 'mask_span': args.mask_span_perc}
-                for i in range(args.neg_samples_eval):
+                for i in range(args.neg_samples_eval[0]):
                     source_section_neg = item[f"source_section_neg_{i}"]
                     link_context_neg = item[f"link_context_neg_{i}"]
                     if args.mask_negatives:
                         link_context_neg = mask_negative_contexts(
-                            link_context_neg, mask_probs)
+                            link_context_neg, mask_probs, neg_noise_backlog)
 
                     if args.insert_section:
                         context_input = f"{source_section_neg}{tokenizer.sep_token}"
@@ -441,13 +467,13 @@ if __name__ == '__main__':
             output['contexts'], padding=True, truncation=True, return_tensors='pt', max_length=args.max_tokens)
         output['noises'] = torch.tensor(output['noises'])
         if input[0]['split'] == 'train':
-            for i in range(args.neg_samples_train):
+            for i in range(args.neg_samples_train[0]):
                 output[f"contexts_neg_{i}"] = tokenizer(
                     output[f"contexts_neg_{i}"], padding=True, truncation=True, return_tensors='pt', max_length=args.max_tokens)
                 output[f"strategy_neg_{i}"] = torch.tensor(
                     output[f"strategy_neg_{i}"])
         else:
-            for i in range(args.neg_samples_eval):
+            for i in range(args.neg_samples_eval[0]):
                 output[f"contexts_neg_{i}"] = tokenizer(
                     output[f"contexts_neg_{i}"], padding=True, truncation=True, return_tensors='pt', max_length=args.max_tokens)
                 output[f"strategy_neg_{i}"] = torch.tensor(
@@ -455,8 +481,8 @@ if __name__ == '__main__':
         return output
 
     logger.info("Loading datasets")
-    train_set = WikiDataset(args.data_dir, 'train', args.neg_samples_train)
-    val_set = WikiDataset(args.data_dir, 'val', args.neg_samples_eval)
+    train_set = WikiDataset(args.data_dir, 'train', args.neg_samples_train[0])
+    val_set = WikiDataset(args.data_dir, 'val', args.neg_samples_eval[0])
     logger.info(f"Train set size: {len(train_set)}")
     logger.info(f"Validation set size: {len(val_set)}")
 
@@ -487,9 +513,9 @@ if __name__ == '__main__':
         else:
             mention_map[target_title] = mention['mention']
 
-    if args.full_freeze_epochs > 0:
+    if args.full_freeze_epochs[0] > 0:
         logger.info(
-            f"Freezing all layers except classification head for {args.full_freeze_epochs} epochs")
+            f"Freezing all layers except classification head for {args.full_freeze_epochs[0]} epochs")
         if args.split_models:
             for param in model_articles.parameters():
                 param.requires_grad = False
@@ -503,20 +529,20 @@ if __name__ == '__main__':
             for param in classification_head.parameters():
                 param.requires_grad = True
     else:
-        logger.info(f"Freezing first {args.freeze_layers} layers")
+        logger.info(f"Freezing first {args.freeze_layers[0]} layers")
         if args.split_models:
             for param in model_articles.base_model.embeddings.parameters():
                 param.requires_grad = False
-            for param in model_articles.base_model.encoder.layer[:args.freeze_layers].parameters():
+            for param in model_articles.base_model.encoder.layer[:args.freeze_layers[0]].parameters():
                 param.requires_grad = False
             for param in model_contexts.base_model.embeddings.parameters():
                 param.requires_grad = False
-            for param in model_contexts.base_model.encoder.layer[:args.freeze_layers].parameters():
+            for param in model_contexts.base_model.encoder.layer[:args.freeze_layers[0]].parameters():
                 param.requires_grad = False
         else:
             for param in model.base_model.embeddings.parameters():
                 param.requires_grad = False
-            for param in model.base_model.encoder.layer[:args.freeze_layers].parameters():
+            for param in model.base_model.encoder.layer[:args.freeze_layers[0]].parameters():
                 param.requires_grad = False
 
     # prepare all objects with accelerator
@@ -530,7 +556,7 @@ if __name__ == '__main__':
     logger.info("Starting training")
     step = 0
     running_loss = 0
-    for epoch in range(args.num_epochs):
+    for epoch in range(args.num_epochs[0]):
         for index, data in enumerate(train_loader):
             step += 1
             # multiple forward passes accumulate gradients
@@ -551,7 +577,7 @@ if __name__ == '__main__':
             if len(logit.shape) == 0:
                 logit = logit.unsqueeze(0)
             logits = [logit]
-            for i in range(args.neg_samples_train):
+            for i in range(args.neg_samples_train[0]):
                 if args.split_models:
                     output_context_neg = model_contexts(
                         **data[f"contexts_neg_{i}"])
@@ -572,32 +598,37 @@ if __name__ == '__main__':
             indices = torch.randperm(logits.shape[1])
             logits = logits[:, indices]
             labels = labels[:, indices]
-            loss = loss_fn(logits / args.temperature, labels) / args.ga_steps
+            loss = loss_fn(
+                logits / args.temperature[0], labels) / args.ga_steps[0]
             accelerator.backward(loss)
-            if (index + 1) % args.ga_steps == 0:
+            if (index + 1) % args.ga_steps[0] == 0:
                 optimizer.step()
                 optimizer.zero_grad()
             # save running loss
-            running_loss += loss.item() * args.ga_steps
+            running_loss += loss.item() * args.ga_steps[0]
             # print loss
-            if step % args.print_steps == 0:
+            if step % args.print_steps[0] == 0:
                 logger.info(
-                    f"Step {step}: loss = {running_loss / args.print_steps}")
+                    f"Step {step}: loss = {running_loss / args.print_steps[0]}")
                 if accelerator.is_main_process:
                     writer.add_scalar(
-                        'train/loss', running_loss / args.print_steps, step)
+                        'train/loss', running_loss / args.print_steps[0], step)
                 running_loss = 0
 
-            if step % args.scheduler_steps == 0:
+            if step % args.scheduler_steps[0] == 0:
                 logger.info(f"Step {step}: scheduler step")
                 scheduler.step()
                 logger.info(
                     f"Encoders learning rate: {scheduler.get_last_lr()[0]}")
-                logger.info(
-                    f"Classification head learning rate: {scheduler.get_last_lr()[2]}")
+                if args.split_models:
+                    logger.info(
+                        f"Classification head learning rate: {scheduler.get_last_lr()[2]}")
+                else:
+                    logger.info(
+                        f"Classification head learning rate: {scheduler.get_last_lr()[1]}")
 
             # save model
-            if step % args.save_steps == 0:
+            if step % args.save_steps[0] == 0:
                 logger.info(f"Step {step}: saving model")
                 accelerator.wait_for_everyone()
                 # accelerator needs to unwrap model and classification head
@@ -613,7 +644,7 @@ if __name__ == '__main__':
                     output_dir, f"classification_head_{step}.pth"))
 
             # evaluate model
-            if step % args.eval_steps == 0:
+            if step % args.eval_steps[0] == 0:
                 logger.info(f"Step {step}: evaluating model")
                 if args.split_models:
                     model_articles.eval()
@@ -647,9 +678,12 @@ if __name__ == '__main__':
                             pbar.set_description(
                                 f"True pos: {true_pos}, True neg: {true_neg}, False pos: {false_pos}, False neg: {false_neg}, Total: {total}")
                         if args.split_models:
-                            output_source = model_articles(**val_data['sources'])
-                            output_context = model_contexts(**val_data['contexts'])
-                            output_target = model_articles(**val_data['targets'])
+                            output_source = model_articles(
+                                **val_data['sources'])
+                            output_context = model_contexts(
+                                **val_data['contexts'])
+                            output_target = model_articles(
+                                **val_data['targets'])
                         else:
                             output_source = model(**val_data['sources'])
                             output_context = model(**val_data['contexts'])
@@ -662,7 +696,7 @@ if __name__ == '__main__':
                             val_embeddings).squeeze()]
 
                         neg_strategies = []
-                        for i in range(args.neg_samples_eval):
+                        for i in range(args.neg_samples_eval[0]):
                             neg_strategies.append(
                                 val_data[f"strategy_neg_{i}"])
                             if args.split_models:
@@ -687,7 +721,7 @@ if __name__ == '__main__':
                         val_logits = val_logits[:, indices]
                         labels = labels[:, indices]
                         val_loss = loss_fn(
-                            val_logits / args.temperature, labels)
+                            val_logits / args.temperature[0], labels)
 
                         # gather the results from all processes
                         val_logits = accelerator.pad_across_processes(
@@ -936,9 +970,9 @@ if __name__ == '__main__':
                 gc.collect()
 
         # unfreeze model if necessary
-        if epoch + 1 == args.full_freeze_epochs:
+        if epoch + 1 == args.full_freeze_epochs[0]:
             logger.info(
-                f"Unfreezing model except first {args.freeze_layers} layers")
+                f"Unfreezing model except first {args.freeze_layers[0]} layers")
             if args.split_models:
                 model_articles = accelerator.unwrap_model(model_articles)
                 model_contexts = accelerator.unwrap_model(model_contexts)
@@ -948,11 +982,11 @@ if __name__ == '__main__':
                     param.requires_grad = True
                 for param in model_articles.base_model.embeddings.parameters():
                     param.requires_grad = False
-                for param in model_articles.base_model.encoder.layer[:args.freeze_layers].parameters():
+                for param in model_articles.base_model.encoder.layer[:args.freeze_layers[0]].parameters():
                     param.requires_grad = False
                 for param in model_contexts.base_model.embeddings.parameters():
                     param.requires_grad = False
-                for param in model_contexts.base_model.encoder.layer[:args.freeze_layers].parameters():
+                for param in model_contexts.base_model.encoder.layer[:args.freeze_layers[0]].parameters():
                     param.requires_grad = False
                 model_articles = accelerator.prepare(model_articles)
                 model_contexts = accelerator.prepare(model_contexts)
@@ -962,11 +996,653 @@ if __name__ == '__main__':
                     param.requires_grad = True
                 for param in model.base_model.embeddings.parameters():
                     param.requires_grad = False
-                for param in model.base_model.encoder.layer[:args.freeze_layers].parameters():
+                for param in model.base_model.encoder.layer[:args.freeze_layers[0]].parameters():
                     param.requires_grad = False
                 model = accelerator.prepare(model)
 
-    # close logger
+    if not args.two_stage:
+        logger.info("Training finished")
+        if accelerator.is_main_process:
+            writer.close()
+
+        accelerator.wait_for_everyone()
+        # save last version of models
+        if args.split_models:
+            accelerator.unwrap_model(model_articles).save_pretrained(os.path.join(
+                output_dir, f"model_articles"))
+            accelerator.unwrap_model(model_contexts).save_pretrained(os.path.join(
+                output_dir, f"model_contexts"))
+        else:
+            accelerator.unwrap_model(model).save_pretrained(os.path.join(
+                output_dir, f"model"))
+        torch.save(accelerator.unwrap_model(classification_head).state_dict(), os.path.join(
+            output_dir, f"classification_head.pth"))
+        # exit script
+        sys.exit()
+
+    logger.info("Starting second stage of training")
+
+    missing_map = {'present': 0, 'missing_mention': 1,
+                   'missing_sentence': 2, 'missing_span': 3}
+    missing_map_rev = {value: key for key, value in noise_map.items()}
+
+    def simple_collator(input):
+        output = {'sources': [], 'contexts': [], 'targets': [], 'noises': []}
+        if input[0]['split'] == 'train':
+            for i in range(args.neg_samples_train[1]):
+                output[f"contexts_neg_{i}"] = []
+            for item in input:
+                source_input = f"{item['source_title']}{tokenizer.sep_token}{item['source_lead']}"
+                if args.insert_section:
+                    context_input = f"{item['source_section']}{tokenizer.sep_token}"
+                else:
+                    context_input = ''
+                if args.insert_mentions == 'candidates':
+                    context_input += f"{mention_map[item['target_title']]}{tokenizer.sep_token}{item['link_context']}"
+                else:
+                    context_input += f"{item['link_context']}"
+
+                if args.insert_mentions == 'target':
+                    target_input = f"{item['target_title']}{tokenizer.sep_token}{mention_map[item['target_title']]}{tokenizer.sep_token}{item['target_lead']}"
+                else:
+                    target_input = f"{item['target_title']}{tokenizer.sep_token}{item['target_lead']}"
+
+                output['noises'].append(missing_map[item['missing_category']])
+                output['sources'].append(source_input)
+                output['contexts'].append(context_input)
+                output['targets'].append(target_input)
+
+                for i in range(args.neg_samples_train[1]):
+                    source_section_neg = item[f"source_section_neg_{i}"]
+                    link_context_neg = item[f"link_context_neg_{i}"]
+                    if args.insert_section:
+                        context_input = f"{source_section_neg}{tokenizer.sep_token}"
+                    else:
+                        context_input = ''
+
+                    if args.insert_mentions == 'candidates':
+                        context_input += f"{mention_map[item['target_title']]}{tokenizer.sep_token}{link_context_neg}"
+                    else:
+                        context_input += f"{link_context_neg}"
+                    output[f"contexts_neg_{i}"].append(context_input)
+        else:
+            for i in range(args.neg_samples_eval[1]):
+                output[f"contexts_neg_{i}"] = []
+            for item in input:
+                source_input = f"{item['source_title']}{tokenizer.sep_token}{item['source_lead']}"
+                if args.insert_section:
+                    context_input = f"{item['source_section']}{tokenizer.sep_token}"
+                else:
+                    context_input = ''
+                if args.insert_mentions == 'candidates':
+                    context_input += f"{mention_map[item['target_title']]}{tokenizer.sep_token}{item['link_context']}"
+                else:
+                    context_input += f"{item['link_context']}"
+
+                if args.insert_mentions == 'target':
+                    target_input = f"{item['target_title']}{tokenizer.sep_token}{mention_map[item['target_title']]}{tokenizer.sep_token}{item['target_lead']}"
+                else:
+                    target_input = f"{item['target_title']}{tokenizer.sep_token}{item['target_lead']}"
+
+                output['noises'].append(missing_map[item['missing_category']])
+                output['sources'].append(source_input)
+                output['contexts'].append(context_input)
+                output['targets'].append(target_input)
+                for i in range(args.neg_samples_eval[1]):
+                    source_section_neg = item[f"source_section_neg_{i}"]
+                    link_context_neg = item[f"link_context_neg_{i}"]
+
+                    if args.insert_section:
+                        context_input = f"{source_section_neg}{tokenizer.sep_token}"
+                    else:
+                        context_input = ''
+
+                    if args.insert_mentions == 'candidates':
+                        context_input += f"{mention_map[item['target_title']]}{tokenizer.sep_token}{link_context_neg}"
+                    else:
+                        context_input += f"{link_context_neg}"
+                    output[f"contexts_neg_{i}"].append(context_input)
+
+        output['sources'] = tokenizer(
+            output['sources'], padding=True, truncation=True, return_tensors='pt', max_length=args.max_tokens)
+        output['targets'] = tokenizer(
+            output['targets'], padding=True, truncation=True, return_tensors='pt', max_length=args.max_tokens)
+        output['contexts'] = tokenizer(
+            output['contexts'], padding=True, truncation=True, return_tensors='pt', max_length=args.max_tokens)
+        output['noises'] = torch.tensor(output['noises'])
+        if input[0]['split'] == 'train':
+            for i in range(args.neg_samples_train[1]):
+                output[f"contexts_neg_{i}"] = tokenizer(
+                    output[f"contexts_neg_{i}"], padding=True, truncation=True, return_tensors='pt', max_length=args.max_tokens)
+        else:
+            for i in range(args.neg_samples_eval[1]):
+                output[f"contexts_neg_{i}"] = tokenizer(
+                    output[f"contexts_neg_{i}"], padding=True, truncation=True, return_tensors='pt', max_length=args.max_tokens)
+        return output
+
+    logger.info("Loading datasets")
+    train_set = WikiDataset(args.data_dir_1, 'train',
+                            args.neg_samples_train[1])
+    val_set = WikiDataset(args.data_dir_1, 'val', args.neg_samples_eval[1])
+    logger.info(f"Train set size: {len(train_set)}")
+    logger.info(f"Validation set size: {len(val_set)}")
+
+    logger.info("Creating dataloaders")
+    train_loader = DataLoader(train_set,
+                              batch_size=args.batch_size,
+                              shuffle=True,
+                              num_workers=args.num_workers,
+                              drop_last=True,
+                              collate_fn=simple_collator,
+                              pin_memory=True)
+    val_loader = DataLoader(val_set,
+                            batch_size=args.batch_size,
+                            shuffle=False,
+                            num_workers=args.num_workers,
+                            drop_last=True,
+                            collate_fn=simple_collator,
+                            pin_memory=True)
+
+    if args.full_freeze_epochs[1] > 0:
+        logger.info(
+            f"Freezing all layers except classification head for {args.full_freeze_epochs[1]} epochs")
+        if args.split_models:
+            for param in model_articles.parameters():
+                param.requires_grad = False
+            for param in model_contexts.parameters():
+                param.requires_grad = False
+            for param in classification_head.parameters():
+                param.requires_grad = True
+        else:
+            for param in model.parameters():
+                param.requires_grad = False
+            for param in classification_head.parameters():
+                param.requires_grad = True
+    else:
+        logger.info(f"Freezing first {args.freeze_layers[1]} layers")
+        if args.split_models:
+            for param in model_articles.base_model.embeddings.parameters():
+                param.requires_grad = False
+            for param in model_articles.base_model.encoder.layer[:args.freeze_layers[1]].parameters():
+                param.requires_grad = False
+            for param in model_contexts.base_model.embeddings.parameters():
+                param.requires_grad = False
+            for param in model_contexts.base_model.encoder.layer[:args.freeze_layers[1]].parameters():
+                param.requires_grad = False
+        else:
+            for param in model.base_model.embeddings.parameters():
+                param.requires_grad = False
+            for param in model.base_model.encoder.layer[:args.freeze_layers[1]].parameters():
+                param.requires_grad = False
+
+    # prepare all objects with accelerator
+    if args.split_models:
+        model_articles, model_contexts, classification_head, optimizer, train_loader, val_loader, scheduler = accelerator.prepare(
+            model_articles, model_contexts, classification_head, optimizer, train_loader, val_loader, scheduler)
+    else:
+        model, classification_head, optimizer, train_loader, val_loader, scheduler = accelerator.prepare(
+            model, classification_head, optimizer, train_loader, val_loader, scheduler)
+
+    logger.info("Starting training")
+    running_loss = 0
+    for epoch in range(args.num_epochs[1]):
+        for index, data in enumerate(train_loader):
+            step += 1
+            # multiple forward passes accumulate gradients
+            # source: https://discuss.pytorch.org/t/multiple-model-forward-followed-by-one-loss-backward/20868
+            if args.split_models:
+                output_source = model_articles(**data['sources'])
+                output_context_pos = model_contexts(**data['contexts'])
+                output_target = model_articles(**data['targets'])
+            else:
+                output_source = model(**data['sources'])
+                output_context_pos = model(**data['contexts'])
+                output_target = model(**data['targets'])
+            embeddings_pos = [output_source['last_hidden_state'][:, 0, :],
+                              output_context_pos['last_hidden_state'][:, 0, :],
+                              output_target['last_hidden_state'][:, 0, :]]
+            embeddings_pos = torch.cat(embeddings_pos, dim=1)
+            logit = classification_head(embeddings_pos).squeeze()
+            if len(logit.shape) == 0:
+                logit = logit.unsqueeze(0)
+            logits = [logit]
+            for i in range(args.neg_samples_train[1]):
+                if args.split_models:
+                    output_context_neg = model_contexts(
+                        **data[f"contexts_neg_{i}"])
+                else:
+                    output_context_neg = model(**data[f"contexts_neg_{i}"])
+                embeddings_neg = [output_source['last_hidden_state'][:, 0, :],
+                                  output_context_neg['last_hidden_state'][:, 0, :],
+                                  output_target['last_hidden_state'][:, 0, :]]
+                embeddings_neg = torch.cat(embeddings_neg, dim=1)
+                logit = classification_head(embeddings_neg).squeeze()
+                if len(logit.shape) == 0:
+                    logit = logit.unsqueeze(0)
+                logits.append(logit)
+            logits = torch.stack(logits, dim=1)
+            labels = torch.zeros_like(logits)
+            labels[:, 0] = 1
+            # shuffle logits and labels
+            indices = torch.randperm(logits.shape[1])
+            logits = logits[:, indices]
+            labels = labels[:, indices]
+            loss = loss_fn(
+                logits / args.temperature[1], labels) / args.ga_steps[0]
+            accelerator.backward(loss)
+            if (index + 1) % args.ga_steps[1] == 0:
+                optimizer.step()
+                optimizer.zero_grad()
+            # save running loss
+            running_loss += loss.item() * args.ga_steps[1]
+            # print loss
+            if step % args.print_steps[1] == 0:
+                logger.info(
+                    f"Step {step}: loss = {running_loss / args.print_steps[1]}")
+                if accelerator.is_main_process:
+                    writer.add_scalar(
+                        'train/loss', running_loss / args.print_steps[1], step)
+                running_loss = 0
+
+            if step % args.scheduler_steps[1] == 0:
+                logger.info(f"Step {step}: scheduler step")
+                scheduler.step()
+                logger.info(
+                    f"Encoders learning rate: {scheduler.get_last_lr()[0]}")
+                if args.split_models:
+                    logger.info(
+                        f"Classification head learning rate: {scheduler.get_last_lr()[2]}")
+                else:
+                    logger.info(
+                        f"Classification head learning rate: {scheduler.get_last_lr()[1]}")
+
+            # save model
+            if step % args.save_steps[1] == 0:
+                logger.info(f"Step {step}: saving model")
+                accelerator.wait_for_everyone()
+                # accelerator needs to unwrap model and classification head
+                if args.split_models:
+                    accelerator.unwrap_model(model_articles).save_pretrained(os.path.join(
+                        output_dir, f"model_articles_{step}"))
+                    accelerator.unwrap_model(model_contexts).save_pretrained(os.path.join(
+                        output_dir, f"model_contexts_{step}"))
+                else:
+                    accelerator.unwrap_model(model).save_pretrained(os.path.join(
+                        output_dir, f"model_{step}"))
+                torch.save(accelerator.unwrap_model(classification_head).state_dict(), os.path.join(
+                    output_dir, f"classification_head_{step}.pth"))
+
+            # evaluate model
+            if step % args.eval_steps[1] == 0:
+                logger.info(f"Step {step}: evaluating model")
+                if args.split_models:
+                    model_articles.eval()
+                    model_contexts.eval()
+                else:
+                    model.eval()
+                with torch.no_grad():
+                    # compare current model weights to initial model weights
+                    # current_model_weights = torch.cat(
+                    #     [param.data.flatten() for param in model.parameters()]).to('cpu')
+                    # model_distance = torch.norm(
+                    #     current_model_weights - model_weights) / torch.norm(model_weights)
+
+                    true_pos = 0
+                    true_neg = 0
+                    false_pos = 0
+                    false_neg = 0
+                    mrr_at_k = {'1': 0, '5': 0, '10': 0, 'max': 0}
+                    hits_at_k = {'1': 0, '5': 0, '10': 0, 'max': 0}
+                    ndcg_at_k = {'1': 0, '5': 0, '10': 0, 'max': 0}
+                    noise_perf = {i: {'mrr': {'1': 0, '5': 0, '10': 0, 'max': 0},
+                                      'hits': {'1': 0, '5': 0, '10': 0, 'max': 0},
+                                      'ndcg': {'1': 0, '5': 0, '10': 0, 'max': 0},
+                                      'n_lists': 0} for i in range(len(missing_map))}
+                    n_lists = 0
+                    total = 0
+
+                    running_val_loss = 0
+                    for j, val_data in (pbar := tqdm(enumerate(val_loader), total=len(val_loader))):
+                        if j % 20 == 0:
+                            pbar.set_description(
+                                f"True pos: {true_pos}, True neg: {true_neg}, False pos: {false_pos}, False neg: {false_neg}, Total: {total}")
+                        if args.split_models:
+                            output_source = model_articles(
+                                **val_data['sources'])
+                            output_context = model_contexts(
+                                **val_data['contexts'])
+                            output_target = model_articles(
+                                **val_data['targets'])
+                        else:
+                            output_source = model(**val_data['sources'])
+                            output_context = model(**val_data['contexts'])
+                            output_target = model(**val_data['targets'])
+                        val_embeddings = [output_source['last_hidden_state'][:, 0, :],
+                                          output_context['last_hidden_state'][:, 0, :],
+                                          output_target['last_hidden_state'][:, 0, :]]
+                        val_embeddings = torch.cat(val_embeddings, dim=1)
+                        val_logits = [classification_head(
+                            val_embeddings).squeeze()]
+
+                        neg_strategies = []
+                        for i in range(args.neg_samples_eval[1]):
+                            neg_strategies.append(
+                                val_data[f"strategy_neg_{i}"])
+                            if args.split_models:
+                                output_context_neg = model_contexts(
+                                    **val_data[f"contexts_neg_{i}"])
+                            else:
+                                output_context_neg = model(
+                                    **val_data[f"contexts_neg_{i}"])
+                            val_embeddings_neg = [output_source['last_hidden_state'][:, 0, :],
+                                                  output_context_neg['last_hidden_state'][:, 0, :],
+                                                  output_target['last_hidden_state'][:, 0, :]]
+                            val_embeddings_neg = torch.cat(
+                                val_embeddings_neg, dim=1)
+                            val_logits_neg = classification_head(
+                                val_embeddings_neg)
+                            val_logits.append(val_logits_neg.squeeze())
+                        val_logits = torch.stack(val_logits, dim=1)
+                        labels = torch.zeros_like(val_logits)
+                        labels[:, 0] = 1
+                        # shuffle logits and labels
+                        indices = torch.randperm(val_logits.shape[1])
+                        val_logits = val_logits[:, indices]
+                        labels = labels[:, indices]
+                        val_loss = loss_fn(
+                            val_logits / args.temperature[1], labels)
+
+                        # gather the results from all processes
+                        val_logits = accelerator.pad_across_processes(
+                            val_logits, dim=0, pad_index=-1)
+                        labels = accelerator.pad_across_processes(
+                            labels, dim=0, pad_index=-1)
+                        for i in range(len(neg_strategies)):
+                            neg_strategies[i] = accelerator.pad_across_processes(
+                                neg_strategies[i], dim=0, pad_index=-1)
+                        noise = accelerator.pad_across_processes(
+                            val_data['noises'], dim=0, pad_index=-1)
+
+                        val_logits = accelerator.gather_for_metrics(
+                            val_logits).to('cpu')
+                        labels = accelerator.gather_for_metrics(
+                            labels).to('cpu')
+                        for i in range(len(neg_strategies)):
+                            neg_strategies[i] = accelerator.gather_for_metrics(
+                                neg_strategies[i]).to('cpu')
+                        noise = accelerator.gather_for_metrics(
+                            noise).to('cpu')
+
+                        val_loss = accelerator.gather_for_metrics(
+                            val_loss).to('cpu')
+                        running_val_loss += val_loss.mean().item()
+
+                        n_lists += len(labels)
+
+                        # calculate mrr, hits@k, ndcg@k
+                        # sort probabilities in descending order and labels accordingly
+                        # shape (batch_size, (neg_samples + 1))
+                        val_logits, indices = torch.sort(
+                            val_logits, dim=1, descending=True)
+                        labels = torch.gather(labels, dim=1, index=indices)
+                        # calculate mrr
+                        # shape ()
+                        mrr_at_k['1'] += torch.sum(
+                            1 / (torch.nonzero(labels[:, :1])[:, 1].float() + 1)).item()
+                        mrr_at_k['5'] += torch.sum(
+                            1 / (torch.nonzero(labels[:, :5])[:, 1].float() + 1)).item()
+                        mrr_at_k['10'] += torch.sum(
+                            1 / (torch.nonzero(labels[:, :10])[:, 1].float() + 1)).item()
+                        mrr_at_k['max'] += torch.sum(
+                            1 / (torch.nonzero(labels)[:, 1].float() + 1)).item()
+
+                        # calculate hits@k
+                        # shape ()
+                        hits_at_k['1'] += torch.sum(
+                            torch.sum(labels[:, :1], dim=1)).item()
+                        hits_at_k['5'] += torch.sum(
+                            torch.sum(labels[:, :5], dim=1)).item()
+                        hits_at_k['10'] += torch.sum(
+                            torch.sum(labels[:, :10], dim=1)).item()
+                        hits_at_k['max'] += torch.sum(
+                            torch.sum(labels, dim=1)).item()
+
+                        # calculate ndcg@k
+                        # shape ()
+                        ndcg_at_k['1'] += torch.sum(
+                            torch.sum(labels[:, :1] / torch.log2(torch.arange(2, 3).float()), dim=1)).item()
+                        ndcg_at_k['5'] += torch.sum(
+                            torch.sum(labels[:, :5] / torch.log2(torch.arange(2, 7).float()), dim=1)).item()
+                        ndcg_at_k['10'] += torch.sum(
+                            torch.sum(labels[:, :10] / torch.log2(torch.arange(2, 12).float()), dim=1)).item()
+                        ndcg_at_k['max'] += torch.sum(
+                            torch.sum(labels / torch.log2(torch.arange(2, labels.shape[1] + 2).float()), dim=1)).item()
+
+                        # compute discritized scores for each noise type
+                        for i in range(len(missing_map)):
+                            noise_part = noise == i
+                            labels_part = labels[noise_part]
+
+                            noise_perf[i]['mrr']['1'] += torch.sum(
+                                1 / (torch.nonzero(labels_part[:, :1])[:, 1].float() + 1)).item()
+                            noise_perf[i]['mrr']['5'] += torch.sum(
+                                1 / (torch.nonzero(labels_part[:, :5])[:, 1].float() + 1)).item()
+                            noise_perf[i]['mrr']['10'] += torch.sum(
+                                1 / (torch.nonzero(labels_part[:, :10])[:, 1].float() + 1)).item()
+                            noise_perf[i]['mrr']['max'] += torch.sum(
+                                1 / (torch.nonzero(labels_part)[:, 1].float() + 1)).item()
+
+                            noise_perf[i]['hits']['1'] += torch.sum(
+                                torch.sum(labels_part[:, :1], dim=1)).item()
+                            noise_perf[i]['hits']['5'] += torch.sum(
+                                torch.sum(labels_part[:, :5], dim=1)).item()
+                            noise_perf[i]['hits']['10'] += torch.sum(
+                                torch.sum(labels_part[:, :10], dim=1)).item()
+                            noise_perf[i]['hits']['max'] += torch.sum(
+                                torch.sum(labels_part, dim=1)).item()
+
+                            noise_perf[i]['ndcg']['1'] += torch.sum(
+                                torch.sum(labels_part[:, :1] / torch.log2(torch.arange(2, 3).float()), dim=1)).item()
+                            noise_perf[i]['ndcg']['5'] += torch.sum(
+                                torch.sum(labels_part[:, :5] / torch.log2(torch.arange(2, 7).float()), dim=1)).item()
+                            noise_perf[i]['ndcg']['10'] += torch.sum(
+                                torch.sum(labels_part[:, :10] / torch.log2(torch.arange(2, 12).float()), dim=1)).item()
+                            noise_perf[i]['ndcg']['max'] += torch.sum(
+                                torch.sum(labels_part / torch.log2(torch.arange(2, labels_part.shape[1] + 2).float()), dim=1)).item()
+
+                            noise_perf[i]['n_lists'] += len(labels_part)
+
+                        # logits has shape (batch_size, (neg_samples + 1))
+                        # use softmax to get probabilities
+                        probs = torch.softmax(val_logits, dim=1)
+                        # predictions are 1 at the index with the highest probability, and 0 otherwise
+                        # shape (batch_size, (neg_samples + 1))
+                        preds = (probs == torch.max(
+                            probs, dim=1, keepdim=True)[0]).long()
+
+                        true_pos += torch.sum((preds == 1)
+                                              & (labels == 1)).item()
+                        true_neg += torch.sum((preds == 0)
+                                              & (labels == 0)).item()
+                        false_pos += torch.sum((preds == 1)
+                                               & (labels == 0)).item()
+                        false_neg += torch.sum((preds == 0)
+                                               & (labels == 1)).item()
+                        total = true_pos + true_neg + false_pos + false_neg
+
+                        if j == len(val_loader) - 1:
+                            pbar.set_description(
+                                f"True pos: {true_pos}, True neg: {true_neg}, False pos: {false_pos}, False neg: {false_neg}, Total: {total}")
+                    # calculate accuracy, precision, recall, f1 score
+                    total = true_pos + true_neg + false_pos + false_neg
+                    accuracy = (true_pos + true_neg) / total
+                    precision = true_pos / \
+                        (true_pos + false_pos) if true_pos + false_pos > 0 else 0
+                    recall = true_pos / \
+                        (true_pos + false_neg) if true_pos + false_neg > 0 else 0
+                    f1 = 2 * precision * recall / \
+                        (precision + recall) if precision + recall > 0 else 0
+                    mrr_at_k = {k: v / n_lists for k, v in mrr_at_k.items()}
+                    hits_at_k = {k: v / n_lists for k, v in hits_at_k.items()}
+                    ndcg_at_k = {k: v / n_lists for k, v in ndcg_at_k.items()}
+                    for i in range(len(missing_map)):
+                        if noise_perf[i]['n_lists'] > 0:
+                            noise_perf[i]['mrr'] = {
+                                k: v / noise_perf[i]['n_lists'] for k, v in noise_perf[i]['mrr'].items()}
+                            noise_perf[i]['hits'] = {
+                                k: v / noise_perf[i]['n_lists'] for k, v in noise_perf[i]['hits'].items()}
+                            noise_perf[i]['ndcg'] = {
+                                k: v / noise_perf[i]['n_lists'] for k, v in noise_perf[i]['ndcg'].items()}
+                    running_val_loss /= len(val_loader)
+
+                    logger.info(f"MRR@1: {mrr_at_k['1']}")
+                    logger.info(f"MRR@5: {mrr_at_k['5']}")
+                    logger.info(f"MRR@10: {mrr_at_k['10']}")
+                    logger.info(f"MRR@max: {mrr_at_k['max']}")
+                    logger.info(f"Hits@1: {hits_at_k['1']}")
+                    logger.info(f"Hits@5: {hits_at_k['5']}")
+                    logger.info(f"Hits@10: {hits_at_k['10']}")
+                    logger.info(f"Hits@max: {hits_at_k['max']}")
+                    logger.info(f"NDCG@1: {ndcg_at_k['1']}")
+                    logger.info(f"NDCG@5: {ndcg_at_k['5']}")
+                    logger.info(f"NDCG@10: {ndcg_at_k['10']}")
+                    logger.info(f"NDCG@max: {ndcg_at_k['max']}")
+                    for i in range(len(missing_map)):
+                        if noise_perf[i]['n_lists'] > 0:
+                            logger.info(
+                                f"Noise strategy {missing_map_rev[i]}:")
+                            logger.info(
+                                f"\t- MRR@1: {noise_perf[i]['mrr']['1']}")
+                            logger.info(
+                                f"\t- MRR@5: {noise_perf[i]['mrr']['5']}")
+                            logger.info(
+                                f"\t- MRR@10: {noise_perf[i]['mrr']['10']}")
+                            logger.info(
+                                f"\t- MRR@max: {noise_perf[i]['mrr']['max']}")
+                            logger.info(
+                                f"\t- Hits@1: {noise_perf[i]['hits']['1']}")
+                            logger.info(
+                                f"\t- Hits@5: {noise_perf[i]['hits']['5']}")
+                            logger.info(
+                                f"\t- Hits@10: {noise_perf[i]['hits']['10']}")
+                            logger.info(
+                                f"\t- Hits@max: {noise_perf[i]['hits']['max']}")
+                            logger.info(
+                                f"\t- NDCG@1: {noise_perf[i]['ndcg']['1']}")
+                            logger.info(
+                                f"\t- NDCG@5: {noise_perf[i]['ndcg']['5']}")
+                            logger.info(
+                                f"\t- NDCG@10: {noise_perf[i]['ndcg']['10']}")
+                            logger.info(
+                                f"\t- NDCG@max: {noise_perf[i]['ndcg']['max']}")
+                    logger.info(f"Accuracy: {accuracy}")
+                    logger.info(f"Precision: {precision}")
+                    logger.info(f"Recall: {recall}")
+                    logger.info(f"F1: {f1}")
+                    logger.info(f"Validation loss: {running_val_loss}")
+                    # logger.info(f"Model distance: {model_distance}")
+
+                    if accelerator.is_main_process:
+                        writer.add_scalar('val_stage2/mrr@1',
+                                          mrr_at_k['1'], step)
+                        writer.add_scalar('val_stage2/mrr@5',
+                                          mrr_at_k['5'], step)
+                        writer.add_scalar('val_stage2/mrr@10',
+                                          mrr_at_k['10'], step)
+                        writer.add_scalar('val_stage2/mrr@max',
+                                          mrr_at_k['max'], step)
+                        writer.add_scalar('val_stage2/hits@1',
+                                          hits_at_k['1'], step)
+                        writer.add_scalar('val_stage2/hits@5',
+                                          hits_at_k['5'], step)
+                        writer.add_scalar('val_stage2/hits@10',
+                                          hits_at_k['10'], step)
+                        writer.add_scalar(
+                            'val_stage2/hits@max', hits_at_k['max'], step)
+                        writer.add_scalar('val_stage2/ndcg@1',
+                                          ndcg_at_k['1'], step)
+                        writer.add_scalar('val_stage2/ndcg@5',
+                                          ndcg_at_k['5'], step)
+                        writer.add_scalar('val_stage2/ndcg@10',
+                                          ndcg_at_k['10'], step)
+                        writer.add_scalar(
+                            'val_stage2/ndcg@max', ndcg_at_k['max'], step)
+                        writer.add_scalar(
+                            'val_stage2/accuracy', accuracy, step)
+                        writer.add_scalar(
+                            'val_stage2/precision', precision, step)
+                        writer.add_scalar('val_stage2/recall', recall, step)
+                        writer.add_scalar('val_stage2/f1', f1, step)
+                        writer.add_scalar('val_stage2/loss',
+                                          running_val_loss, step)
+                        # writer.add_scalar('model/distance',
+                        #                   model_distance, step)
+                        for i in range(len(noise_map)):
+                            if noise_perf[i]['n_lists'] > 0:
+                                writer.add_scalar(
+                                    f'val_noise_stage2/{noise_map_rev[i]}_mrr@1', noise_perf[i]['mrr']['1'], step)
+                                writer.add_scalar(
+                                    f'val_noise_stage2/{noise_map_rev[i]}_mrr@5', noise_perf[i]['mrr']['5'], step)
+                                writer.add_scalar(
+                                    f'val_noise_stage2/{noise_map_rev[i]}_mrr@10', noise_perf[i]['mrr']['10'], step)
+                                writer.add_scalar(
+                                    f'val_noise_stage2/{noise_map_rev[i]}_mrr@max', noise_perf[i]['mrr']['max'], step)
+                                writer.add_scalar(
+                                    f'val_noise_stage2/{noise_map_rev[i]}_hits@1', noise_perf[i]['hits']['1'], step)
+                                writer.add_scalar(
+                                    f'val_noise_stage2/{noise_map_rev[i]}_hits@5', noise_perf[i]['hits']['5'], step)
+                                writer.add_scalar(
+                                    f'val_noise_stage2/{noise_map_rev[i]}_hits@10', noise_perf[i]['hits']['10'], step)
+                                writer.add_scalar(
+                                    f'val_noise_stage2/{noise_map_rev[i]}_hits@max', noise_perf[i]['hits']['max'], step)
+                                writer.add_scalar(
+                                    f'val_noise_stage2/{noise_map_rev[i]}_ndcg@1', noise_perf[i]['ndcg']['1'], step)
+                                writer.add_scalar(
+                                    f'val_noise_stage2/{noise_map_rev[i]}_ndcg@5', noise_perf[i]['ndcg']['5'], step)
+                                writer.add_scalar(
+                                    f'val_noise_stage2/{noise_map_rev[i]}_ndcg@10', noise_perf[i]['ndcg']['10'], step)
+                                writer.add_scalar(
+                                    f'val_noise_stage2/{noise_map_rev[i]}_ndcg@max', noise_perf[i]['ndcg']['max'], step)
+
+                if args.split_models:
+                    model_articles.train()
+                    model_contexts.train()
+                else:
+                    model.train()
+                torch.cuda.empty_cache()
+                gc.collect()
+
+        # unfreeze model if necessary
+        if epoch + 1 == args.full_freeze_epochs[1]:
+            logger.info(
+                f"Unfreezing model except first {args.freeze_layers[1]} layers")
+            if args.split_models:
+                model_articles = accelerator.unwrap_model(model_articles)
+                model_contexts = accelerator.unwrap_model(model_contexts)
+                for param in model_articles.parameters():
+                    param.requires_grad = True
+                for param in model_contexts.parameters():
+                    param.requires_grad = True
+                for param in model_articles.base_model.embeddings.parameters():
+                    param.requires_grad = False
+                for param in model_articles.base_model.encoder.layer[:args.freeze_layers[1]].parameters():
+                    param.requires_grad = False
+                for param in model_contexts.base_model.embeddings.parameters():
+                    param.requires_grad = False
+                for param in model_contexts.base_model.encoder.layer[:args.freeze_layers[1]].parameters():
+                    param.requires_grad = False
+                model_articles = accelerator.prepare(model_articles)
+                model_contexts = accelerator.prepare(model_contexts)
+            else:
+                model = accelerator.unwrap_model(model)
+                for param in model.parameters():
+                    param.requires_grad = True
+                for param in model.base_model.embeddings.parameters():
+                    param.requires_grad = False
+                for param in model.base_model.encoder.layer[:args.freeze_layers[1]].parameters():
+                    param.requires_grad = False
+                model = accelerator.prepare(model)
+
     logger.info("Training finished")
     if accelerator.is_main_process:
         writer.close()
