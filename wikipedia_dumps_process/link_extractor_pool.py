@@ -76,6 +76,8 @@ def fix_sentence_tokenizer(sentences):
                     del sentences[i]
             else:
                 i += 1
+            if len(sentences) == 1:
+                break
 
     return sentences
 

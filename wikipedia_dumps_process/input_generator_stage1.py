@@ -36,8 +36,10 @@ def construct_negative_samples(positive_samples, neg_samples, page_sections):
             sample, strategies, neg_samples)
         new_samples = []
         available_sentences = {}
-        for key in page_sections[sample['source_title']]:
-            available_sentences[key] = [i for i in range(len(page_sections[sample['source_title']][key]['sentences']))]
+        if sample['source_title'] in page_sections:
+            for key in page_sections[sample['source_title']]:
+                available_sentences[key] = [i for i in range(
+                    len(page_sections[sample['source_title']][key]['sentences']))]
         for strategy in list_strategies:
             new_sample = sample.copy()
             new_sample['label'] = 0
@@ -57,7 +59,7 @@ def construct_negative_samples(positive_samples, neg_samples, page_sections):
                     new_sample, page_sections, pages)
                 while new_sample in new_samples:
                     new_sample = easy_replace_context(
-                        new_sample, page_sections, pages)    
+                        new_sample, page_sections, pages)
             elif strategy == 'hard_replace_context':
                 new_sample = hard_replace_context(
                     new_sample, page_sections, pages, available_sentences)
@@ -190,7 +192,8 @@ def replace_context(source_title, target_title, source_depth, page_sections, ava
             if end > start:
                 ranges.append((start, end))
         if ranges:
-            data = {'depth': page_sections[source_title][key]['depth'], 'ranges': []}
+            data = {
+                'depth': page_sections[source_title][key]['depth'], 'ranges': []}
             if available_sentences is not None:
                 for r in ranges:
                     # find if range contains any of the available sentences
@@ -199,9 +202,11 @@ def replace_context(source_title, target_title, source_depth, page_sections, ava
                         if index >= r[0] and index <= r[1]:
                             range_available.append(index)
                     if len(range_available) > 0:
-                        data['ranges'].append({'range': r, 'available': range_available})
+                        data['ranges'].append(
+                            {'range': r, 'available': range_available})
             else:
-                data['ranges'] = [{'range': r, 'available': [i for i in range(r[0], r[1] + 1)]} for r in ranges]
+                data['ranges'] = [{'range': r, 'available': [
+                    i for i in range(r[0], r[1] + 1)]} for r in ranges]
             if len(data['ranges']) > 0:
                 valid_section_ranges[key] = data
 
@@ -214,10 +219,14 @@ def replace_context(source_title, target_title, source_depth, page_sections, ava
         new_section = random.choices(keys, weights=weights, k=1)[0]
         new_sentence_range = random.choices(
             valid_section_ranges[new_section]['ranges'], k=1)[0]
-        new_sentence_index = random.choices(new_sentence_range['available'], k=1)[0]
-        left_limit = max(new_sentence_range['range'][0], new_sentence_index - 5)
-        right_limit = min(new_sentence_index + 6, new_sentence_range['range'][1] + 1)
-        new_context = " ".join(page_sections[source_title][new_section]['sentences'][left_limit:right_limit])
+        new_sentence_index = random.choices(
+            new_sentence_range['available'], k=1)[0]
+        left_limit = max(
+            new_sentence_range['range'][0], new_sentence_index - 5)
+        right_limit = min(new_sentence_index + 6,
+                          new_sentence_range['range'][1] + 1)
+        new_context = " ".join(
+            page_sections[source_title][new_section]['sentences'][left_limit:right_limit])
         # remove all the sentences from the available indices that would produce the same context
         if available_sentences:
             if left_limit == new_sentence_range['range'][0] and right_limit == new_sentence_range['range'][1] + 1:
@@ -282,8 +291,8 @@ def extract_sections(row):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(
         formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    parser.add_argument('--input_dir_train', type=str,
-                        required=True, help='Input directory')
+    parser.add_argument('--input_month1_dir', type=str,
+                        required=True, help='Input directory for first month data')
     parser.add_argument('--input_month2_dir', type=str,
                         required=True, help='Input directory for second month data')
     parser.add_argument('--input_dir_val', type=str,
@@ -300,8 +309,6 @@ if __name__ == '__main__':
                         help='Maximum number of train samples to generate')
     parser.add_argument('--max_val_samples', type=int, default=None,
                         help='Maximum number of validation samples to generate.')
-    parser.add_argument('--max_test_samples', type=int, default=None,
-                        help='Maximum number of test samples to generate.')
     parser.add_argument('--join_samples', action='store_true',
                         help='Join positive and its negative samples into one row')
 
@@ -319,15 +326,15 @@ if __name__ == '__main__':
     if not os.path.exists(args.output_dir):
         os.makedirs(args.output_dir)
 
-    if not os.path.exists(args.input_dir_train):
+    if not os.path.exists(args.input_month1_dir):
         raise ValueError(
-            f'Train input directory {args.input_dir_train} does not exist')
+            f'Train input directory {args.input_month1_dir} does not exist')
     if not os.path.exists(args.input_dir_val):
         raise ValueError(
             f'Validation input directory {args.input_dir_val} does not exist')
 
     print('Loading pages')
-    page_files = glob(os.path.join(args.input_dir_train, 'good_pages*')) + \
+    page_files = glob(os.path.join(args.input_month1_dir, 'good_pages*')) + \
         glob(os.path.join(args.input_month2_dir, 'good_pages*'))
     page_files.sort()
     dfs = []
@@ -340,7 +347,7 @@ if __name__ == '__main__':
     df_pages = df_pages.to_dict(orient='records')
 
     print('Loading training links')
-    link_files = glob(os.path.join(args.input_dir_train, 'good_links*'))
+    link_files = glob(os.path.join(args.input_month1_dir, 'good_links*'))
     link_files.sort()
     dfs = []
     for file in tqdm(link_files):
@@ -353,7 +360,7 @@ if __name__ == '__main__':
     df_links_train = df_links_train.to_dict(orient='records')
 
     print('Loading training section texts')
-    section_files = glob(os.path.join(args.input_dir_train, 'sections*'))
+    section_files = glob(os.path.join(args.input_month1_dir, 'sections*'))
     section_files.sort()
     dfs = []
     for file in tqdm(section_files):
@@ -385,7 +392,7 @@ if __name__ == '__main__':
 
     print('Loading mention map')
     mention_map = pd.read_parquet(os.path.join(
-        args.input_dir_train, 'mention_map.parquet'))
+        args.input_month1_dir, 'mention_map.parquet'))
     mention_map_dict = mention_map.to_dict(orient='records')
     entity_map = {}
     for row in mention_map_dict:
@@ -466,7 +473,7 @@ if __name__ == '__main__':
         'label': 1,
         'neg_type': 'none',
         'depth': row['link_section_depth'],
-    } for row in tqdm(df_links_train)]
+    } for row in tqdm(df_links_train) if row['source_title'] in page_sections_train]
     random.shuffle(positive_samples_train)
 
     positive_samples_val = []
@@ -499,27 +506,19 @@ if __name__ == '__main__':
         args.max_train_samples = len(
             positive_samples_train) * (1 + args.neg_samples_train)
 
-    if not args.max_val_samples and not args.max_test_samples:
+    if not args.max_val_samples:
         args.max_val_samples = len(
-            positive_samples_val) * (1 + args.neg_samples_val) // 2
-        args.max_test_samples = len(
-            positive_samples_val) * (1 + args.neg_samples_val) // 2
-    elif not args.max_test_samples:
-        args.max_test_samples = len(
-            positive_samples_val) * (1 + args.neg_samples_val) - args.max_val_samples
-    elif not args.max_val_samples:
-        args.max_val_samples = len(
-            positive_samples_val) * (1 + args.neg_samples_val) - args.max_test_samples
+            positive_samples_val) * (1 + args.neg_samples_val)
 
     if len(positive_samples_train) * (1 + args.neg_samples_train) > args.max_train_samples:
         positive_samples_train = random.sample(
             positive_samples_train, math.ceil(
                 args.max_train_samples / (1 + args.neg_samples_train))
         )
-    if len(positive_samples_val) * (1 + args.neg_samples_val) > (args.max_val_samples + args.max_test_samples):
+    if len(positive_samples_val) * (1 + args.neg_samples_val) > args.max_val_samples:
         positive_samples_val = random.sample(
             positive_samples_val, math.ceil(
-                (args.max_val_samples + args.max_test_samples) / (1 + args.neg_samples_val))
+                args.max_val_samples / (1 + args.neg_samples_val))
         )
 
     print('Generating negative samples')
@@ -535,8 +534,10 @@ if __name__ == '__main__':
         df_train = df_train.sample(
             n=min(args.max_train_samples, len(df_train))).reset_index(drop=True)
 
-        df_val_full = pd.DataFrame(
-            positive_samples_val + negative_samples_val).sample(frac=1).reset_index(drop=True)
+        df_val = pd.DataFrame(
+            positive_samples_val + negative_samples_val)
+        df_val = df_val.sample(
+            n=min(args.max_val_samples, len(df_val))).reset_index(drop=True)
     else:
         full_samples_train = positive_samples_train.copy()
         for i, sample in enumerate(negative_samples_train):
@@ -562,27 +563,17 @@ if __name__ == '__main__':
                     full_samples_val[true_index][f'{key}_neg_{rel_index}'] = sample[key]
                 else:
                     full_samples_val[true_index][f'{key}_neg_{rel_index}'] = None
-        df_val_full = pd.DataFrame(full_samples_val)
-
-    df_val = df_val_full.sample(
-        n=args.max_val_samples // (1 + args.neg_samples_val))
-    df_test = df_val_full.drop(df_val.index).sample(
-        n=args.max_test_samples // (1 + args.neg_samples_val))
-
-    df_val = df_val.reset_index(drop=True)
-    df_test = df_test.reset_index(drop=True)
+        df_val = pd.DataFrame(full_samples_val)
 
     # create directories if they don't exist
     if not os.path.exists(os.path.join(args.output_dir, 'train')):
         os.makedirs(os.path.join(args.output_dir, 'train'))
     if not os.path.exists(os.path.join(args.output_dir, 'val')):
         os.makedirs(os.path.join(args.output_dir, 'val'))
-    if not os.path.exists(os.path.join(args.output_dir, 'test')):
-        os.makedirs(os.path.join(args.output_dir, 'test'))
     df_train.to_parquet(os.path.join(
         args.output_dir, 'train', 'train.parquet'))
     df_val.to_parquet(os.path.join(args.output_dir, 'val', 'val.parquet'))
-    df_test.to_parquet(os.path.join(args.output_dir, 'test', 'test.parquet'))
-    
+
     # copy mention map to output directory
-    mention_map.to_parquet(os.path.join(args.output_dir, 'mention_map.parquet'))
+    mention_map.to_parquet(os.path.join(
+        args.output_dir, 'mention_map.parquet'))
