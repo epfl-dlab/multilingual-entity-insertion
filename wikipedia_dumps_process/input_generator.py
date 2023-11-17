@@ -153,6 +153,8 @@ def hard_replace_context(link, page_sections, pages, available_sentences):
 
 def replace_context(source_title, target_title, source_depth, page_sections, available_sentences=None):
     valid_section_ranges = {}
+    if target_title not in entity_map:
+        entity_map[target_title] = [target_title]
     for key in page_sections[source_title]:
         # don't sample from the same section
         if page_sections[source_title][key]['depth'] == source_depth:

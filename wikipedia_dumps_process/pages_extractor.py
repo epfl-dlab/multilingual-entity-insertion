@@ -79,7 +79,7 @@ def process_sql_redirects(input, redirects):
 
 
 def process_sql_page_props(input, pages):
-    with open(input) as f:
+    with open(input, encoding='latin-1') as f:
         data = f.readlines()
         # read only lines that start with "INSERT INTO"
         # these are the lines containing the data
