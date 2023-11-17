@@ -1,6 +1,6 @@
-for TEMP in 0.1 1 10 50 100
+for TEMP in 10 50 100
 do
-  for LR in 0.0001 0.00001 0.000001
+  for LR in 0.0001 0.00001
   do
     for HEAD_FACTOR in 1 20 50
     do
