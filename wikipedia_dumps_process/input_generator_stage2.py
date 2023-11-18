@@ -69,6 +69,7 @@ if __name__ == '__main__':
     df_links = pd.read_parquet(args.links_file)
     df_links['source_title'] = df_links['source_title'].apply(unencode_title)
     df_links['target_title'] = df_links['target_title'].apply(unencode_title)
+    df_links = df_links[df_links['missing_category'] != 'missing_section'].reset_index(drop=True)
     df_links = df_links.to_dict(orient='records')
 
     print('Loading mention map')
@@ -146,8 +147,8 @@ if __name__ == '__main__':
                             'source_lead': link['source_lead'],
                             'target_lead': page_leads[link['target_title']],
                             'link_context': link['context'],
-                            'section': link['section'],
-                            'missing_category': link['missing_category']})
+                            'source_section': link['section'],
+                            'missing_category': link['missing_category'] if link['missing_category'] is not None else 'present'})
         negative_contexts = literal_eval(link['negative_contexts'])
         if len(negative_contexts) > args.neg_samples_train:
             negative_contexts = random.sample(
@@ -182,7 +183,7 @@ if __name__ == '__main__':
                           'source_lead': link['source_lead'],
                           'target_lead': page_leads[link['target_title']],
                           'link_context': link['context'],
-                          'section': link['section'],
+                          'source_section': link['section'],
                           'missing_category': link['missing_category']})
         negative_contexts = literal_eval(link['negative_contexts'])
         if len(negative_contexts) > args.neg_samples_val:
@@ -225,4 +226,4 @@ if __name__ == '__main__':
 
     # copy mention map to output directory
     mention_map.to_parquet(os.path.join(
-        args.output_dir, 'mention_map.parquet'))
+        args.output_dir, 'mentions.parquet'))

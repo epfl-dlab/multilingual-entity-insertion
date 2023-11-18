@@ -585,4 +585,4 @@ if __name__ == '__main__':
     df_test.to_parquet(os.path.join(args.output_dir, 'test', 'test.parquet'))
     
     # copy mention map to output directory
-    mention_map.to_parquet(os.path.join(args.output_dir, 'mention_map.parquet'))
+    mention_map.to_parquet(os.path.join(args.output_dir, 'mentions.parquet'))

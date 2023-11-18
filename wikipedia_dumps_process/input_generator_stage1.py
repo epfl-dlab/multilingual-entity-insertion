@@ -576,4 +576,4 @@ if __name__ == '__main__':
 
     # copy mention map to output directory
     mention_map.to_parquet(os.path.join(
-        args.output_dir, 'mention_map.parquet'))
+        args.output_dir, 'mentions.parquet'))
