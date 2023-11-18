@@ -121,12 +121,12 @@ if __name__ == '__main__':
                         help='Directory with checkpoint to resume training from')
     parser.add_argument('--ga_steps', nargs='+', type=int, default=[1],
                         help='Number of steps for gradient accumulation')
-    parser.add_argument('--full_freeze_epochs', nargs='+', type=int, default=[0],
+    parser.add_argument('--full_freeze_epochs', type=int, default=0,
                         help='Number of epochs to freeze all layers except classification head')
-    parser.add_argument('--freeze_layers', nargs='+', type=int,
-                        default=[2], help='Number of initial layers to freeze')
-    parser.add_argument('--head_lr_factor', nargs='+', type=float,
-                        default=[1], help='Factor forfearning rate of classification head')
+    parser.add_argument('--freeze_layers', type=int,
+                        default=2, help='Number of initial layers to freeze')
+    parser.add_argument('--head_lr_factor', type=float,
+                        default=1, help='Factor forfearning rate of classification head')
     parser.add_argument('--no_mask_perc', type=float, default=0.4,
                         help='Percentage of examples to not mask')
     parser.add_argument('--mask_mention_perc', type=float, default=0.2,
@@ -303,7 +303,7 @@ if __name__ == '__main__':
         optimizer = optim.Adam(model.parameters(), lr=args.lr[0])
     # add classification head to optimizer
     optimizer.add_param_group(
-        {'params': classification_head.parameters(), 'lr': args.lr[0] * args.head_lr_factor[0]})
+        {'params': classification_head.parameters(), 'lr': args.lr[0] * args.head_lr_factor})
 
     # set-up scheduler
     scheduler = ExponentialLR(optimizer, gamma=args.gamma_lr[0])
@@ -325,6 +325,8 @@ if __name__ == '__main__':
             noise_types = ['mask_span', 'mask_sentence',
                            'mask_mention', 'no_mask']
             for item in input:
+                if item['target_title'] not in mention_map:
+                    mention_map[item['target_title']] = item['target_title']
                 found = False
                 if (item['link_context'][:item['context_span_start_index']] + item['link_context'][item['context_span_end_index']:]).strip() != '':
                     if item['context_span_start_index'] <= item['context_sentence_start_index'] and item['context_span_end_index'] >= item['context_sentence_end_index']:
@@ -418,6 +420,8 @@ if __name__ == '__main__':
                 output[f"contexts_neg_{i}"] = []
                 output[f"strategy_neg_{i}"] = []
             for item in input:
+                if item['target_title'] not in mention_map:
+                    mention_map[item['target_title']] = item['target_title']
                 source_input = f"{item['source_title']}{tokenizer.sep_token}{item['source_lead']}"
                 if args.insert_section:
                     context_input = f"{item['source_section']}{tokenizer.sep_token}"
@@ -513,9 +517,9 @@ if __name__ == '__main__':
         else:
             mention_map[target_title] = mention['mention']
 
-    if args.full_freeze_epochs[0] > 0:
+    if args.full_freeze_epochs > 0:
         logger.info(
-            f"Freezing all layers except classification head for {args.full_freeze_epochs[0]} epochs")
+            f"Freezing all layers except classification head for {args.full_freeze_epochs} epochs")
         if args.split_models:
             for param in model_articles.parameters():
                 param.requires_grad = False
@@ -529,20 +533,20 @@ if __name__ == '__main__':
             for param in classification_head.parameters():
                 param.requires_grad = True
     else:
-        logger.info(f"Freezing first {args.freeze_layers[0]} layers")
+        logger.info(f"Freezing first {args.freeze_layers} layers")
         if args.split_models:
             for param in model_articles.base_model.embeddings.parameters():
                 param.requires_grad = False
-            for param in model_articles.base_model.encoder.layer[:args.freeze_layers[0]].parameters():
+            for param in model_articles.base_model.encoder.layer[:args.freeze_layers].parameters():
                 param.requires_grad = False
             for param in model_contexts.base_model.embeddings.parameters():
                 param.requires_grad = False
-            for param in model_contexts.base_model.encoder.layer[:args.freeze_layers[0]].parameters():
+            for param in model_contexts.base_model.encoder.layer[:args.freeze_layers].parameters():
                 param.requires_grad = False
         else:
             for param in model.base_model.embeddings.parameters():
                 param.requires_grad = False
-            for param in model.base_model.encoder.layer[:args.freeze_layers[0]].parameters():
+            for param in model.base_model.encoder.layer[:args.freeze_layers].parameters():
                 param.requires_grad = False
 
     # prepare all objects with accelerator
@@ -970,9 +974,9 @@ if __name__ == '__main__':
                 gc.collect()
 
         # unfreeze model if necessary
-        if epoch + 1 == args.full_freeze_epochs[0]:
+        if epoch + 1 == args.full_freeze_epochs:
             logger.info(
-                f"Unfreezing model except first {args.freeze_layers[0]} layers")
+                f"Unfreezing model except first {args.freeze_layers} layers")
             if args.split_models:
                 model_articles = accelerator.unwrap_model(model_articles)
                 model_contexts = accelerator.unwrap_model(model_contexts)
@@ -982,11 +986,11 @@ if __name__ == '__main__':
                     param.requires_grad = True
                 for param in model_articles.base_model.embeddings.parameters():
                     param.requires_grad = False
-                for param in model_articles.base_model.encoder.layer[:args.freeze_layers[0]].parameters():
+                for param in model_articles.base_model.encoder.layer[:args.freeze_layers].parameters():
                     param.requires_grad = False
                 for param in model_contexts.base_model.embeddings.parameters():
                     param.requires_grad = False
-                for param in model_contexts.base_model.encoder.layer[:args.freeze_layers[0]].parameters():
+                for param in model_contexts.base_model.encoder.layer[:args.freeze_layers].parameters():
                     param.requires_grad = False
                 model_articles = accelerator.prepare(model_articles)
                 model_contexts = accelerator.prepare(model_contexts)
@@ -996,7 +1000,7 @@ if __name__ == '__main__':
                     param.requires_grad = True
                 for param in model.base_model.embeddings.parameters():
                     param.requires_grad = False
-                for param in model.base_model.encoder.layer[:args.freeze_layers[0]].parameters():
+                for param in model.base_model.encoder.layer[:args.freeze_layers].parameters():
                     param.requires_grad = False
                 model = accelerator.prepare(model)
 
@@ -1032,6 +1036,8 @@ if __name__ == '__main__':
             for i in range(args.neg_samples_train[1]):
                 output[f"contexts_neg_{i}"] = []
             for item in input:
+                if item['target_title'] not in mention_map:
+                    mention_map[item['target_title']] = item['target_title']
                 source_input = f"{item['source_title']}{tokenizer.sep_token}{item['source_lead']}"
                 if args.insert_section:
                     context_input = f"{item['source_section']}{tokenizer.sep_token}"
@@ -1069,6 +1075,8 @@ if __name__ == '__main__':
             for i in range(args.neg_samples_eval[1]):
                 output[f"contexts_neg_{i}"] = []
             for item in input:
+                if item['target_title'] not in mention_map:
+                    mention_map[item['target_title']] = item['target_title']
                 source_input = f"{item['source_title']}{tokenizer.sep_token}{item['source_lead']}"
                 if args.insert_section:
                     context_input = f"{item['source_section']}{tokenizer.sep_token}"
@@ -1121,9 +1129,9 @@ if __name__ == '__main__':
         return output
 
     logger.info("Loading datasets")
-    train_set = WikiDataset(args.data_dir_1, 'train',
+    train_set = WikiDataset(args.data_dir_2, 'train',
                             args.neg_samples_train[1])
-    val_set = WikiDataset(args.data_dir_1, 'val', args.neg_samples_eval[1])
+    val_set = WikiDataset(args.data_dir_2, 'val', args.neg_samples_eval[1])
     logger.info(f"Train set size: {len(train_set)}")
     logger.info(f"Validation set size: {len(val_set)}")
 
@@ -1143,6 +1151,8 @@ if __name__ == '__main__':
                             collate_fn=simple_collator,
                             pin_memory=True)
     
+    train_loader, val_loader = accelerator.prepare(train_loader, val_loader)
+
     logger.info("Loading mention knowledge")
     mentions = pd.read_parquet(os.path.join(
         args.data_dir_2, 'mentions.parquet')).to_dict('records')
@@ -1153,46 +1163,6 @@ if __name__ == '__main__':
             mention_map[target_title] += ' ' + mention['mention']
         else:
             mention_map[target_title] = mention['mention']
-
-    if args.full_freeze_epochs[1] > 0:
-        logger.info(
-            f"Freezing all layers except classification head for {args.full_freeze_epochs[1]} epochs")
-        if args.split_models:
-            for param in model_articles.parameters():
-                param.requires_grad = False
-            for param in model_contexts.parameters():
-                param.requires_grad = False
-            for param in classification_head.parameters():
-                param.requires_grad = True
-        else:
-            for param in model.parameters():
-                param.requires_grad = False
-            for param in classification_head.parameters():
-                param.requires_grad = True
-    else:
-        logger.info(f"Freezing first {args.freeze_layers[1]} layers")
-        if args.split_models:
-            for param in model_articles.base_model.embeddings.parameters():
-                param.requires_grad = False
-            for param in model_articles.base_model.encoder.layer[:args.freeze_layers[1]].parameters():
-                param.requires_grad = False
-            for param in model_contexts.base_model.embeddings.parameters():
-                param.requires_grad = False
-            for param in model_contexts.base_model.encoder.layer[:args.freeze_layers[1]].parameters():
-                param.requires_grad = False
-        else:
-            for param in model.base_model.embeddings.parameters():
-                param.requires_grad = False
-            for param in model.base_model.encoder.layer[:args.freeze_layers[1]].parameters():
-                param.requires_grad = False
-
-    # prepare all objects with accelerator
-    if args.split_models:
-        model_articles, model_contexts, classification_head, optimizer, train_loader, val_loader, scheduler = accelerator.prepare(
-            model_articles, model_contexts, classification_head, optimizer, train_loader, val_loader, scheduler)
-    else:
-        model, classification_head, optimizer, train_loader, val_loader, scheduler = accelerator.prepare(
-            model, classification_head, optimizer, train_loader, val_loader, scheduler)
 
     logger.info("Starting training")
     running_loss = 0
@@ -1622,37 +1592,6 @@ if __name__ == '__main__':
                     model.train()
                 torch.cuda.empty_cache()
                 gc.collect()
-
-        # unfreeze model if necessary
-        if epoch + 1 == args.full_freeze_epochs[1]:
-            logger.info(
-                f"Unfreezing model except first {args.freeze_layers[1]} layers")
-            if args.split_models:
-                model_articles = accelerator.unwrap_model(model_articles)
-                model_contexts = accelerator.unwrap_model(model_contexts)
-                for param in model_articles.parameters():
-                    param.requires_grad = True
-                for param in model_contexts.parameters():
-                    param.requires_grad = True
-                for param in model_articles.base_model.embeddings.parameters():
-                    param.requires_grad = False
-                for param in model_articles.base_model.encoder.layer[:args.freeze_layers[1]].parameters():
-                    param.requires_grad = False
-                for param in model_contexts.base_model.embeddings.parameters():
-                    param.requires_grad = False
-                for param in model_contexts.base_model.encoder.layer[:args.freeze_layers[1]].parameters():
-                    param.requires_grad = False
-                model_articles = accelerator.prepare(model_articles)
-                model_contexts = accelerator.prepare(model_contexts)
-            else:
-                model = accelerator.unwrap_model(model)
-                for param in model.parameters():
-                    param.requires_grad = True
-                for param in model.base_model.embeddings.parameters():
-                    param.requires_grad = False
-                for param in model.base_model.encoder.layer[:args.freeze_layers[1]].parameters():
-                    param.requires_grad = False
-                model = accelerator.prepare(model)
 
     logger.info("Training finished")
     if accelerator.is_main_process:

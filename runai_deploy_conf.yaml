@@ -30,14 +30,8 @@ spec:
         image: $IMAGE #ic-registry.epfl.ch/dlab/geng/llama:stable # target image
         command: ["/bin/bash", "-c"]
         args:
-          # - cd /dlabdata1/tsoares/linkrec-llms/data_modelling/training_ranking/
-          # - Directory changed successfully > test.txt
-          # - ./runai_ablations.sh
           - sleep $SLEEP_TIME; # the container will stay alive for 24 hours
-          # - export HF_HOME=/dlabdata1/tsoares/.cache/hugging_face/
-          # - conda activate /dlabdata1/tsoares/conda/envs/runai
-          # - cd /dlabdata1/tsoares/linkrec-llms/data_modelling/training_ranking/
-          # - ./runai_ablations.sh
+          # - cd /dlabdata1/tsoares/linkrec-llms/data_modelling/training_ranking/ && source runai_twostage.sh
         resources:
           limits:
             nvidia.com/gpu:  $NUM_GPUS
