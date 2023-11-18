@@ -1142,6 +1142,17 @@ if __name__ == '__main__':
                             drop_last=True,
                             collate_fn=simple_collator,
                             pin_memory=True)
+    
+    logger.info("Loading mention knowledge")
+    mentions = pd.read_parquet(os.path.join(
+        args.data_dir_2, 'mentions.parquet')).to_dict('records')
+    mention_map = {}
+    for mention in mentions:
+        target_title = unquote(mention['target_title']).replace('_', ' ')
+        if target_title in mention_map:
+            mention_map[target_title] += ' ' + mention['mention']
+        else:
+            mention_map[target_title] = mention['mention']
 
     if args.full_freeze_epochs[1] > 0:
         logger.info(
