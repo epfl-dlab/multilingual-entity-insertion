@@ -10,7 +10,7 @@ export NODE_TYPE="G10"
 export NUM_GPUS=1
 export NUM_CPUS=4
 export MEMORY="48G"
-export SLEEP_TIME="70h"
+export SLEEP_TIME="3h"
 EXP_NAME="runai-${IMAGE_NAME}-${IMAGE_TAG}-${SLEEP_TIME}-${NODE_TYPE}-${NUM_GPUS}-${NUM_CPUS}-${MEMORY}"
 # lowercase EXP_NAME, because k8s doesn't allow uppercase letters in the name
 # shellcheck disable=SC2155
