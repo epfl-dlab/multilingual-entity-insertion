@@ -306,7 +306,7 @@ if __name__ == '__main__':
                 prev_version = None
                 prev_text = ''
                 for j, page in enumerate(pages):
-                    if len(page['text']) < 0.5 * len(prev_text):  # avoids edit wars
+                    if len(page['text']) < min(0.2 * len(prev_text), 200):  # avoids edit wars
                         continue
                     # find all elements in brackets
                     elems_1 = re.findall(r'\[\[.*?\]\]', page['text'])
@@ -349,6 +349,8 @@ if __name__ == '__main__':
                                                    'target_ID': link_struc[current_id]['links'][k]['target_ID'],
                                                    'first_version': page['version'],
                                                    'second_version': prev_version})
+                                    if current_id == 964819 or current_id == '964819':
+                                        print(output[-1])
                                     counts[k]['found'] += 1
                                 counts[k]['count'] = new_count
                     prev_version = page['version']
