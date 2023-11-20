@@ -184,7 +184,7 @@ if __name__ == '__main__':
                           'target_lead': page_leads[link['target_title']],
                           'link_context': link['context'],
                           'source_section': link['section'],
-                          'missing_category': link['missing_category']})
+                          'missing_category': link['missing_category'] if link['missing_category'] is not None else 'present'})
         negative_contexts = literal_eval(link['negative_contexts'])
         if len(negative_contexts) > args.neg_samples_val:
             negative_contexts = random.sample(
