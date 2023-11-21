@@ -248,23 +248,30 @@ def process_version(input):
     with open(file_1, 'r') as f:
         text_1 = f.read()
     html_1 = BeautifulSoup(text_1, 'html.parser')
-    html_1 = html_1.find('div', {'class': 'mw-parser-output'})
-    if html_1 is None:
+    html_1 = html_1.find_all('div', {'class': 'mw-parser-output'})
+    if len(html_1) == 0:
+        print('No HTML found')
+        print(f"{input['source_ID']}_{input['first_version']}.html")
         return []
+    html_1 = html_1[-1]
     html_1_clean = simplify_html(html_1)
     text_1 = "\n".join(
         [line for line in str(html_1_clean).split('\n') if line.strip() != ''])
     sentences_1 = sent_tokenize(text_1)
     sentences_1 = fix_sentence_tokenizer(sentences_1)
     for second_version in input['versions']:
+        found_links = []
         file_2 = os.path.join(
             args.html_dir, f"{input['source_ID']}_{second_version}.html")
         with open(file_2, 'r') as f:
             text_2 = f.read()
         html_2 = BeautifulSoup(text_2, 'html.parser')
-        html_2 = html_2.find('div', {'class': 'mw-parser-output'})
-        if html_2 is None:
+        html_2 = html_2.find_all('div', {'class': 'mw-parser-output'})
+        if len(html_2) == 0:
+            print('No HTML found')
+            print(f"{input['source_ID']}_{second_version}.html")
             continue
+        html_2 = html_2[-1]
         html_2_clean = simplify_html(html_2)
         text_2 = "\n".join(
             [line for line in str(html_2_clean).split('\n') if line.strip() != ''])
@@ -536,6 +543,18 @@ def process_version(input):
                         'missing_category': missing_category,
                         'negative_contexts': str(negative_contexts)
                     })
+                    found_links.append(output[-1])
+        # if len(found_links) != len(input['versions'][second_version]):
+        #     print('Details')
+        #     print(input['source_title'], input['source_ID'], input['first_version'], second_version)
+        #     print('Expected Links')
+        #     print(input['versions'][second_version])
+        #     print('Found Links')
+        #     print(found_links)
+        #     print(html_1_clean)
+        #     print('SEP')
+        #     print(html_2_clean)
+        #     print('#############################################')
     return output
 
 
@@ -587,6 +606,8 @@ if __name__ == '__main__':
 
     print('Creating revisions dictionary')
     df_versions = df_versions.to_dict('records')
+    expected_links = len(df_versions)
+    print(f'Expected links: {expected_links}')
     revisions = {}
     for row in tqdm(df_versions):
         if row['first_version'] not in revisions:
