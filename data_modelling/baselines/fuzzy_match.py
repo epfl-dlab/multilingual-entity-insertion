@@ -18,5 +18,8 @@ def rank_contexts(contexts, target_mentions):
         score = 0
         for word in context:
             score += freqs.get(word, 0)
-        scores.append(score / len(context))
+        if len(context) == 0:
+            scores.append(score)
+        else:
+            scores.append(score / len(context))
     return scores

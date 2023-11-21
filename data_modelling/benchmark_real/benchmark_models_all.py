@@ -72,9 +72,9 @@ if __name__ == '__main__':
 
     # load model
     dir = os.path.join(args.models_dir, model_name)
-    model_path = glob(os.path.join(dir, 'model_*'))[0]
+    model_path = glob(os.path.join(dir, 'model*'))[0]
     classification_head_path = glob(
-        os.path.join(dir, 'classification_head_*'))[0]
+        os.path.join(dir, 'classification_head*'))[0]
     tokenizer_path = os.path.join(dir, 'tokenizer')
 
     model = AutoModel.from_pretrained(model_path)

@@ -349,8 +349,6 @@ if __name__ == '__main__':
                                                    'target_ID': link_struc[current_id]['links'][k]['target_ID'],
                                                    'first_version': page['version'],
                                                    'second_version': prev_version})
-                                    if current_id == 964819 or current_id == '964819':
-                                        print(output[-1])
                                     counts[k]['found'] += 1
                                 counts[k]['count'] = new_count
                     prev_version = page['version']

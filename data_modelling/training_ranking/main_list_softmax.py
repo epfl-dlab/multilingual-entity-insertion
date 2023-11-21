@@ -699,10 +699,10 @@ if __name__ == '__main__':
                         val_logits = [classification_head(
                             val_embeddings).squeeze()]
 
-                        neg_strategies = []
+                        # neg_strategies = []
                         for i in range(args.neg_samples_eval[0]):
-                            neg_strategies.append(
-                                val_data[f"strategy_neg_{i}"])
+                            # neg_strategies.append(
+                            #     val_data[f"strategy_neg_{i}"])
                             if args.split_models:
                                 output_context_neg = model_contexts(
                                     **val_data[f"contexts_neg_{i}"])
@@ -732,9 +732,9 @@ if __name__ == '__main__':
                             val_logits, dim=0, pad_index=-1)
                         labels = accelerator.pad_across_processes(
                             labels, dim=0, pad_index=-1)
-                        for i in range(len(neg_strategies)):
-                            neg_strategies[i] = accelerator.pad_across_processes(
-                                neg_strategies[i], dim=0, pad_index=-1)
+                        # for i in range(len(neg_strategies)):
+                        #     neg_strategies[i] = accelerator.pad_across_processes(
+                        #         neg_strategies[i], dim=0, pad_index=-1)
                         noise = accelerator.pad_across_processes(
                             val_data['noises'], dim=0, pad_index=-1)
 
@@ -742,9 +742,9 @@ if __name__ == '__main__':
                             val_logits).to('cpu')
                         labels = accelerator.gather_for_metrics(
                             labels).to('cpu')
-                        for i in range(len(neg_strategies)):
-                            neg_strategies[i] = accelerator.gather_for_metrics(
-                                neg_strategies[i]).to('cpu')
+                        # for i in range(len(neg_strategies)):
+                        #     neg_strategies[i] = accelerator.gather_for_metrics(
+                        #         neg_strategies[i]).to('cpu')
                         noise = accelerator.gather_for_metrics(
                             noise).to('cpu')
 
@@ -1305,10 +1305,10 @@ if __name__ == '__main__':
                         val_logits = [classification_head(
                             val_embeddings).squeeze()]
 
-                        neg_strategies = []
+                        # neg_strategies = []
                         for i in range(args.neg_samples_eval[1]):
-                            neg_strategies.append(
-                                val_data[f"strategy_neg_{i}"])
+                            # neg_strategies.append(
+                            #     val_data[f"strategy_neg_{i}"])
                             if args.split_models:
                                 output_context_neg = model_contexts(
                                     **val_data[f"contexts_neg_{i}"])
@@ -1338,9 +1338,9 @@ if __name__ == '__main__':
                             val_logits, dim=0, pad_index=-1)
                         labels = accelerator.pad_across_processes(
                             labels, dim=0, pad_index=-1)
-                        for i in range(len(neg_strategies)):
-                            neg_strategies[i] = accelerator.pad_across_processes(
-                                neg_strategies[i], dim=0, pad_index=-1)
+                        # for i in range(len(neg_strategies)):
+                        #     neg_strategies[i] = accelerator.pad_across_processes(
+                        #         neg_strategies[i], dim=0, pad_index=-1)
                         noise = accelerator.pad_across_processes(
                             val_data['noises'], dim=0, pad_index=-1)
 
@@ -1348,9 +1348,9 @@ if __name__ == '__main__':
                             val_logits).to('cpu')
                         labels = accelerator.gather_for_metrics(
                             labels).to('cpu')
-                        for i in range(len(neg_strategies)):
-                            neg_strategies[i] = accelerator.gather_for_metrics(
-                                neg_strategies[i]).to('cpu')
+                        # for i in range(len(neg_strategies)):
+                        #     neg_strategies[i] = accelerator.gather_for_metrics(
+                        #         neg_strategies[i]).to('cpu')
                         noise = accelerator.gather_for_metrics(
                             noise).to('cpu')
 
