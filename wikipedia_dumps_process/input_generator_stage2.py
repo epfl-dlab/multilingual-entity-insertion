@@ -65,11 +65,30 @@ if __name__ == '__main__':
     df_pages['title'] = df_pages['title'].apply(unencode_title)
     df_pages = df_pages.to_dict(orient='records')
 
+    print('Processing lead paragraphs')
+    page_leads = {row['title']: row['lead_paragraph'] for row in df_pages}
+
     print('Loading links')
     df_links = pd.read_parquet(args.links_file)
     df_links['source_title'] = df_links['source_title'].apply(unencode_title)
     df_links['target_title'] = df_links['target_title'].apply(unencode_title)
-    df_links = df_links[df_links['missing_category'] != 'missing_section'].reset_index(drop=True)
+
+    print('Cleaning links')
+    print(f'We started with {len(df_links)} links')
+    no_context = df_links['context'] == ''
+    print(f'There are {no_context.sum()} links with no context')
+    no_neg_contexts = df_links['negative_contexts'] == '[]'
+    print(f'There are {no_neg_contexts.sum()} links with no negative contexts')
+    missing_page = ~df_links['target_title'].isin(page_leads)
+    print(f'There are {missing_page.sum()} links with missing pages')
+    missing_section = df_links['missing_category'] == 'missing_section'
+    print(f'There are {missing_section.sum()} links with missing sections')
+    df_links = df_links[~no_context & ~no_neg_contexts & ~missing_page & ~missing_section]
+    print(f"After cleaning, there are {len(df_links)} links")
+    df_links['target_lead'] = df_links['target_title'].apply(
+        lambda x: page_leads[x])
+
+    df_links = df_links.reset_index(drop=True)
     df_links = df_links.to_dict(orient='records')
 
     print('Loading mention map')
@@ -87,14 +106,12 @@ if __name__ == '__main__':
         else:
             entity_map[title] = set([mention])
 
-    print('Processing lead paragraphs')
-    page_leads = {row['title']: row['lead_paragraph'] for row in df_pages}
-
     if not args.max_train_samples and not args.max_val_samples:
         args.max_train_samples = len(
             df_links) * 0.8 * (1 + args.neg_samples_train)
         args.max_val_samples = len(df_links) * 0.2 * (1 + args.neg_samples_val)
-        print(f'Setting max_train_samples to {args.max_train_samples} and max_val_samples to {args.max_val_samples}')
+        print(
+            f'Setting max_train_samples to {args.max_train_samples} and max_val_samples to {args.max_val_samples}')
     elif not args.max_train_samples:
         args.max_train_samples = len(
             df_links) - args.max_val_samples // (1 + args.neg_samples_val)
