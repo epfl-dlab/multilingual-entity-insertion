@@ -13,6 +13,7 @@ import pandas as pd
 from bs4 import (BeautifulSoup, MarkupResemblesLocatorWarning,
                  NavigableString)
 from tqdm import tqdm
+import random
 
 warnings.filterwarnings("ignore", category=MarkupResemblesLocatorWarning)
 
@@ -57,7 +58,7 @@ def fix_sentence_tokenizer(sentences):
             del sentences[i+1]
         else:
             i += 1
-        
+
     # for each sentence, if it is less than 10 characters, merge it with the next and previous sentences
     i = 0
     if len(sentences) > 1:
@@ -151,14 +152,16 @@ def extract_links(source_page):
                         section_sentences = []
                         for sentence in temp:
                             new_sentences = sent_tokenize(sentence)
-                            new_sentences = fix_sentence_tokenizer(new_sentences)
+                            new_sentences = fix_sentence_tokenizer(
+                                new_sentences)
                             if new_sentences:
                                 new_sentences[-1] += '\n'
                                 section_sentences.extend(new_sentences)
                         if section_sentences and section_sentences[-1]:
                             section_sentences[-1] = section_sentences[-1][:-1]
                         first_sentence = 0
-                        for link in section_links:
+                        first_index = 0
+                        for i, link in enumerate(section_links):
                             if link['sentence'] is None:
                                 link['context_span_start_index'] = None
                                 link['context_span_end_index'] = None
@@ -173,8 +176,12 @@ def extract_links(source_page):
                                 sentence = re.sub(r' +', ' ', sentence)
                                 link['sentence'] = sentence
                                 for j in range(first_sentence, len(section_sentences)):
-                                    if re.search(r"\b" + re.escape(link['mention']) + r"\b", section_sentences[j]) is not None:
+                                    if j != first_sentence:
+                                        first_index = 0
+                                    if re.search(r"\b" + re.escape(link['mention']) + r"\b", section_sentences[j][first_index:]) is not None:
                                         first_sentence = j
+                                        first_index = section_sentences[j].index(
+                                            link['mention'], first_index) + len(link['mention'])
                                         # use as context the sentence in which the mention is present
                                         # as well as the 5 previous and 5 next sentences
                                         context_start = max(0, j - 5)
@@ -194,25 +201,97 @@ def extract_links(source_page):
                                         link['context_mention_end_index'] = link['context_mention_start_index'] + len(
                                             link['mention'])
 
-                                        # find the occurrences of the previous and the next \n
-                                        # they delimit the span
-                                        context_span_start_index = link['context'][:link['context_mention_start_index']].rfind(
-                                            '\n')
-                                        context_span_end_index = link['context'][link['context_mention_end_index']:].find(
-                                            '\n')
-                                        if context_span_start_index == -1:
-                                            context_span_start_index = 0
-                                        else:
-                                            context_span_start_index += 1
-                                        if context_span_end_index == -1:
-                                            context_span_end_index = len(
-                                                link['context'])
-                                        else:
-                                            context_span_end_index += link['context_mention_end_index']
-                                        link['context_span_start_index'] = context_span_start_index
-                                        link['context_span_end_index'] = context_span_end_index
-                                        break
+                                        # the span is defined as a random number of sentences around the mention
+                                        # the number of sentences is between 1 and 3 to each side
+                                        # the number of sentences is chosen randomly
+                                        left_sentence = random.randint(max(context_start, j - 3),
+                                                                       max(context_start, j - 1))
+                                        right_sentence = random.randint(min(context_end-1, j + 1),
+                                                                        min(context_end-1, j + 3))
+                                        link['context_span_start_index'] = link['context'].index(
+                                            section_sentences[left_sentence].strip())
+                                        link['context_span_end_index'] = link['context'].index(section_sentences[right_sentence].strip()) + \
+                                            len(section_sentences[right_sentence].strip(
+                                            ))
 
+                                        # find all the links contained in the context
+                                        context_links = {}
+                                        mention_count = {}
+                                        last_index = link['context_mention_start_index']
+                                        for other_link in reversed(section_links[:i]):
+                                            if other_link['sentence'] is None:
+                                                continue
+                                            if other_link['mention'] not in mention_count:
+                                                mention_count[other_link['mention']] = 0
+                                            if link['context'].count(other_link['mention']) > mention_count[other_link['mention']]:
+                                                mention_count[other_link['mention']] += 1
+                                                # find the n-th position of the mention in the context
+                                                # where n is mention_count[other_link['mention']] + 1
+                                                position = link['context'].rfind(
+                                                    other_link['mention'], 0, last_index)
+                                                if position == -1:
+                                                    break
+                                                last_index = position
+
+                                                if position >= link['context_sentence_start_index'] and position < link['context_sentence_end_index']:
+                                                    region = 'sentence'
+                                                elif position >= link['context_span_start_index'] and position < link['context_span_end_index']:
+                                                    region = 'span'
+                                                else:
+                                                    region = 'global'
+                                                if other_link['target_title'] not in context_links:
+                                                    context_links[other_link['target_title']] = {'region': region,
+                                                                                                 'count': 1}
+                                                else:
+                                                    context_links[other_link['target_title']
+                                                                  ]['count'] += 1
+                                                    if context_links[other_link['target_title']]['region'] == 'sentence' and region in ['span', 'global']:
+                                                        context_links[other_link['target_title']
+                                                                      ]['region'] = region
+                                                    elif context_links[other_link['target_title']]['region'] == 'span' and region == 'global':
+                                                        context_links[other_link['target_title']
+                                                                      ]['region'] = region
+                                            else:
+                                                break
+                                        last_index = link['context_mention_end_index']
+                                        for other_link in section_links[i+1:]:
+                                            if other_link['sentence'] is None:
+                                                continue
+                                            if other_link['mention'] not in mention_count:
+                                                mention_count[other_link['mention']] = 0
+                                            if link['context'].count(other_link['mention']) > mention_count[other_link['mention']]:
+                                                mention_count[other_link['mention']] += 1
+                                                # find the n-th position of the mention in the context
+                                                # where n is mention_count[other_link['mention']] + 1
+                                                position = link['context'].find(
+                                                    other_link['mention'], last_index)
+                                                if position == -1:
+                                                    break
+                                                last_index = position
+
+                                                if position >= link['context_sentence_start_index'] and position < link['context_sentence_end_index']:
+                                                    region = 'sentence'
+                                                elif position >= link['context_span_start_index'] and position < link['context_span_end_index']:
+                                                    region = 'span'
+                                                else:
+                                                    region = 'global'
+                                                if other_link['target_title'] not in context_links:
+                                                    context_links[other_link['target_title']] = {'region': region,
+                                                                                                 'count': 1}
+                                                else:
+                                                    context_links[other_link['target_title']
+                                                                  ]['count'] += 1
+                                                    if context_links[other_link['target_title']]['region'] == 'sentence' and region in ['span', 'global']:
+                                                        context_links[other_link['target_title']
+                                                                      ]['region'] = region
+                                                    elif context_links[other_link['target_title']]['region'] == 'span' and region == 'global':
+                                                        context_links[other_link['target_title']
+                                                                      ]['region'] = region
+                                            else:
+                                                break
+                                        link['context_links'] = str(
+                                            context_links)
+                                        break
                             found_links.append(link)
                     section_links = []
                     sections = [re.sub(r'\[.*?\]', '', tag.text).strip()]
@@ -340,8 +419,6 @@ def extract_links(source_page):
                 link_data['source_ID'] = source_page['ID']
                 link_data['source_QID'] = source_page['QID']
                 link_data['source_version'] = source_page['version']
-
-                link_data['link_ID'] = link.get("id")
 
                 # get the text of the link
                 link_data['mention'] = link.text
@@ -492,7 +569,8 @@ def extract_links(source_page):
         if section_sentences and section_sentences[-1]:
             section_sentences[-1] = section_sentences[-1][:-1]
         first_sentence = 0
-        for link in section_links:
+        first_index = 0
+        for i, link in enumerate(section_links):
             if link['sentence'] is None:
                 link['context_span_start_index'] = None
                 link['context_span_end_index'] = None
@@ -508,8 +586,12 @@ def extract_links(source_page):
                 sentence = re.sub(r' +', ' ', sentence)
                 link['sentence'] = sentence
                 for j in range(first_sentence, len(section_sentences)):
-                    if re.search(r"\b" + re.escape(link['mention']) + r"\b", section_sentences[j]) is not None:
+                    if j != first_sentence:
+                        first_index = 0
+                    if re.search(r"\b" + re.escape(link['mention']) + r"\b", section_sentences[j][first_index:]) is not None:
                         first_sentence = j
+                        first_index = section_sentences[j].index(
+                            link['mention'], first_index) + len(link['mention'])
                         # use as context the sentence in which the mention is present
                         # as well as the 5 previous and 5 next sentences
                         context_start = max(0, j - 5)
@@ -524,22 +606,96 @@ def extract_links(source_page):
                             section_sentences[j].index(link['mention'])
                         link['context_mention_end_index'] = link['context_mention_start_index'] + \
                             len(link['mention'])
-                        # find the occurrences of the previous and the next \n
-                        # they delimit the span
-                        context_span_start_index = link['context'][:link['context_mention_start_index']].rfind(
-                            '\n')
-                        context_span_end_index = link['context'][link['context_mention_end_index']:].find(
-                            '\n')
-                        if context_span_start_index == -1:
-                            context_span_start_index = 0
-                        else:
-                            context_span_start_index += 1
-                        if context_span_end_index == -1:
-                            context_span_end_index = len(link['context'])
-                        else:
-                            context_span_end_index += link['context_mention_end_index']
-                        link['context_span_start_index'] = context_span_start_index
-                        link['context_span_end_index'] = context_span_end_index
+                        # the span is defined as a random number of sentences around the mention
+                        # the number of sentences is between 1 and 3 to each side
+                        # the number of sentences is chosen randomly
+                        left_sentence = random.randint(max(context_start, j - 3),
+                                                       max(context_start, j - 1))
+                        right_sentence = random.randint(min(context_end - 1, j + 1),
+                                                        min(context_end - 1, j + 3))
+                        link['context_span_start_index'] = link['context'].index(
+                            section_sentences[left_sentence].strip())
+                        link['context_span_end_index'] = link['context'].index(section_sentences[right_sentence].strip()) + \
+                            len(section_sentences[right_sentence].strip())
+
+                        # find all the links contained in the context
+                        context_links = {}
+                        mention_count = {}
+                        last_index = link['context_mention_start_index']
+                        for other_link in reversed(section_links[:i]):
+                            if other_link['sentence'] is None:
+                                continue
+                            if other_link['mention'] not in mention_count:
+                                mention_count[other_link['mention']] = 0
+                            if link['context'].count(other_link['mention']) > mention_count[other_link['mention']]:
+                                mention_count[other_link['mention']] += 1
+                                # find the n-th position of the mention in the context
+                                # where n is mention_count[other_link['mention']] + 1
+                                position = link['context'].rfind(
+                                    other_link['mention'], 0, last_index)
+                                if position == -1:
+                                    break
+                                last_index = position
+
+                                if position >= link['context_sentence_start_index'] and position < link['context_sentence_end_index']:
+                                    region = 'sentence'
+                                elif position >= link['context_span_start_index'] and position < link['context_span_end_index']:
+                                    region = 'span'
+                                else:
+                                    region = 'global'
+                                if other_link['target_title'] not in context_links:
+                                    context_links[other_link['target_title']] = {'region': region,
+                                                                                 'count': 1}
+                                else:
+                                    context_links[other_link['target_title']
+                                                  ]['count'] += 1
+                                    if context_links[other_link['target_title']]['region'] == 'sentence' and region in ['span', 'global']:
+                                        context_links[other_link['target_title']
+                                                      ]['region'] = region
+                                    elif context_links[other_link['target_title']]['region'] == 'span' and region == 'global':
+                                        context_links[other_link['target_title']
+                                                      ]['region'] = region
+                            else:
+                                break
+                        last_index = link['context_mention_end_index']
+                        for other_link in section_links[i+1:]:
+                            if other_link['sentence'] is None:
+                                continue
+                            if other_link['mention'] not in mention_count:
+                                mention_count[other_link['mention']] = 0
+                            if link['context'].count(other_link['mention']) > mention_count[other_link['mention']]:
+                                mention_count[other_link['mention']] += 1
+                                # find the n-th position of the mention in the context
+                                # where n is mention_count[other_link['mention']] + 1
+                                position = link['context'].find(
+                                    other_link['mention'], last_index)
+                                if position == -1:
+                                    break
+                                last_index = position
+
+                                if position >= link['context_sentence_start_index'] and position < link['context_sentence_end_index']:
+                                    region = 'sentence'
+                                elif position >= link['context_span_start_index'] and position < link['context_span_end_index']:
+                                    region = 'span'
+                                else:
+                                    region = 'global'
+                                if other_link['target_title'] not in context_links:
+                                    context_links[other_link['target_title']] = {'region': region,
+                                                                                 'count': 1}
+                                else:
+                                    context_links[other_link['target_title']
+                                                  ]['count'] += 1
+                                    if context_links[other_link['target_title']]['region'] == 'sentence' and region in ['span', 'global']:
+                                        context_links[other_link['target_title']
+                                                      ]['region'] = region
+                                    elif context_links[other_link['target_title']]['region'] == 'span' and region == 'global':
+                                        context_links[other_link['target_title']
+                                                      ]['region'] = region
+                            else:
+                                break
+                        link['context_links'] = str(
+                            context_links)
+
                         break
             found_links.append(link)
 
@@ -608,15 +764,15 @@ if __name__ == '__main__':
                 links.append(link)
                 mention_map.add(
                     f"{link['mention']}<sep>{link['target_title']}")
-            for section in section_text:
-                sections.append(
-                    {'section': section, 'text': section_text[section]['text'], 'depth': section_text[section]['depth'], 'title': section_text[section]['title']})
+            # for section in section_text:
+            #     sections.append(
+            #         {'section': section, 'text': section_text[section]['text'], 'depth': section_text[section]['depth'], 'title': section_text[section]['title']})
 
         df_links = pd.DataFrame(links)
         df_links.to_parquet(f"{args.output_dir}/links_{i}.parquet")
 
-        df_sections = pd.DataFrame(sections)
-        df_sections.to_parquet(f"{args.output_dir}/sections_{i}.parquet")
+        # df_sections = pd.DataFrame(sections)
+        # df_sections.to_parquet(f"{args.output_dir}/sections_{i}.parquet")
 
     pool.close()
     pool.join()
