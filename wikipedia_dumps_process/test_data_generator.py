@@ -450,7 +450,7 @@ def process_version(input):
                     continue
                 mention = link.text.strip()
                 target_title = fix_target_titles(
-                    href[6:], redirect_1, redirect_2)
+                    href[6:].split('#')[0], redirect_1, redirect_2)
                 all_links.append({
                     'mention': mention,
                     'target_title': target_title,
@@ -577,7 +577,7 @@ def process_version(input):
 
                 # get target title
                 target_title = fix_target_titles(
-                    href[6:], redirect_1, redirect_2)
+                    href[6:].split('#')[0], redirect_1, redirect_2)
                 mentions = mentions_map.get(
                     target_title, [urllib.parse.unquote(target_title).replace('_', ' ')])
                 context_links = []
@@ -612,7 +612,8 @@ def process_version(input):
                         'second_version': second_version,
                         'direct_match': direct_match,
                         'missing_category': missing_category,
-                        'negative_contexts': str(negative_contexts)
+                        'negative_contexts': str(negative_contexts),
+                        'context_links': context_links
                     })
                     found_links.append(output[-1])
         # if len(found_links) != len(input['versions'][second_version]):
