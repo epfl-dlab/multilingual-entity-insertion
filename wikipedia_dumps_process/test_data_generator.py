@@ -195,7 +195,7 @@ def fix_text(text):
     return text
 
 
-def find_negative_contexts(section_sentences, mentions, curr_section, index):
+def find_negative_contexts(section_sentences, mentions, curr_section, index, correct_context):
     contexts = []
     for section in section_sentences:
         curr_sentences = []
@@ -217,7 +217,7 @@ def find_negative_contexts(section_sentences, mentions, curr_section, index):
                     max_index = min(len(curr_sentences), i + 6)
                     context = " ".join([s['clean_sentence']
                                         for s in curr_sentences[min_index:max_index]]).strip()
-                    if len(context.split(' ')) > 10:
+                    if len(context.split(' ')) > 10 and context != correct_context:
                         new_contexts.append(context)
                 new_contexts = list(set(new_contexts))
                 for context in new_contexts:
@@ -231,7 +231,7 @@ def find_negative_contexts(section_sentences, mentions, curr_section, index):
                 max_index = min(len(curr_sentences), i + 6)
                 context = " ".join([s['clean_sentence']
                                     for s in curr_sentences[min_index:max_index]]).strip()
-                if len(context.split(' ')) > 10:
+                if len(context.split(' ')) > 10 and context != correct_context:
                     new_contexts.append(context)
             new_contexts = list(set(new_contexts))
             for context in new_contexts:
@@ -527,7 +527,7 @@ def process_version(input):
                 mentions = mentions_map.get(
                     target_title, [urllib.parse.unquote(target_title).replace('_', ' ')])
                 negative_contexts = find_negative_contexts(
-                    section_sentences, mentions, section, sentence['index'])
+                    section_sentences, mentions, section, sentence['index'], context)
                 if target_title in input['versions'][second_version]:
                     output.append({
                         'source_title': input['source_title'],
