@@ -10,7 +10,7 @@ from nltk import sent_tokenize
 import re
 from multiprocessing import Pool, cpu_count
 import math
-
+from ast import literal_eval
 
 def unencode_title(title):
     clean_title = urllib.parse.unquote(title).replace('_', ' ')
@@ -457,49 +457,64 @@ if __name__ == '__main__':
     pool.join()
 
     print('Generating positive samples')
-    positive_samples_train = [{
-        'source_title': row['source_title'],
-        'source_lead': page_leads[row['source_title']],
-        'target_title': row['target_title'],
-        'target_lead': page_leads[row['target_title']],
-        'link_context': row['context'],
-        'source_section': row['source_section'].split('<sep>')[0],
-        'context_span_start_index': row['context_span_start_index'],
-        'context_span_end_index': row['context_span_end_index'],
-        'context_sentence_start_index': row['context_sentence_start_index'],
-        'context_sentence_end_index': row['context_sentence_end_index'],
-        'context_mention_start_index': row['context_mention_start_index'],
-        'context_mention_end_index': row['context_mention_end_index'],
-        'label': 1,
-        'neg_type': 'none',
-        'depth': row['link_section_depth'],
-    } for row in tqdm(df_links_train) if row['source_title'] in page_sections_train]
+    positive_samples_train = []
+    for row in tqdm(df_links_train):
+        if row['source_title'] not in page_sections_train:
+            continue
+        context_links = literal_eval(row['context_links'])
+        processed_context_links = {}
+        for target in context_links:
+            if target in page_leads:
+                processed_context_links[target] = {'target_title': target,
+                                                   'target_lead': page_leads[target]}
+        positive_samples_train.append({
+            'source_title': row['source_title'],
+            'source_lead': page_leads[row['source_title']],
+            'target_title': row['target_title'],
+            'target_lead': page_leads[row['target_title']],
+            'link_context': row['context'],
+            'source_section': row['source_section'].split('<sep>')[0],
+            'context_span_start_index': row['context_span_start_index'],
+            'context_span_end_index': row['context_span_end_index'],
+            'context_sentence_start_index': row['context_sentence_start_index'],
+            'context_sentence_end_index': row['context_sentence_end_index'],
+            'context_mention_start_index': row['context_mention_start_index'],
+            'context_mention_end_index': row['context_mention_end_index'],
+            'label': 1,
+            'neg_type': 'none',
+            'depth': row['link_section_depth'],
+            'context_links': str(processed_context_links),
+        })
     random.shuffle(positive_samples_train)
 
     positive_samples_val = []
     for row in tqdm(df_links_val):
-        try:
-            positive_samples_val.append({
-                'source_title': row['source_title'],
-                'source_lead': page_leads[row['source_title']],
-                'target_title': row['target_title'],
-                'target_lead': page_leads[row['target_title']],
-                'link_context': row['context'],
-                'source_section': row['source_section'].split('<sep>')[0],
-                'context_span_start_index': row['context_span_start_index'],
-                'context_span_end_index': row['context_span_end_index'],
-                'context_sentence_start_index': row['context_sentence_start_index'],
-                'context_sentence_end_index': row['context_sentence_end_index'],
-                'context_mention_start_index': row['context_mention_start_index'],
-                'context_mention_end_index': row['context_mention_end_index'],
-                'label': 1,
-                'neg_type': 'none',
-                'noise_strategy': row['noise_strategy'],
-                'depth': row['link_section_depth'],
-            })
-        except:
-            print(
-                f"Couldn't find {row['target_title']} from {row['source_title']}")
+        if row['source_title'] not in page_sections_val:
+            continue
+        context_links = literal_eval(row['context_links'])
+        processed_context_links = {}
+        for target in context_links:
+            if target in page_leads:
+                processed_context_links[target] = {'target_title': target,
+                                                   'target_lead': page_leads[target]}
+        positive_samples_val.append({
+            'source_title': row['source_title'],
+            'source_lead': page_leads[row['source_title']],
+            'target_title': row['target_title'],
+            'target_lead': page_leads[row['target_title']],
+            'link_context': row['context'],
+            'source_section': row['source_section'].split('<sep>')[0],
+            'context_span_start_index': row['context_span_start_index'],
+            'context_span_end_index': row['context_span_end_index'],
+            'context_sentence_start_index': row['context_sentence_start_index'],
+            'context_sentence_end_index': row['context_sentence_end_index'],
+            'context_mention_start_index': row['context_mention_start_index'],
+            'context_mention_end_index': row['context_mention_end_index'],
+            'label': 1,
+            'neg_type': 'none',
+            'depth': row['link_section_depth'],
+            'context_links': str(processed_context_links),
+        })
     random.shuffle(positive_samples_val)
 
     if not args.max_train_samples:
