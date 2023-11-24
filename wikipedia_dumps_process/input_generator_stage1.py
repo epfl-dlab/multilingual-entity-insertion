@@ -542,8 +542,6 @@ if __name__ == '__main__':
             'context_sentence_end_index': row['context_sentence_end_index'],
             'context_mention_start_index': row['context_mention_start_index'],
             'context_mention_end_index': row['context_mention_end_index'],
-            'label': 1,
-            'neg_type': 'none',
             'depth': row['link_section_depth'],
             'current_links': str(processed_current_links),
         })
@@ -590,8 +588,7 @@ if __name__ == '__main__':
         for i, sample in enumerate(negative_samples_train):
             true_index = i // args.neg_samples_train
             rel_index = i % args.neg_samples_train
-            keys = ['link_context', 'label', 'neg_type',
-                    'noise_strategy', 'source_section']
+            keys = ['link_context', 'label', 'neg_type', 'source_section']
             for key in keys:
                 if key in sample:
                     full_samples_train[true_index][f'{key}_neg_{rel_index}'] = sample[key]
@@ -603,8 +600,7 @@ if __name__ == '__main__':
         for i, sample in enumerate(negative_samples_val):
             true_index = i // args.neg_samples_val
             rel_index = i % args.neg_samples_val
-            keys = ['link_context', 'label', 'neg_type',
-                    'noise_strategy', 'source_section']
+            keys = ['link_context', 'label', 'neg_type', 'source_section']
             for key in keys:
                 if key in sample:
                     full_samples_val[true_index][f'{key}_neg_{rel_index}'] = sample[key]
