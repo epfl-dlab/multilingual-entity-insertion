@@ -238,7 +238,7 @@ def find_negative_contexts(section_sentences, mentions, curr_section, index, cor
                         current_links.append(current_link['target_title'])
                     new_current_links.append(current_links)
                 for context, current_links in zip(new_contexts, new_current_links):
-                    contexts.append({'context': context, 'section': section, 'current_links': str(list(set(current_links)))})
+                    contexts.append({'context': context, 'section': section, 'current_links': list(set(current_links))})
                 curr_sentences = []
 
         if len(curr_sentences) != 0:
@@ -270,7 +270,7 @@ def find_negative_contexts(section_sentences, mentions, curr_section, index, cor
                     current_links.append(current_link['target_title'])
                 new_current_links.append(current_links)
             for context, current_links in zip(new_contexts, new_current_links):
-                contexts.append({'context': context, 'section': section, 'current_links': current_links})
+                contexts.append({'context': context, 'section': section, 'current_links': list(set(current_links))})
 
     return contexts
 

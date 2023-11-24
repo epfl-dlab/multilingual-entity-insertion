@@ -762,17 +762,18 @@ if __name__ == '__main__':
                     f"Processing file {file} at element {j}/{len(df)}")
             for link in page_links:
                 links.append(link)
-                mention_map.add(
-                    f"{link['mention']}<sep>{link['target_title']}")
-            # for section in section_text:
-            #     sections.append(
-            #         {'section': section, 'text': section_text[section]['text'], 'depth': section_text[section]['depth'], 'title': section_text[section]['title']})
+                if link['mention'].strip() != '':
+                    mention_map.add(
+                        f"{link['mention']}<sep>{link['target_title']}")
+            for section in section_text:
+                sections.append(
+                    {'section': section, 'text': section_text[section]['text'], 'depth': section_text[section]['depth'], 'title': section_text[section]['title']})
 
         df_links = pd.DataFrame(links)
         df_links.to_parquet(f"{args.output_dir}/links_{i}.parquet")
 
-        # df_sections = pd.DataFrame(sections)
-        # df_sections.to_parquet(f"{args.output_dir}/sections_{i}.parquet")
+        df_sections = pd.DataFrame(sections)
+        df_sections.to_parquet(f"{args.output_dir}/sections_{i}.parquet")
 
     pool.close()
     pool.join()
