@@ -215,7 +215,7 @@ def extract_links(source_page):
                                             ))
 
                                         # find all the links contained in the context
-                                        context_links = {}
+                                        current_links = {}
                                         mention_count = {}
                                         last_index = link['context_mention_start_index']
                                         for other_link in reversed(section_links[:i]):
@@ -239,17 +239,17 @@ def extract_links(source_page):
                                                     region = 'span'
                                                 else:
                                                     region = 'global'
-                                                if other_link['target_title'] not in context_links:
-                                                    context_links[other_link['target_title']] = {'region': region,
+                                                if other_link['target_title'] not in current_links:
+                                                    current_links[other_link['target_title']] = {'region': region,
                                                                                                  'count': 1}
                                                 else:
-                                                    context_links[other_link['target_title']
+                                                    current_links[other_link['target_title']
                                                                   ]['count'] += 1
-                                                    if context_links[other_link['target_title']]['region'] == 'sentence' and region in ['span', 'global']:
-                                                        context_links[other_link['target_title']
+                                                    if current_links[other_link['target_title']]['region'] == 'sentence' and region in ['span', 'global']:
+                                                        current_links[other_link['target_title']
                                                                       ]['region'] = region
-                                                    elif context_links[other_link['target_title']]['region'] == 'span' and region == 'global':
-                                                        context_links[other_link['target_title']
+                                                    elif current_links[other_link['target_title']]['region'] == 'span' and region == 'global':
+                                                        current_links[other_link['target_title']
                                                                       ]['region'] = region
                                             else:
                                                 break
@@ -275,22 +275,22 @@ def extract_links(source_page):
                                                     region = 'span'
                                                 else:
                                                     region = 'global'
-                                                if other_link['target_title'] not in context_links:
-                                                    context_links[other_link['target_title']] = {'region': region,
+                                                if other_link['target_title'] not in current_links:
+                                                    current_links[other_link['target_title']] = {'region': region,
                                                                                                  'count': 1}
                                                 else:
-                                                    context_links[other_link['target_title']
+                                                    current_links[other_link['target_title']
                                                                   ]['count'] += 1
-                                                    if context_links[other_link['target_title']]['region'] == 'sentence' and region in ['span', 'global']:
-                                                        context_links[other_link['target_title']
+                                                    if current_links[other_link['target_title']]['region'] == 'sentence' and region in ['span', 'global']:
+                                                        current_links[other_link['target_title']
                                                                       ]['region'] = region
-                                                    elif context_links[other_link['target_title']]['region'] == 'span' and region == 'global':
-                                                        context_links[other_link['target_title']
+                                                    elif current_links[other_link['target_title']]['region'] == 'span' and region == 'global':
+                                                        current_links[other_link['target_title']
                                                                       ]['region'] = region
                                             else:
                                                 break
-                                        link['context_links'] = str(
-                                            context_links)
+                                        link['current_links'] = str(
+                                            current_links)
                                         break
                             found_links.append(link)
                     section_links = []
@@ -619,7 +619,7 @@ def extract_links(source_page):
                             len(section_sentences[right_sentence].strip())
 
                         # find all the links contained in the context
-                        context_links = {}
+                        current_links = {}
                         mention_count = {}
                         last_index = link['context_mention_start_index']
                         for other_link in reversed(section_links[:i]):
@@ -643,17 +643,17 @@ def extract_links(source_page):
                                     region = 'span'
                                 else:
                                     region = 'global'
-                                if other_link['target_title'] not in context_links:
-                                    context_links[other_link['target_title']] = {'region': region,
+                                if other_link['target_title'] not in current_links:
+                                    current_links[other_link['target_title']] = {'region': region,
                                                                                  'count': 1}
                                 else:
-                                    context_links[other_link['target_title']
+                                    current_links[other_link['target_title']
                                                   ]['count'] += 1
-                                    if context_links[other_link['target_title']]['region'] == 'sentence' and region in ['span', 'global']:
-                                        context_links[other_link['target_title']
+                                    if current_links[other_link['target_title']]['region'] == 'sentence' and region in ['span', 'global']:
+                                        current_links[other_link['target_title']
                                                       ]['region'] = region
-                                    elif context_links[other_link['target_title']]['region'] == 'span' and region == 'global':
-                                        context_links[other_link['target_title']
+                                    elif current_links[other_link['target_title']]['region'] == 'span' and region == 'global':
+                                        current_links[other_link['target_title']
                                                       ]['region'] = region
                             else:
                                 break
@@ -679,22 +679,22 @@ def extract_links(source_page):
                                     region = 'span'
                                 else:
                                     region = 'global'
-                                if other_link['target_title'] not in context_links:
-                                    context_links[other_link['target_title']] = {'region': region,
+                                if other_link['target_title'] not in current_links:
+                                    current_links[other_link['target_title']] = {'region': region,
                                                                                  'count': 1}
                                 else:
-                                    context_links[other_link['target_title']
+                                    current_links[other_link['target_title']
                                                   ]['count'] += 1
-                                    if context_links[other_link['target_title']]['region'] == 'sentence' and region in ['span', 'global']:
-                                        context_links[other_link['target_title']
+                                    if current_links[other_link['target_title']]['region'] == 'sentence' and region in ['span', 'global']:
+                                        current_links[other_link['target_title']
                                                       ]['region'] = region
-                                    elif context_links[other_link['target_title']]['region'] == 'span' and region == 'global':
-                                        context_links[other_link['target_title']
+                                    elif current_links[other_link['target_title']]['region'] == 'span' and region == 'global':
+                                        current_links[other_link['target_title']
                                                       ]['region'] = region
                             else:
                                 break
-                        link['context_links'] = str(
-                            context_links)
+                        link['current_links'] = str(
+                            current_links)
 
                         break
             found_links.append(link)

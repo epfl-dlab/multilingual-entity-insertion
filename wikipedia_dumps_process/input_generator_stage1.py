@@ -461,11 +461,11 @@ if __name__ == '__main__':
     for row in tqdm(df_links_train):
         if row['source_title'] not in page_sections_train:
             continue
-        context_links = literal_eval(row['context_links'])
-        processed_context_links = {}
-        for target in context_links:
+        current_links = literal_eval(row['current_links'])
+        processed_current_links = {}
+        for target in current_links:
             if target in page_leads:
-                processed_context_links[target] = {'target_title': target,
+                processed_current_links[target] = {'target_title': target,
                                                    'target_lead': page_leads[target]}
         positive_samples_train.append({
             'source_title': row['source_title'],
@@ -483,7 +483,7 @@ if __name__ == '__main__':
             'label': 1,
             'neg_type': 'none',
             'depth': row['link_section_depth'],
-            'context_links': str(processed_context_links),
+            'current_links': str(processed_current_links),
         })
     random.shuffle(positive_samples_train)
 
@@ -491,11 +491,11 @@ if __name__ == '__main__':
     for row in tqdm(df_links_val):
         if row['source_title'] not in page_sections_val:
             continue
-        context_links = literal_eval(row['context_links'])
-        processed_context_links = {}
-        for target in context_links:
+        current_links = literal_eval(row['current_links'])
+        processed_current_links = {}
+        for target in current_links:
             if target in page_leads:
-                processed_context_links[target] = {'target_title': target,
+                processed_current_links[target] = {'target_title': target,
                                                    'target_lead': page_leads[target]}
         positive_samples_val.append({
             'source_title': row['source_title'],
@@ -513,7 +513,7 @@ if __name__ == '__main__':
             'label': 1,
             'neg_type': 'none',
             'depth': row['link_section_depth'],
-            'context_links': str(processed_context_links),
+            'current_links': str(processed_current_links),
         })
     random.shuffle(positive_samples_val)
 
