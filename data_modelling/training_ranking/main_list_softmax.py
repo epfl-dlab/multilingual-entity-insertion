@@ -464,22 +464,22 @@ if __name__ == '__main__':
                         neg_map[item[f'neg_type_neg_{i}']])
 
         output['sources'] = tokenizer(
-            output['sources'], padding=True, truncation=True, return_tensors='pt', max_length=args.max_tokens)
+            output['sources'], padding='max_length', truncation=True, return_tensors='pt', max_length=args.max_tokens)
         output['targets'] = tokenizer(
-            output['targets'], padding=True, truncation=True, return_tensors='pt', max_length=args.max_tokens)
+            output['targets'], padding='max_length', truncation=True, return_tensors='pt', max_length=args.max_tokens)
         output['contexts'] = tokenizer(
-            output['contexts'], padding=True, truncation=True, return_tensors='pt', max_length=args.max_tokens)
+            output['contexts'], padding='max_length', truncation=True, return_tensors='pt', max_length=args.max_tokens)
         output['noises'] = torch.tensor(output['noises'])
         if input[0]['split'] == 'train':
             for i in range(args.neg_samples_train[0]):
                 output[f"contexts_neg_{i}"] = tokenizer(
-                    output[f"contexts_neg_{i}"], padding=True, truncation=True, return_tensors='pt', max_length=args.max_tokens)
+                    output[f"contexts_neg_{i}"], padding='max_length', truncation=True, return_tensors='pt', max_length=args.max_tokens)
                 output[f"strategy_neg_{i}"] = torch.tensor(
                     output[f"strategy_neg_{i}"])
         else:
             for i in range(args.neg_samples_eval[0]):
                 output[f"contexts_neg_{i}"] = tokenizer(
-                    output[f"contexts_neg_{i}"], padding=True, truncation=True, return_tensors='pt', max_length=args.max_tokens)
+                    output[f"contexts_neg_{i}"], padding='max_length', truncation=True, return_tensors='pt', max_length=args.max_tokens)
                 output[f"strategy_neg_{i}"] = torch.tensor(
                     output[f"strategy_neg_{i}"])
         return output
@@ -1112,20 +1112,20 @@ if __name__ == '__main__':
                     output[f"contexts_neg_{i}"].append(context_input)
 
         output['sources'] = tokenizer(
-            output['sources'], padding=True, truncation=True, return_tensors='pt', max_length=args.max_tokens)
+            output['sources'], padding='max_length', truncation=True, return_tensors='pt', max_length=args.max_tokens)
         output['targets'] = tokenizer(
-            output['targets'], padding=True, truncation=True, return_tensors='pt', max_length=args.max_tokens)
+            output['targets'], padding='max_length', truncation=True, return_tensors='pt', max_length=args.max_tokens)
         output['contexts'] = tokenizer(
-            output['contexts'], padding=True, truncation=True, return_tensors='pt', max_length=args.max_tokens)
+            output['contexts'], padding='max_length', truncation=True, return_tensors='pt', max_length=args.max_tokens)
         output['noises'] = torch.tensor(output['noises'])
         if input[0]['split'] == 'train':
             for i in range(args.neg_samples_train[1]):
                 output[f"contexts_neg_{i}"] = tokenizer(
-                    output[f"contexts_neg_{i}"], padding=True, truncation=True, return_tensors='pt', max_length=args.max_tokens)
+                    output[f"contexts_neg_{i}"], padding='max_length', truncation=True, return_tensors='pt', max_length=args.max_tokens)
         else:
             for i in range(args.neg_samples_eval[1]):
                 output[f"contexts_neg_{i}"] = tokenizer(
-                    output[f"contexts_neg_{i}"], padding=True, truncation=True, return_tensors='pt', max_length=args.max_tokens)
+                    output[f"contexts_neg_{i}"], padding='max_length', truncation=True, return_tensors='pt', max_length=args.max_tokens)
         return output
 
     logger.info("Loading datasets")
