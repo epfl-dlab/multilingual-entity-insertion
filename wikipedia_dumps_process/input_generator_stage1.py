@@ -136,6 +136,7 @@ def easy_replace_context(link, page_sections, pages):
             break
     link['link_context'] = new_context['context']
     link['source_section'] = new_context['section']
+    link['current_links'] = new_context['current_links']
     link['neg_type'] = 'easy_replace_context'
     return link
 
@@ -149,6 +150,7 @@ def hard_replace_context(link, page_sections, pages, available_sentences):
     else:
         link['link_context'] = new_context['context']
         link['source_section'] = new_context['section']
+        link['current_links'] = new_context['current_links']
         link['neg_type'] = 'hard_replace_context'
     return link
 
@@ -227,6 +229,19 @@ def replace_context(source_title, target_title, source_depth, page_sections, ava
                           new_sentence_range['range'][1] + 1)
         new_context = " ".join(
             page_sections[source_title][new_section]['sentences'][left_limit:right_limit])
+        # find the existing links in this new context
+        candidate_current_links = [[]]
+        prev_fail = False
+        for link in page_sections[source_title][new_section]['links']:
+            if link['mention'] not in new_context:
+                prev_fail = True
+                continue
+            if prev_fail:
+                candidate_current_links.append([])
+                prev_fail = False
+            candidate_current_links[-1].append(link)
+        candidate_current_links.sort(key=lambda x: len(x), reverse=True)
+        current_links = candidate_current_links[0]
         # remove all the sentences from the available indices that would produce the same context
         if available_sentences:
             if left_limit == new_sentence_range['range'][0] and right_limit == new_sentence_range['range'][1] + 1:
@@ -236,7 +251,7 @@ def replace_context(source_title, target_title, source_depth, page_sections, ava
             else:
                 available_sentences[new_section].remove(new_sentence_index)
 
-        return {'context': new_context, 'section': new_section}
+        return {'context': new_context, 'section': new_section, 'current_links': current_links}
 
 
 def extract_sections(row):
@@ -244,8 +259,9 @@ def extract_sections(row):
     text = row['text']
     section = row['section'].split('<sep>')[0]
     depth = row['depth']
+    links = row['links']
     page = {'title': title, 'section': section,
-            'sentences': [], 'depth': depth}
+            'sentences': [], 'depth': depth, 'links': links}
     if section in ['Notes', 'References', 'Sources', 'External links', 'Further reading', 'Other websites', 'Sources and references']:
         return page
     text = text.strip()
@@ -432,14 +448,22 @@ if __name__ == '__main__':
         section = output['section']
         sentences = output['sentences']
         depth = output['depth']
+        links = output['links']
         if not sentences:
             continue
+        for link in links:
+            link['target_title'] = unencode_title(link['target_title'])
+            if link['target_title'] in page_leads:
+                link['target_lead'] = page_leads[link['target_title']]
+            else:
+                link['target_lead'] = None
         if title not in page_sections_train:
             page_sections_train[title] = {}
         if section not in page_sections_train[title]:
             page_sections_train[title][section] = {
-                'depth': depth, 'sentences': []}
+                'depth': depth, 'sentences': [], 'links': []}
         page_sections_train[title][section]['sentences'].extend(sentences)
+        page_sections_train[title][section]['links'].extend(links)
 
     page_sections_val = {}
     for output in tqdm(pool.imap_unordered(extract_sections, df_sections_val), total=len(df_sections_val)):
@@ -447,12 +471,20 @@ if __name__ == '__main__':
         section = output['section']
         sentences = output['sentences']
         depth = output['depth']
+        links = output['links']
+        for link in links:
+            link['target_title'] = unencode_title(link['target_title'])
+            if link['target_title'] in page_leads:
+                link['target_lead'] = page_leads[link['target_title']]
+            else:
+                link['target_lead'] = None
         if title not in page_sections_val:
             page_sections_val[title] = {}
         if section not in page_sections_val[title]:
             page_sections_val[title][section] = {
-                'depth': depth, 'sentences': []}
+                'depth': depth, 'sentences': [], 'links': []}
         page_sections_val[title][section]['sentences'].extend(sentences)
+        page_sections_val[title][section]['links'].extend(links)
     pool.close()
     pool.join()
 

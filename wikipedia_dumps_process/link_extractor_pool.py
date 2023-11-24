@@ -126,7 +126,9 @@ def extract_links(source_page):
     sections = ["Lead"]
     section_links = []
     section_text = {'Lead': {'text': '',
-                             'depth': 0, 'title': source_page['title']}}
+                             'depth': 0,
+                             'title': source_page['title'],
+                             'links': []}}
     search_index_link = 0
     # iterate through all tags
     for section in content.children:
@@ -292,6 +294,8 @@ def extract_links(source_page):
                                         link['current_links'] = str(
                                             current_links)
                                         break
+                            section_text[sections[0]]['links'].append({'mention': link['mention'],
+                                                                       'target_title': link['target_title']})
                             found_links.append(link)
                     section_links = []
                     sections = [re.sub(r'\[.*?\]', '', tag.text).strip()]
@@ -300,6 +304,7 @@ def extract_links(source_page):
                         r'\[.*?\]', '', tag.text).strip() + '\n'
                     section_text[sections[0]]['depth'] = depth[0] + 1
                     section_text[sections[0]]['title'] = source_page['title']
+                    section_text[sections[0]]['links'] = []
                     depth[0] += 1
                     depth[1] = 0
                     depth[2] = 0
@@ -767,7 +772,11 @@ if __name__ == '__main__':
                         f"{link['mention']}<sep>{link['target_title']}")
             for section in section_text:
                 sections.append(
-                    {'section': section, 'text': section_text[section]['text'], 'depth': section_text[section]['depth'], 'title': section_text[section]['title']})
+                    {'section': section, 
+                     'text': section_text[section]['text'], 
+                     'depth': section_text[section]['depth'], 
+                     'title': section_text[section]['title'],
+                     'links': section_text[section]['links']})
 
         df_links = pd.DataFrame(links)
         df_links.to_parquet(f"{args.output_dir}/links_{i}.parquet")
