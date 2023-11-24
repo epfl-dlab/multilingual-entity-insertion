@@ -18,8 +18,8 @@ class DownloadProgressBar(tqdm):
 def download_url(url, output_path):
     with DownloadProgressBar(unit='B', unit_scale=True,
                              miniters=1, desc=url.split('/')[-1]) as t:
-        urllib.request.urlretrieve(
-            url, filename=output_path, reporthook=t.update_to)
+        _, message = urllib.request.urlretrieve(url, filename=output_path, reporthook=t.update_to)
+    return message
 
 
 if __name__ == '__main__':
@@ -42,6 +42,11 @@ if __name__ == '__main__':
     if not os.path.exists(args.output_dir):
         os.makedirs(args.output_dir)
 
+    url_xml_dump = f"https://dumps.wikimedia.org/{args.lang}wiki/{args.date}/{args.lang}wiki-{args.date}-pages-meta-history.xml.bz2"
+    output_xml_path = f"{args.output_dir}/{args.lang}wiki-{args.date}-pages-meta-history.xml.bz2"
+    
+    
+
     url_html_dump = f"https://dumps.wikimedia.org/other/enterprise_html/runs/{args.date}/{args.lang}wiki-NS{args.namespace}-{args.date}-ENTERPRISE-HTML.json.tar.gz"
     output_html_path = f"{args.output_dir}/{args.lang}wiki-NS{args.namespace}-{args.date}-ENTERPRISE-HTML.json.tar.gz"
 
@@ -53,21 +58,21 @@ if __name__ == '__main__':
 
     url_sql_dump_3 = f"https://dumps.wikimedia.org/{args.lang}wiki/{args.date}/{args.lang}wiki-{args.date}-redirect.sql.gz"
     output_sql_path_3 = f"{args.output_dir}/{args.lang}wiki-{args.date}-redirect.sql.gz"
-    
-    url_xml_dump = f"https://dumps.wikimedia.org/{args.lang}wiki/{args.date}/{args.lang}wiki-{args.date}-pages-meta-history.xml.bz2"
-    output_xml_path = f"{args.output_dir}/{args.lang}wiki-{args.date}-pages-meta-history.xml.bz2"
 
     # check if files exist before downloading
-    if not os.path.exists(output_html_path) or args.overwrite:
-        download_url(url_html_dump, output_html_path)
-    if not os.path.exists(output_sql_path_1) or args.overwrite:
-        download_url(url_sql_dump_1, output_sql_path_1)
-    if not os.path.exists(output_sql_path_2) or args.overwrite:
-        download_url(url_sql_dump_2, output_sql_path_2)
-    if not os.path.exists(output_sql_path_3) or args.overwrite:
-        download_url(url_sql_dump_3, output_sql_path_3)
     if not os.path.exists(output_xml_path) or args.overwrite:
-        download_url(url_xml_dump, output_xml_path)
+        message = download_url(url_xml_dump, output_xml_path)
+        # message is an HTTPMessage
+        # If it is a failure message, warn the user and download the back-up file
+        print(message)
+    if not os.path.exists(output_html_path) or args.overwrite:
+        message = download_url(url_html_dump, output_html_path)
+    if not os.path.exists(output_sql_path_1) or args.overwrite:
+        message = download_url(url_sql_dump_1, output_sql_path_1)
+    if not os.path.exists(output_sql_path_2) or args.overwrite:
+        message = download_url(url_sql_dump_2, output_sql_path_2)
+    if not os.path.exists(output_sql_path_3) or args.overwrite:
+        message = download_url(url_sql_dump_3, output_sql_path_3)
 
     # extract the downloaded files (sql)
     print(f'Extracting {output_sql_path_1}')
