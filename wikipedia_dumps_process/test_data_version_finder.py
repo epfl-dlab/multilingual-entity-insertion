@@ -9,6 +9,19 @@ from html import unescape
 import re
 import urllib
 from collections import Counter
+import json
+
+class DownloadProgressBar(tqdm):
+    def update_to(self, b=1, bsize=1, tsize=None):
+        if tsize is not None:
+            self.total = tsize
+        self.update(b * bsize - self.n)
+
+
+def download_url(url, output_path):
+    with DownloadProgressBar(unit='B', unit_scale=True,
+                             miniters=1, desc=url.split('/')[-1]) as t:
+        urllib.request.urlretrieve(url, filename=output_path, reporthook=t.update_to)
 
 
 def update_targets(target_name, redirect_map):
@@ -217,145 +230,183 @@ if __name__ == '__main__':
                                                   #   'new_version': int(link['source_version_2'].split('&oldid=')[-1]),
                                                   'page_title': link['source_title']}
 
+    # check if the revision history file exists
+    if os.path.exists(os.path.join(args.raw_data_dir, f'{args.lang}wiki-{args.second_date}-pages-meta-history.xml.bz2')):
+        files = [os.path.join(args.raw_data_dir, f'{args.lang}wiki-{args.second_date}-pages-meta-history.xml.bz2')]
+    else:
+        print(f"Revision history is not downloaded. Using the backup json file to find the necessary revision history files.")
+        json_file = os.path.join(args.raw_data_dir, 'dumpstatus.json')
+        with open(json_file, 'r') as f:
+            data = json.load(f)
+        data = data['jobs']['metahistorybz2dump']['files']
+        ranges = []
+        for key in data:
+            file_name = key
+            url = f"https://dumps.wikimedia.org{data[key]['url']}"
+            # filename is structure as {lang}wiki-{date}-pages-meta-history{num}.xml-p{min_id}p{max_id}.bz2
+            # use regex to extract min_id and max_id
+            min_id = int(re.findall(r'p(\d+)p', file_name)[0])
+            max_id = int(re.findall(r'p\d+p(\d+)', file_name)[0])
+            ranges.append({'min_id': min_id, 
+                           'max_id': max_id, 
+                           'file_name': os.path.join(args.raw_data_dir, file_name),
+                           'url': url})
+        files = set([])
+        for id in link_struc:
+            for range in ranges:
+                if range['min_id'] <= id <= range['max_id']:
+                    files.add(range['file_name'])
+                    break
+        files = [os.path.join(args.raw_data_dir, file) for file in files]
+        print(f"Downloading {len(files)} revision history files")
+        for file in files:
+            if not os.path.exists(file):
+                print(f"Downloading {file} from {url}")
+                try:
+                    download_url(url, file)
+                except urllib.error.HTTPError:
+                    print(f'Could not download {url}.')
+                    print(f'Check if the url is still available at https://dumps.wikimedia.org/.')
+            
+        
+    print("Finding links in revision history file(s)")
     # read the revision history
     output = []
-    print("Finding links in revision history")
-    source_file = os.path.join(
-        args.raw_data_dir, f'{args.lang}wiki-{args.second_date}-pages-meta-history.xml.bz2')
-    processed_pages = 0
-    prev_text = ''
-    with bz2.open(source_file, 'rb') as f:
-        pbar = tqdm(iterparse(f._buffer, events=('end',)))
-        output_len = 0
-        for i, (_, elem) in enumerate(pbar):
-            if i % 100_000 == 0:
-                pbar.set_description(
-                    f"{len(output)} candidate links found ({processed_pages}/{source_pages} pages processed)")
-            if elem.tag.endswith('page'):
-                pages = []
-                older_pages = []
-                current_id = None
-                skip = False
-                for child in elem:
-                    if child.tag.endswith('ns'):
-                        if child.text != '0':
-                            skip = True
-                            break
-                    if child.tag.endswith('id'):
-                        if int(child.text) not in link_struc:
-                            skip = True
-                            break
-                        else:
-                            current_id = int(child.text)
-                            break
-                if skip:
-                    elem.clear()
-                    continue
-                # go through all the children of elem in reverse order
-                old = False
-                leave = False
-                for child in reversed(elem):
-                    if child.tag.endswith('revision'):
-                        for revision_data in child:
-                            if revision_data.tag.endswith('timestamp'):
-                                # timestamp has format 2019-01-01T00:00:00Z
-                                # compare the timestamp with the date of the first dump and the second dump
-                                timestamp = revision_data.text
-                                timestamp = pd.to_datetime(
-                                    timestamp).tz_convert(None)
-                                first_date = pd.to_datetime(args.first_date)
-                                second_date = pd.to_datetime(args.second_date)
-                                if timestamp > second_date:
-                                    break
-                                elif timestamp < first_date:
-                                    old = True
-
-                                # if timestamp is more than 1 month before the first date, set leave to True
-                                if timestamp < first_date - pd.DateOffset(months=1):
-                                    leave = True
-                            if revision_data.tag.endswith('id') and not revision_data.tag.endswith('parentid'):
-                                # if int(revision_data.text) < link_struc[current_id]['old_version']:
-                                #     old += 1
-                                #     version_id = int(revision_data.text)
-                                # elif int(revision_data.text) > link_struc[current_id]['new_version']:
-                                #     break
-                                # else:
-                                version_id = int(revision_data.text)
-                            if revision_data.tag.endswith('text') and revision_data.text is not None:
-                                clean_text = unescape(revision_data.text)
-                                # remove all comments
-                                # remove multi-line comments
-                                clean_text = clean_xml(clean_text)
-                                if old == 0:
-                                    pages.append(
-                                        {'version': version_id, 'text': clean_text})
-                                else:
-                                    older_pages.append(
-                                        {'version': version_id, 'text': clean_text})
-                        if leave:
-                            break
-                if not pages:
-                    elem.clear()
-                    continue
-                pages = pages + older_pages
-                pages = sorted(pages, key=lambda x: x['version'], reverse=True)
-                versions = [page['version'] for page in pages]
-
-                counts = [{'count': None, 'found': 0, 'expected': link['count'], 'title': process_title(
-                    link['target_title']).lower()} for link in link_struc[current_id]['links']]
-                prev_version = None
-                prev_text = ''
-                for j, page in enumerate(pages):
-                    if len(page['text']) < min(0.2 * len(prev_text), 200):  # avoids edit wars
+    for source_file in files:
+        processed_pages = 0
+        prev_text = ''
+        with bz2.open(source_file, 'rb') as f:
+            pbar = tqdm(iterparse(f._buffer, events=('end',)))
+            output_len = 0
+            for i, (_, elem) in enumerate(pbar):
+                if i % 100_000 == 0:
+                    pbar.set_description(
+                        f"{len(output)} candidate links found ({processed_pages}/{source_pages} pages processed)")
+                if elem.tag.endswith('page'):
+                    pages = []
+                    older_pages = []
+                    current_id = None
+                    skip = False
+                    for child in elem:
+                        if child.tag.endswith('ns'):
+                            if child.text != '0':
+                                skip = True
+                                break
+                        if child.tag.endswith('id'):
+                            if int(child.text) not in link_struc:
+                                skip = True
+                                break
+                            else:
+                                current_id = int(child.text)
+                                break
+                    if skip:
+                        elem.clear()
                         continue
-                    # find all elements in brackets
-                    elems_1 = re.findall(r'\[\[.*?\]\]', page['text'])
-                    for i in range(len(elems_1)):
-                        elems_1[i] = elems_1[i].lower()
-                        if '|' in elems_1[i]:
-                            elems_1[i] = elems_1[i].split('|')[0]
-                        elems_1[i] = elems_1[i].replace(
-                            '[[', '').replace(']]', '')
-                        if elems_1[i] in redirect_map_clean:
-                            elems_1[i] = redirect_map_clean[elems_1[i]]
-                        elems_1[i] = elems_1[i].strip()
-                    elems_2 = re.findall(r'\{\{.*?\}\}', page['text'])
-                    for i in range(len(elems_2)):
-                        elems_2[i] = elems_2[i].lower()
-                        if '|' in elems_2[i]:
-                            elems_2[i] = elems_2[i].split('|')[1]
-                        elems_2[i] = elems_2[i].replace(
-                            '{{', '').replace('}}', '')
-                        if elems_2[i] in redirect_map_clean:
-                            elems_2[i] = redirect_map_clean[elems_2[i]]
-                            elems_2[i] = elems_2[i].strip()
-                    elems = elems_1 + elems_2
-                    # send it to a counter
-                    counter = Counter(elems)
-                    if j == 0:
-                        for k, count in enumerate(counts):
-                            counts[k]['count'] = counter.get(
-                                f"{count['title']}", 0)
-                    else:
-                        for k, count in enumerate(counts):
-                            new_count = counter.get(f"{count['title']}", 0)
-                            if new_count > count['count']:
-                                counts[k]['count'] = new_count
-                            if new_count < count['count']:
-                                for _ in range(count['count'] - new_count):
-                                    output.append({'source_title': link_struc[current_id]['page_title'],
-                                                   'target_title': link_struc[current_id]['links'][k]['target_title'],
-                                                   'source_ID': current_id,
-                                                   'target_ID': link_struc[current_id]['links'][k]['target_ID'],
-                                                   'first_version': page['version'],
-                                                   'second_version': prev_version})
-                                    counts[k]['found'] += 1
-                                counts[k]['count'] = new_count
-                    prev_version = page['version']
-                    prev_text = page['text']
-                processed_pages += 1
-                elem.clear()
-                output_len = len(output)
+                    # go through all the children of elem in reverse order
+                    old = False
+                    leave = False
+                    for child in reversed(elem):
+                        if child.tag.endswith('revision'):
+                            for revision_data in child:
+                                if revision_data.tag.endswith('timestamp'):
+                                    # timestamp has format 2019-01-01T00:00:00Z
+                                    # compare the timestamp with the date of the first dump and the second dump
+                                    timestamp = revision_data.text
+                                    timestamp = pd.to_datetime(
+                                        timestamp).tz_convert(None)
+                                    first_date = pd.to_datetime(args.first_date)
+                                    second_date = pd.to_datetime(args.second_date)
+                                    if timestamp > second_date:
+                                        break
+                                    elif timestamp < first_date:
+                                        old = True
+
+                                    # if timestamp is more than 1 month before the first date, set leave to True
+                                    if timestamp < first_date - pd.DateOffset(months=1):
+                                        leave = True
+                                if revision_data.tag.endswith('id') and not revision_data.tag.endswith('parentid'):
+                                    # if int(revision_data.text) < link_struc[current_id]['old_version']:
+                                    #     old += 1
+                                    #     version_id = int(revision_data.text)
+                                    # elif int(revision_data.text) > link_struc[current_id]['new_version']:
+                                    #     break
+                                    # else:
+                                    version_id = int(revision_data.text)
+                                if revision_data.tag.endswith('text') and revision_data.text is not None:
+                                    clean_text = unescape(revision_data.text)
+                                    # remove all comments
+                                    # remove multi-line comments
+                                    clean_text = clean_xml(clean_text)
+                                    if old == 0:
+                                        pages.append(
+                                            {'version': version_id, 'text': clean_text})
+                                    else:
+                                        older_pages.append(
+                                            {'version': version_id, 'text': clean_text})
+                            if leave:
+                                break
+                    if not pages:
+                        elem.clear()
+                        continue
+                    pages = pages + older_pages
+                    pages = sorted(pages, key=lambda x: x['version'], reverse=True)
+                    versions = [page['version'] for page in pages]
+
+                    counts = [{'count': None, 'found': 0, 'expected': link['count'], 'title': process_title(
+                        link['target_title']).lower()} for link in link_struc[current_id]['links']]
+                    prev_version = None
+                    prev_text = ''
+                    for j, page in enumerate(pages):
+                        if len(page['text']) < min(0.2 * len(prev_text), 200):  # avoids edit wars
+                            continue
+                        # find all elements in brackets
+                        elems_1 = re.findall(r'\[\[.*?\]\]', page['text'])
+                        for i in range(len(elems_1)):
+                            elems_1[i] = elems_1[i].lower()
+                            if '|' in elems_1[i]:
+                                elems_1[i] = elems_1[i].split('|')[0]
+                            elems_1[i] = elems_1[i].replace(
+                                '[[', '').replace(']]', '')
+                            if elems_1[i] in redirect_map_clean:
+                                elems_1[i] = redirect_map_clean[elems_1[i]]
+                            elems_1[i] = elems_1[i].strip()
+                        elems_2 = re.findall(r'\{\{.*?\}\}', page['text'])
+                        for i in range(len(elems_2)):
+                            elems_2[i] = elems_2[i].lower()
+                            if '|' in elems_2[i]:
+                                elems_2[i] = elems_2[i].split('|')[1]
+                            elems_2[i] = elems_2[i].replace(
+                                '{{', '').replace('}}', '')
+                            if elems_2[i] in redirect_map_clean:
+                                elems_2[i] = redirect_map_clean[elems_2[i]]
+                                elems_2[i] = elems_2[i].strip()
+                        elems = elems_1 + elems_2
+                        # send it to a counter
+                        counter = Counter(elems)
+                        if j == 0:
+                            for k, count in enumerate(counts):
+                                counts[k]['count'] = counter.get(
+                                    f"{count['title']}", 0)
+                        else:
+                            for k, count in enumerate(counts):
+                                new_count = counter.get(f"{count['title']}", 0)
+                                if new_count > count['count']:
+                                    counts[k]['count'] = new_count
+                                if new_count < count['count']:
+                                    for _ in range(count['count'] - new_count):
+                                        output.append({'source_title': link_struc[current_id]['page_title'],
+                                                    'target_title': link_struc[current_id]['links'][k]['target_title'],
+                                                    'source_ID': current_id,
+                                                    'target_ID': link_struc[current_id]['links'][k]['target_ID'],
+                                                    'first_version': page['version'],
+                                                    'second_version': prev_version})
+                                        counts[k]['found'] += 1
+                                    counts[k]['count'] = new_count
+                        prev_version = page['version']
+                        prev_text = page['text']
+                    processed_pages += 1
+                    elem.clear()
+                    output_len = len(output)
 
     print("Saving versions")
     output_df = pd.DataFrame(output)
