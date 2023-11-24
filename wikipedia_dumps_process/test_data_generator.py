@@ -196,6 +196,7 @@ def fix_text(text):
 
 def find_negative_contexts(section_sentences, mentions, curr_section, index, correct_context, all_links):
     contexts = []
+    context_texts = set([])
     for section in section_sentences:
         curr_sentences = []
         for i, sentence in enumerate(section_sentences[section]):
@@ -211,66 +212,74 @@ def find_negative_contexts(section_sentences, mentions, curr_section, index, cor
                 curr_sentences.append(sentence)
             else:
                 new_contexts = []
-                new_contexts_links = []
+                new_current_links = []
                 for i in range(len(curr_sentences)):
                     min_index = max(0, i - 5)
                     max_index = min(len(curr_sentences), i + 6)
                     context = " ".join([s['clean_sentence']
                                         for s in curr_sentences[min_index:max_index]]).strip()
-                    if len(context.split(' ')) > 10 and context != correct_context:
+                    if len(context.split(' ')) > 10 and context != correct_context and context not in context_texts:
+                        context_texts.add(context)
                         new_contexts.append(context)
-                    context_links = []
+                    else:
+                        continue
+                    candidate_current_links = [[]]
                     section_found = False
-                    first_link_found = False
-                    search_index = 0
-                    for context_link in all_links:
-                        if context_link['section'] != section:
+                    for current_link in all_links:
+                        if current_link['section'] != section:
                             if section_found:
                                 break
                             continue
                         section_found = True
-                        if context_link['mention'] not in context[search_index:]:
-                            if first_link_found:
-                                break
+                        if current_link['mention'] not in context:
+                            if candidate_current_links[-1] != []:
+                                candidate_current_links.append([])
                             continue
-                        search_index = context.find(context_link['mention'], search_index)
-                        first_link_found = True
-                        context_links.append(context_link['target_title'])
-                    new_contexts_links.append(context_links)
-                for context, context_links in zip(new_contexts, new_contexts_links):
-                    contexts.append({'context': context, 'section': section, 'context_links': context_links})
+                        candidate_current_links[-1].append(
+                            current_link['target_title'])
+                    # the current_links is the candidate with the most links
+                    candidate_current_links.sort(
+                        key=lambda x: len(x), reverse=True)
+                    current_links = candidate_current_links[0]
+                    new_current_links.append(current_links)
+                for context, current_links in zip(new_contexts, new_current_links):
+                    contexts.append({'context': context, 'section': section, 'current_links': list(set(current_links))})
                 curr_sentences = []
 
         if len(curr_sentences) != 0:
             new_contexts = []
-            new_contexts_links = []
+            new_current_links = []
             for i in range(len(curr_sentences)):
                 min_index = max(0, i - 5)
                 max_index = min(len(curr_sentences), i + 6)
                 context = " ".join([s['clean_sentence']
                                     for s in curr_sentences[min_index:max_index]]).strip()
-                if len(context.split(' ')) > 10 and context != correct_context:
+                if len(context.split(' ')) > 10 and context != correct_context and context not in context_texts:
+                    context_texts.add(context)
                     new_contexts.append(context)
-                context_links = []
+                else:
+                    continue
+                candidate_current_links = [[]]
                 section_found = False
-                first_link_found = False
-                search_index = 0
-                for context_link in all_links:
-                    if context_link['section'] != section:
+                for current_link in all_links:
+                    if current_link['section'] != section:
                         if section_found:
                             break
                         continue
                     section_found = True
-                    if context_link['mention'] not in context[search_index:]:
-                        if first_link_found:
-                            break
+                    if current_link['mention'] not in context:
+                        if candidate_current_links != []:
+                            candidate_current_links.append([])
                         continue
-                    search_index = context.find(context_link['mention'], search_index)
-                    first_link_found = True
-                    context_links.append(context_link['target_title'])
-                new_contexts_links.append(context_links)
-            for context, context_links in zip(new_contexts, new_contexts_links):
-                contexts.append({'context': context, 'section': section, 'context_links': context_links})
+                    candidate_current_links[-1].append(
+                        current_link['target_title'])
+                # the current_links is the candidate with the most links
+                candidate_current_links.sort(
+                    key=lambda x: len(x), reverse=True)
+                current_links = candidate_current_links[0]
+                new_current_links.append(current_links)
+            for context, current_links in zip(new_contexts, new_current_links):
+                contexts.append({'context': context, 'section': section, 'current_links': list(set(current_links))})
 
     return contexts
 
@@ -580,23 +589,23 @@ def process_version(input):
                     href[6:].split('#')[0], redirect_1, redirect_2)
                 mentions = mentions_map.get(
                     target_title, [urllib.parse.unquote(target_title).replace('_', ' ')])
-                context_links = []
+                candidate_current_links = [[]]
                 section_found = False
-                first_link_found = False
-                search_index = 0
-                for context_link in all_links:
-                    if context_link['section'] != section:
+                for current_link in all_links:
+                    if current_link['section'] != section:
                         if section_found:
                             break
                         continue
                     section_found = True
-                    if context_link['mention'] not in context[search_index:]:
-                        if first_link_found:
-                            break
+                    if current_link['mention'] not in context:
+                        if candidate_current_links[-1] != []:
+                            candidate_current_links.append([])
                         continue
-                    search_index = context.find(context_link['mention'], search_index)
-                    first_link_found = True
-                    context_links.append(context_link['target_title'])
+                    candidate_current_links[-1].append(
+                        current_link['target_title'])
+                # the current_links is the candidate with the most links
+                candidate_current_links.sort(key=lambda x: len(x), reverse=True)
+                current_links = candidate_current_links[0]
                 negative_contexts = find_negative_contexts(
                     section_sentences, mentions, section, sentence['index'], context, all_links)
                 if target_title in input['versions'][second_version]:
@@ -613,7 +622,7 @@ def process_version(input):
                         'direct_match': direct_match,
                         'missing_category': missing_category,
                         'negative_contexts': str(negative_contexts),
-                        'context_links': context_links
+                        'current_links': str(list(set(current_links)))
                     })
                     found_links.append(output[-1])
         # if len(found_links) != len(input['versions'][second_version]):

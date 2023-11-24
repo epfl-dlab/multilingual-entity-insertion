@@ -83,7 +83,8 @@ if __name__ == '__main__':
     print(f'There are {missing_page.sum()} links with missing pages')
     missing_section = df_links['missing_category'] == 'missing_section'
     print(f'There are {missing_section.sum()} links with missing sections')
-    df_links = df_links[~no_context & ~no_neg_contexts & ~missing_page & ~missing_section]
+    df_links = df_links[~no_context & ~no_neg_contexts &
+                        ~missing_page & ~missing_section]
     print(f"After cleaning, there are {len(df_links)} links")
     df_links['target_lead'] = df_links['target_title'].apply(
         lambda x: page_leads[x])
@@ -144,12 +145,15 @@ if __name__ == '__main__':
     print('Processing all contexts')
     all_contexts = []
     all_sections = []
+    all_current_links = []
     for link in tqdm(df_links):
         all_contexts.append(link['context'])
         all_sections.append(link['section'])
+        all_current_links.append(literal_eval(link['current_links']))
         for negative_context in literal_eval(link['negative_contexts']):
             all_contexts.append(negative_context['context'])
             all_sections.append(negative_context['section'])
+            all_current_links.append(negative_context['current_links'])
 
     print('Generating positive and negative samples')
     random.shuffle(df_links)
@@ -159,13 +163,22 @@ if __name__ == '__main__':
         link = df_links.pop()
         if link['target_title'] not in page_leads:
             continue
+        current_links = literal_eval(link['current_links'])
+        processed_current_links = {}
+        for current_link in current_links:
+            title = unencode_title(current_link)
+            if title not in page_leads:
+                continue
+            processed_current_links[title] = {'target_title': title,
+                                              'target_lead': page_leads[title]}
         train_links.append({'source_title': link['source_title'],
                             'target_title': link['target_title'],
                             'source_lead': link['source_lead'],
                             'target_lead': page_leads[link['target_title']],
                             'link_context': link['context'],
                             'source_section': link['section'],
-                            'missing_category': link['missing_category'] if link['missing_category'] is not None else 'present'})
+                            'missing_category': link['missing_category'] if link['missing_category'] is not None else 'present',
+                            'current_links': str(processed_current_links)})
         negative_contexts = literal_eval(link['negative_contexts'])
         if len(negative_contexts) > args.neg_samples_train:
             negative_contexts = random.sample(
@@ -173,15 +186,36 @@ if __name__ == '__main__':
             for i, negative_context in enumerate(negative_contexts):
                 train_links[-1][f'source_section_neg_{i}'] = negative_context['section']
                 train_links[-1][f'link_context_neg_{i}'] = negative_context['context']
+                current_links = negative_context['current_links']
+                processed_current_links = {}
+                for current_link in current_links:
+                    title = unencode_title(current_link)
+                    if title not in page_leads:
+                        continue
+                    processed_current_links[title] = {'target_title': title,
+                                                      'target_lead': page_leads[title]}
+                train_links[-1][f'current_links_neg_{i}'] = str(
+                    processed_current_links)
         else:
             for i, negative_context in enumerate(negative_contexts):
                 train_links[-1][f'source_section_neg_{i}'] = negative_context['section']
                 train_links[-1][f'link_context_neg_{i}'] = negative_context['context']
+                current_links = negative_context['current_links']
+                processed_current_links = {}
+                for current_link in current_links:
+                    title = unencode_title(current_link)
+                    if title not in page_leads:
+                        continue
+                    processed_current_links[title] = {'target_title': title,
+                                                      'target_lead': page_leads[title]}
+                train_links[-1][f'current_links_neg_{i}'] = str(
+                    processed_current_links)
             counter = len(negative_contexts)
             while f'source_section_neg_{args.neg_samples_train - 1}' not in train_links[-1]:
                 index = random.randint(0, len(all_contexts) - 1)
                 neg_context = all_contexts[index]
                 neg_section = all_sections[index]
+                neg_current_links = all_current_links[index]
                 if link['target_title'] not in entity_map:
                     entity_map[link['target_title']] = set(
                         [link['target_title']])
@@ -190,18 +224,36 @@ if __name__ == '__main__':
                         continue
                 train_links[-1][f'source_section_neg_{counter}'] = neg_section
                 train_links[-1][f'link_context_neg_{counter}'] = neg_context
+                processed_neg_current_links = {}
+                for neg_current_link in neg_current_links:
+                    title = unencode_title(neg_current_link)
+                    if title not in page_leads:
+                        continue
+                    processed_neg_current_links[title] = {'target_title': title,
+                                                          'target_lead': page_leads[title]}
+                train_links[-1][f'current_links_neg_{counter}'] = str(
+                    processed_neg_current_links)
                 counter += 1
     while len(val_links) < args.max_val_samples / (1 + args.neg_samples_val) and len(df_links) != 0:
         link = df_links.pop()
         if link['target_title'] not in page_leads:
             continue
+        current_links = literal_eval(link['current_links'])
+        processed_current_links = {}
+        for current_link in current_links:
+            title = unencode_title(current_link)
+            if title not in page_leads:
+                continue
+            processed_current_links[title] = {'target_title': title,
+                                              'target_lead': page_leads[title]}
         val_links.append({'source_title': link['source_title'],
                           'target_title': link['target_title'],
                           'source_lead': link['source_lead'],
                           'target_lead': page_leads[link['target_title']],
                           'link_context': link['context'],
                           'source_section': link['section'],
-                          'missing_category': link['missing_category'] if link['missing_category'] is not None else 'present'})
+                          'missing_category': link['missing_category'] if link['missing_category'] is not None else 'present',
+                          'current_links': str(processed_current_links)})
         negative_contexts = literal_eval(link['negative_contexts'])
         if len(negative_contexts) > args.neg_samples_val:
             negative_contexts = random.sample(
@@ -209,15 +261,36 @@ if __name__ == '__main__':
             for i, negative_context in enumerate(negative_contexts):
                 val_links[-1][f'source_section_neg_{i}'] = negative_context['section']
                 val_links[-1][f'link_context_neg_{i}'] = negative_context['context']
+                current_links = negative_context['current_links']
+                processed_current_links = {}
+                for current_link in current_links:
+                    title = unencode_title(current_link)
+                    if title not in page_leads:
+                        continue
+                    processed_current_links[title] = {'target_title': title,
+                                                      'target_lead': page_leads[title]}
+                val_links[-1][f'current_links_neg_{i}'] = str(
+                    processed_current_links)
         else:
             for i, negative_context in enumerate(negative_contexts):
                 val_links[-1][f'source_section_neg_{i}'] = negative_context['section']
                 val_links[-1][f'link_context_neg_{i}'] = negative_context['context']
+                current_links = negative_context['current_links']
+                processed_current_links = {}
+                for current_link in current_links:
+                    title = unencode_title(current_link)
+                    if title not in page_leads:
+                        continue
+                    processed_current_links[title] = {'target_title': title,
+                                                      'target_lead': page_leads[title]}
+                val_links[-1][f'current_links_neg_{i}'] = str(
+                    processed_current_links)
             counter = len(negative_contexts)
             while f'source_section_neg_{args.neg_samples_val - 1}' not in val_links[-1]:
                 index = random.randint(0, len(all_contexts) - 1)
                 neg_context = all_contexts[index]
                 neg_section = all_sections[index]
+                neg_current_links = all_current_links[index]
                 if link['target_title'] not in entity_map:
                     entity_map[link['target_title']] = set(
                         [link['target_title']])
@@ -226,6 +299,15 @@ if __name__ == '__main__':
                         continue
                 val_links[-1][f'source_section_neg_{counter}'] = neg_section
                 val_links[-1][f'link_context_neg_{counter}'] = neg_context
+                processed_neg_current_links = {}
+                for neg_current_link in neg_current_links:
+                    title = unencode_title(neg_current_link)
+                    if title not in page_leads:
+                        continue
+                    processed_neg_current_links[title] = {'target_title': title,
+                                                          'target_lead': page_leads[title]}
+                val_links[-1][f'current_links_neg_{counter}'] = str(
+                    processed_neg_current_links)
                 counter += 1
 
     print('Saving data')

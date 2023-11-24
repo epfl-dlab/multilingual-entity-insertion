@@ -245,13 +245,13 @@ if __name__ == '__main__':
         mod_link['context'] = re.sub('\n+', '\n', mod_link['context'])
         mod_link['context'] = mod_link['context'].strip()
         mod_link['noise_strategy'] = 'mask_span'
-        context_links = literal_eval(mod_link['context_links'])
+        current_links = literal_eval(mod_link['current_links'])
         clean_contexts_links = {}
-        for target in context_links:
-            if context_links[target]['region'] in ['sentence', 'span']:
+        for target in current_links:
+            if current_links[target]['region'] in ['sentence', 'span']:
                 continue
-            clean_contexts_links[target] = context_links[target]
-        mod_link['context_links'] = str(clean_contexts_links)
+            clean_contexts_links[target] = current_links[target]
+        mod_link['current_links'] = str(clean_contexts_links)
         final_links.append(mod_link)
 
     mask_sentence_links.extend(mask_paragraph_links[int(
@@ -273,13 +273,13 @@ if __name__ == '__main__':
         mod_link['context'] = re.sub('\n ', '\n', mod_link['context'])
         mod_link['context'] = mod_link['context'].strip()
         mod_link['noise_strategy'] = 'mask_sentence'
-        context_links = literal_eval(mod_link['context_links'])
+        current_links = literal_eval(mod_link['current_links'])
         clean_contexts_links = {}
-        for target in context_links:
-            if context_links[target]['region'] in ['sentence']:
+        for target in current_links:
+            if current_links[target]['region'] in ['sentence']:
                 continue
-            clean_contexts_links[target] = context_links[target]
-        mod_link['context_links'] = str(clean_contexts_links)
+            clean_contexts_links[target] = current_links[target]
+        mod_link['current_links'] = str(clean_contexts_links)
         final_links.append(mod_link)
 
     mask_mention_links.extend(mask_sentence_links[int(
