@@ -10,6 +10,7 @@ import re
 import urllib
 from collections import Counter
 import json
+from multiprocessing import Pool, cpu_count
 
 class DownloadProgressBar(tqdm):
     def update_to(self, b=1, bsize=1, tsize=None):
@@ -73,6 +74,7 @@ if __name__ == '__main__':
                         help='date of the first wikipedia dump in the format YYYYMMDD')
     parser.add_argument('--second_date', type=str, required=True,
                         help='date of the second wikipedia dump in the format YYYYMMDD')
+    parser.add_argument('--download_processes', type=int, default=1, help='Number of processes to use for downloading the revision history files if they are not already downloaded.')
 
     args = parser.parse_args()
     # check if input directories exist
@@ -259,14 +261,18 @@ if __name__ == '__main__':
                     break
         files = [os.path.join(args.raw_data_dir, file) for file in files]
         print(f"Downloading {len(files)} revision history files")
-        for file in files:
-            if not os.path.exists(file):
-                print(f"Downloading {file} from {url}")
-                try:
-                    download_url(url, file)
-                except urllib.error.HTTPError:
-                    print(f'Could not download {url}.')
-                    print(f'Check if the url is still available at https://dumps.wikimedia.org/.')
+        # download in parallel
+        with Pool(min(args.download_processes, cpu_count())) as p:
+            p.starmap(download_url, [(file['url'], file['file_name']) for file in ranges])
+
+        # for file in files:
+        #     if not os.path.exists(file):
+        #         print(f"Downloading {file} from {url}")
+        #         try:
+        #             download_url(url, file)
+        #         except urllib.error.HTTPError:
+        #             print(f'Could not download {url}.')
+        #             print(f'Check if the url is still available at https://dumps.wikimedia.org/.')
             
         
     print("Finding links in revision history file(s)")
