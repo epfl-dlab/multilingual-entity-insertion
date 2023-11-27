@@ -14,6 +14,7 @@ from bs4 import (BeautifulSoup, MarkupResemblesLocatorWarning,
                  NavigableString)
 from tqdm import tqdm
 import random
+import gc
 
 warnings.filterwarnings("ignore", category=MarkupResemblesLocatorWarning)
 
@@ -752,7 +753,6 @@ if __name__ == '__main__':
     files.sort()
 
     mention_map = set([])
-    pool = Pool(min(cpu_count(), args.processes), initializer=initializer)
     for i, file in (pbar := tqdm(enumerate(files), total=len(files))):
         df = pd.read_parquet(file)
         list_data = []
@@ -761,6 +761,7 @@ if __name__ == '__main__':
         links = []
         sections = []
 
+        pool = Pool(min(cpu_count(), args.processes), initializer=initializer)
         for j, (page_links, section_text) in enumerate(pool.imap(extract_links, list_data)):
             if j % 1000 == 0:
                 pbar.set_description(
@@ -783,9 +784,12 @@ if __name__ == '__main__':
 
         df_sections = pd.DataFrame(sections)
         df_sections.to_parquet(f"{args.output_dir}/sections_{i}.parquet")
-
-    pool.close()
-    pool.join()
+        
+        del df_links
+        del df_sections
+        gc.collect()
+        pool.close()
+        pool.join()
 
     mention_map = [{'mention': mention.split('<sep>')[0], 'target_title': mention.split(
         '<sep>')[1]} for mention in mention_map]
