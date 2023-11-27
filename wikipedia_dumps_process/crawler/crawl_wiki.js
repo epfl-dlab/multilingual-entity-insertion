@@ -104,6 +104,7 @@ async function main(){
         const errorIds = [];
         var flog = fs.createWriteStream(path.resolve(directory,'log.txt'));
         var ferr = fs.createWriteStream(path.resolve(directory,'errors.txt'));
+        var count = 0;
         const { results, errors } = await PromisePool  
             .for(preparedUrls)
             .withConcurrency(numThreads)
@@ -119,6 +120,10 @@ async function main(){
                 });
                 fs.writeFile(path.resolve(directory,`${pageId}_${revId}.html`), html, () => { });
                 //await new Promise(resolve => setTimeout(resolve, (100)));
+                count++;
+                if (count % 1000 == 0) {
+                    console.log(`${count} articles crawled`);
+                }
             })
         ferr.end();
         flog.end();
