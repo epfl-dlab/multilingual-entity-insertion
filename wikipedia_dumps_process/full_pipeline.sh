@@ -2,12 +2,20 @@ start=`date +%s`
 
 # use getopt to parse long arguments
 
-VALID_ARGS=$(getopt --long first_month:,second_month:,third_month:,lang:,data_dir:,processes:,no_mask_perc:,mask_mention_perc:,mask_sentence_perc:,mask_paragraph_perc:,download_processes:,neg_samples_train:,neg_samples_val:,max_train_samples,:max_val_samples: -- "$@")
-if [[ $? -ne 0 ]]; then
-    exit 1;
-fi
+# VALID_ARGS=$(getopt --long first_month:,second_month:,third_month:,lang:,data_dir:,processes:,no_mask_perc:,mask_mention_perc:,mask_sentence_perc:,mask_paragraph_perc:,download_processes:,neg_samples_train:,neg_samples_val:,max_train_samples:,max_val_samples: -- "$@")
+# if [[ $? -ne 0 ]]; then
+#     exit 1;
+# fi
 
-eval set -- "$VALID_ARGS"
+# eval set -- "$VALID_ARGS"
+
+# set default values
+processes=15
+no_mask_perc=0.4
+mask_mention_perc=0.2
+mask_sentence_perc=0.3
+mask_paragraph_perc=0.1
+download_processes=5
 while [ : ]; do
     case "$1" in
         --first_month) first_month=$2; shift 2;;
@@ -26,6 +34,7 @@ while [ : ]; do
         --max_train_samples) max_train_samples=$2; shift 2;;
         --max_val_samples) max_val_samples=$2; shift 2;;
         --) shift; break;;
+        *) break;;
     esac
 done
 
