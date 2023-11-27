@@ -41,18 +41,28 @@ if __name__ == '__main__':
     page_files = glob(os.path.join(args.input_dir, "pages*.parquet"))
     link_files = glob(os.path.join(args.input_dir, "links*.parquet"))
 
-    print('Loading data')
-    dfs = []
-    for file in tqdm(page_files):
-        temp_df = pd.read_parquet(file)
-        temp_df['HTML'] = temp_df['HTML'].apply(
-            lambda x: simplify_html(x))  # simpify html so it is not too big
-        dfs.append(temp_df)
-    df_pages = pd.concat(dfs).reset_index(drop=True)
+    # print('Loading data')
+    # dfs = []
+    # for file in tqdm(page_files):
+    #     temp_df = pd.read_parquet(file)
+    #     temp_df['HTML'] = temp_df['HTML'].apply(
+    #         lambda x: simplify_html(x))  # simpify html so it is not too big
+    #     dfs.append(temp_df)
+    # df_pages = pd.concat(dfs).reset_index(drop=True)
 
+
+    no_html = set([])
+    no_lead = set([])
+    short_lead = set([])
     print('Saving good pages')
     for file in tqdm(page_files):
         df = pd.read_parquet(file)
+        no_html = no_html.union(set(df[(df['HTML'].isna()) | (
+            df['HTML'] == '')]['title'].tolist()))
+        no_lead = no_lead.union(set(df[(df['lead_paragraph'].isna()) | (
+            df['lead_paragraph'] == '')]['title'].tolist()))
+        short_lead = short_lead.union(set(df[(df['lead_paragraph'].apply(
+            lambda x: split_text(x) < 6))]['title'].tolist()))
         df = df[(~df['QID'].isna()) & (~df['HTML'].isna()) & (~df['lead_paragraph'].isna()) & (df['HTML'] != '') & (
             df['lead_paragraph'] != '') & (df['lead_paragraph'].apply(lambda x: split_text(x) >= 6))]
         df = df.reset_index(drop=True)
@@ -61,13 +71,13 @@ if __name__ == '__main__':
         df.to_parquet(os.path.join(args.output_dir,
                       basename.replace('pages', 'good_pages')))
 
-    print('Building auxiliary data structures')
-    no_html = set(df_pages[(df_pages['HTML'].isna()) | (
-        df_pages['HTML'] == '')]['title'].tolist())
-    no_lead = set(df_pages[(df_pages['lead_paragraph'].isna()) | (
-        df_pages['lead_paragraph'] == '')]['title'].tolist())
-    short_lead = set(df_pages[(df_pages['lead_paragraph'].apply(
-        lambda x: split_text(x) < 6))]['title'].tolist())
+    # print('Building auxiliary data structures')
+    # no_html = set(df_pages[(df_pages['HTML'].isna()) | (
+    #     df_pages['HTML'] == '')]['title'].tolist())
+    # no_lead = set(df_pages[(df_pages['lead_paragraph'].isna()) | (
+    #     df_pages['lead_paragraph'] == '')]['title'].tolist())
+    # short_lead = set(df_pages[(df_pages['lead_paragraph'].apply(
+    #     lambda x: split_text(x) < 6))]['title'].tolist())
 
     print('Saving good links')
     for file in tqdm(link_files):
