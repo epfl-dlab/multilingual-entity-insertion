@@ -159,6 +159,8 @@ if __name__ == '__main__':
                         help='If set, use the links already in the context as an additional signal')
     parser.add_argument('--current_links_mode', type=str, choices=[
                         'sum', 'average', 'weighted_sum', 'weighted_average'], default='weighted_sum', help='How to aggregate the current links')
+    parser.add_argument('--n_links', type=int, default=10,
+                        help='Number of current links to use')
     parser.set_defaults(resume=False, insert_section=False, mask_negatives=False,
                         split_models=False, two_stage=False, use_current_links=False)
 
@@ -325,13 +327,13 @@ if __name__ == '__main__':
                 link_fuser = Sequential(nn.Linear(model.config.hidden_size * 2, model.config.hidden_size),
                                         nn.ReLU(),
                                         nn.Linear(model.config.hidden_size, model.config.hidden_size))
-    
+
     if args.split_models:
         model_contexts_size = model_contexts.config.hidden_size
         model_articles_size = model_articles.config.hidden_size
     else:
         model_contexts_size = model.config.hidden_size
-        model_articles_size = model.config.hidden_size 
+        model_articles_size = model.config.hidden_size
 
     tokenizer = AutoTokenizer.from_pretrained(args.model_name)
     tokenizer.save_pretrained(os.path.join(output_dir, 'tokenizer'))
@@ -418,7 +420,7 @@ if __name__ == '__main__':
                         elif noise_type == 'mask_span' and current_links[link]['region'] == 'global':
                             temp.append(
                                 f"{current_links[link]['target_title']}{tokenizer.sep_token}{current_links[link]['target_lead']}")
-                        if len(temp) == 10:
+                        if len(temp) == args.n_links:
                             break
                     if temp:
                         output[f'current_links_{index}'] = temp
@@ -476,7 +478,7 @@ if __name__ == '__main__':
                         for link in titles:
                             temp.append(
                                 f"{current_links_neg[link]['target_title']}{tokenizer.sep_token}{current_links_neg[link]['target_lead']}")
-                            if len(temp) == 10:
+                            if len(temp) == args.n_links:
                                 break
                         if temp:
                             output[f'current_links_{index}_neg_{i}'] = temp
@@ -524,7 +526,7 @@ if __name__ == '__main__':
                     for link in titles:
                         temp.append(
                             f"{current_links[link]['target_title']}{tokenizer.sep_token}{current_links[link]['target_lead']}")
-                        if len(temp) == 10:
+                        if len(temp) == args.n_links:
                             break
                     if temp:
                         output[f'current_links_{index}'] = temp
@@ -549,7 +551,7 @@ if __name__ == '__main__':
                         for link in titles:
                             temp.append(
                                 f"{current_links_neg[link]['target_title']}{tokenizer.sep_token}{current_links_neg[link]['target_lead']}")
-                            if len(temp) == 10:
+                            if len(temp) == args.n_links:
                                 break
                         if temp:
                             output[f'current_links_{index}_neg_{i}'] = temp
@@ -608,7 +610,7 @@ if __name__ == '__main__':
             mention_map[target_title].append(mention['mention'])
         else:
             mention_map[target_title] = [mention['mention']]
-    
+
     for mention in mention_map:
         # only keep a random subset of 10 mentions
         if len(mention_map[mention]) > 10:
@@ -747,7 +749,8 @@ if __name__ == '__main__':
                         output_context_neg_text = model_contexts(
                             **data[f"contexts_neg_{i}"])["last_hidden_state"][:, 0, :]
                     else:
-                        output_context_neg_text = model(**data[f"contexts_neg_{i}"])["last_hidden_state"][:, 0, :]
+                        output_context_neg_text = model(
+                            **data[f"contexts_neg_{i}"])["last_hidden_state"][:, 0, :]
                     for index in range(len(data[f'contexts_neg_{i}']['input_ids'])):
                         if f'current_links_{index}_neg_{i}' not in data:
                             # represent the lack of lists as a zero tensor
@@ -795,7 +798,8 @@ if __name__ == '__main__':
                         output_context_neg = model_contexts(
                             **data[f"contexts_neg_{i}"])["last_hidden_state"][:, 0, :]
                     else:
-                        output_context_neg = model(**data[f"contexts_neg_{i}"])["last_hidden_state"][:, 0, :]
+                        output_context_neg = model(
+                            **data[f"contexts_neg_{i}"])["last_hidden_state"][:, 0, :]
                 embeddings_neg = [output_source,
                                   output_context_neg,
                                   output_target]
@@ -893,9 +897,11 @@ if __name__ == '__main__':
                             output_target = model_articles(
                                 **val_data['targets'])['last_hidden_state'][:, 0, :]
                         else:
-                            output_source = model(**val_data['sources'])['last_hidden_state'][:, 0, :]
-                            output_target = model(**val_data['targets'])['last_hidden_state'][:, 0, :]
-                        
+                            output_source = model(
+                                **val_data['sources'])['last_hidden_state'][:, 0, :]
+                            output_target = model(
+                                **val_data['targets'])['last_hidden_state'][:, 0, :]
+
                         if args.use_current_links:
                             if args.split_models:
                                 output_context_pos_text = model_contexts(
@@ -953,7 +959,7 @@ if __name__ == '__main__':
                             else:
                                 output_context_pos = model(
                                     **val_data['contexts'])['last_hidden_state'][:, 0, :]
-                        
+
                         val_embeddings = [output_source,
                                           output_context_pos,
                                           output_target]
@@ -1064,32 +1070,23 @@ if __name__ == '__main__':
                             val_logits, dim=1, descending=True)
                         labels = torch.gather(labels, dim=1, index=indices)
                         # calculate mrr
-                        mrr_at_k['1'] += torch.sum(
-                            1 / (torch.nonzero(labels[:, :1])[:, 1].float() + 1)).item()
-                        mrr_at_k['5'] += torch.sum(
-                            1 / (torch.nonzero(labels[:, :5])[:, 1].float() + 1)).item()
-                        mrr_at_k['10'] += torch.sum(
-                            1 / (torch.nonzero(labels[:, :10])[:, 1].float() + 1)).item()
+                        for k in [1, 5, 10]:
+                            mrr_at_k[str(k)] += torch.sum(
+                                1 / (torch.nonzero(labels[:, :k])[:, 1].float() + 1)).item()
                         mrr_at_k['max'] += torch.sum(
                             1 / (torch.nonzero(labels)[:, 1].float() + 1)).item()
 
                         # calculate hits@k
-                        hits_at_k['1'] += torch.sum(
-                            torch.sum(labels[:, :1], dim=1)).item()
-                        hits_at_k['5'] += torch.sum(
-                            torch.sum(labels[:, :5], dim=1)).item()
-                        hits_at_k['10'] += torch.sum(
-                            torch.sum(labels[:, :10], dim=1)).item()
+                        for k in [1, 5, 10]:
+                            hits_at_k[str(k)] += torch.sum(
+                                torch.sum(labels[:, :k], dim=1)).item()
                         hits_at_k['max'] += torch.sum(
                             torch.sum(labels, dim=1)).item()
 
                         # calculate ndcg@k
-                        ndcg_at_k['1'] += torch.sum(
-                            torch.sum(labels[:, :1] / torch.log2(torch.arange(2, 3).float()), dim=1)).item()
-                        ndcg_at_k['5'] += torch.sum(
-                            torch.sum(labels[:, :5] / torch.log2(torch.arange(2, 7).float()), dim=1)).item()
-                        ndcg_at_k['10'] += torch.sum(
-                            torch.sum(labels[:, :10] / torch.log2(torch.arange(2, 12).float()), dim=1)).item()
+                        for k in [1, 5, 10]:
+                            ndcg_at_k[str(k)] += torch.sum(
+                                torch.sum(labels[:, :k] / torch.log2(torch.arange(2, k + 2).float()), dim=1)).item()
                         ndcg_at_k['max'] += torch.sum(
                             torch.sum(labels / torch.log2(torch.arange(2, labels.shape[1] + 2).float()), dim=1)).item()
 
@@ -1098,30 +1095,21 @@ if __name__ == '__main__':
                             noise_part = noise == i
                             labels_part = labels[noise_part]
 
-                            noise_perf[i]['mrr']['1'] += torch.sum(
-                                1 / (torch.nonzero(labels_part[:, :1])[:, 1].float() + 1)).item()
-                            noise_perf[i]['mrr']['5'] += torch.sum(
-                                1 / (torch.nonzero(labels_part[:, :5])[:, 1].float() + 1)).item()
-                            noise_perf[i]['mrr']['10'] += torch.sum(
-                                1 / (torch.nonzero(labels_part[:, :10])[:, 1].float() + 1)).item()
+                            for k in [1, 5, 10]:
+                                noise_perf[i]['mrr'][str(k)] += torch.sum(
+                                    1 / (torch.nonzero(labels_part[:, :k])[:, 1].float() + 1)).item()
                             noise_perf[i]['mrr']['max'] += torch.sum(
                                 1 / (torch.nonzero(labels_part)[:, 1].float() + 1)).item()
 
-                            noise_perf[i]['hits']['1'] += torch.sum(
-                                torch.sum(labels_part[:, :1], dim=1)).item()
-                            noise_perf[i]['hits']['5'] += torch.sum(
-                                torch.sum(labels_part[:, :5], dim=1)).item()
-                            noise_perf[i]['hits']['10'] += torch.sum(
-                                torch.sum(labels_part[:, :10], dim=1)).item()
+                            for k in [1, 5, 10]:
+                                noise_perf[i]['hits'][str(k)] += torch.sum(
+                                    torch.sum(labels_part[:, :k], dim=1)).item()
                             noise_perf[i]['hits']['max'] += torch.sum(
                                 torch.sum(labels_part, dim=1)).item()
 
-                            noise_perf[i]['ndcg']['1'] += torch.sum(
-                                torch.sum(labels_part[:, :1] / torch.log2(torch.arange(2, 3).float()), dim=1)).item()
-                            noise_perf[i]['ndcg']['5'] += torch.sum(
-                                torch.sum(labels_part[:, :5] / torch.log2(torch.arange(2, 7).float()), dim=1)).item()
-                            noise_perf[i]['ndcg']['10'] += torch.sum(
-                                torch.sum(labels_part[:, :10] / torch.log2(torch.arange(2, 12).float()), dim=1)).item()
+                            for k in [1, 5, 10]:
+                                noise_perf[i]['ndcg'][str(k)] += torch.sum(
+                                    torch.sum(labels_part[:, :k] / torch.log2(torch.arange(2, k + 2).float()), dim=1)).item()
                             noise_perf[i]['ndcg']['max'] += torch.sum(
                                 torch.sum(labels_part / torch.log2(torch.arange(2, labels_part.shape[1] + 2).float()), dim=1)).item()
 
@@ -1167,45 +1155,20 @@ if __name__ == '__main__':
                                 k: v / noise_perf[i]['n_lists'] for k, v in noise_perf[i]['ndcg'].items()}
                     running_val_loss /= len(val_loader)
 
-                    logger.info(f"MRR@1: {mrr_at_k['1']}")
-                    logger.info(f"MRR@5: {mrr_at_k['5']}")
-                    logger.info(f"MRR@10: {mrr_at_k['10']}")
-                    logger.info(f"MRR@max: {mrr_at_k['max']}")
-                    logger.info(f"Hits@1: {hits_at_k['1']}")
-                    logger.info(f"Hits@5: {hits_at_k['5']}")
-                    logger.info(f"Hits@10: {hits_at_k['10']}")
-                    logger.info(f"Hits@max: {hits_at_k['max']}")
-                    logger.info(f"NDCG@1: {ndcg_at_k['1']}")
-                    logger.info(f"NDCG@5: {ndcg_at_k['5']}")
-                    logger.info(f"NDCG@10: {ndcg_at_k['10']}")
-                    logger.info(f"NDCG@max: {ndcg_at_k['max']}")
+                    for k in ['1', '5', '10', 'max']:
+                        logger.info(f"MRR@{k}: {mrr_at_k[k]}")
+                        logger.info(f"Hits@{k}: {hits_at_k[k]}")
+                        logger.info(f"NDCG@{k}: {ndcg_at_k[k]}")
                     for i in range(len(noise_map)):
                         if noise_perf[i]['n_lists'] > 0:
                             logger.info(f"Noise strategy {noise_map_rev[i]}:")
-                            logger.info(
-                                f"\t- MRR@1: {noise_perf[i]['mrr']['1']}")
-                            logger.info(
-                                f"\t- MRR@5: {noise_perf[i]['mrr']['5']}")
-                            logger.info(
-                                f"\t- MRR@10: {noise_perf[i]['mrr']['10']}")
-                            logger.info(
-                                f"\t- MRR@max: {noise_perf[i]['mrr']['max']}")
-                            logger.info(
-                                f"\t- Hits@1: {noise_perf[i]['hits']['1']}")
-                            logger.info(
-                                f"\t- Hits@5: {noise_perf[i]['hits']['5']}")
-                            logger.info(
-                                f"\t- Hits@10: {noise_perf[i]['hits']['10']}")
-                            logger.info(
-                                f"\t- Hits@max: {noise_perf[i]['hits']['max']}")
-                            logger.info(
-                                f"\t- NDCG@1: {noise_perf[i]['ndcg']['1']}")
-                            logger.info(
-                                f"\t- NDCG@5: {noise_perf[i]['ndcg']['5']}")
-                            logger.info(
-                                f"\t- NDCG@10: {noise_perf[i]['ndcg']['10']}")
-                            logger.info(
-                                f"\t- NDCG@max: {noise_perf[i]['ndcg']['max']}")
+                            for k in ['1', '5', '10', 'max']:
+                                logger.info(
+                                    f"\t- MRR@{k}: {noise_perf[i]['mrr'][k]}")
+                                logger.info(
+                                    f"\t- Hits@{k}: {noise_perf[i]['hits'][k]}")
+                                logger.info(
+                                    f"\t- NDCG@{k}: {noise_perf[i]['ndcg'][k]}")
                     logger.info(f"Accuracy: {accuracy}")
                     logger.info(f"Precision: {precision}")
                     logger.info(f"Recall: {recall}")
@@ -1213,20 +1176,13 @@ if __name__ == '__main__':
                     logger.info(f"Validation loss: {running_val_loss}")
 
                     if accelerator.is_main_process:
-                        writer.add_scalar('val/mrr@1', mrr_at_k['1'], step)
-                        writer.add_scalar('val/mrr@5', mrr_at_k['5'], step)
-                        writer.add_scalar('val/mrr@10', mrr_at_k['10'], step)
-                        writer.add_scalar('val/mrr@max', mrr_at_k['max'], step)
-                        writer.add_scalar('val/hits@1', hits_at_k['1'], step)
-                        writer.add_scalar('val/hits@5', hits_at_k['5'], step)
-                        writer.add_scalar('val/hits@10', hits_at_k['10'], step)
-                        writer.add_scalar(
-                            'val/hits@max', hits_at_k['max'], step)
-                        writer.add_scalar('val/ndcg@1', ndcg_at_k['1'], step)
-                        writer.add_scalar('val/ndcg@5', ndcg_at_k['5'], step)
-                        writer.add_scalar('val/ndcg@10', ndcg_at_k['10'], step)
-                        writer.add_scalar(
-                            'val/ndcg@max', ndcg_at_k['max'], step)
+                        for k in ['1', '5', '10', 'max']:
+                            writer.add_scalar(
+                                f'val/mrr@{k}', mrr_at_k[k], step)
+                            writer.add_scalar(
+                                f'val/hits@{k}', hits_at_k[k], step)
+                            writer.add_scalar(
+                                f'val/ndcg@{k}', ndcg_at_k[k], step)
                         writer.add_scalar('val/accuracy', accuracy, step)
                         writer.add_scalar('val/precision', precision, step)
                         writer.add_scalar('val/recall', recall, step)
@@ -1234,30 +1190,13 @@ if __name__ == '__main__':
                         writer.add_scalar('val/loss', running_val_loss, step)
                         for i in range(len(noise_map)):
                             if noise_perf[i]['n_lists'] > 0:
-                                writer.add_scalar(
-                                    f'val_noise/{noise_map_rev[i]}_mrr@1', noise_perf[i]['mrr']['1'], step)
-                                writer.add_scalar(
-                                    f'val_noise/{noise_map_rev[i]}_mrr@5', noise_perf[i]['mrr']['5'], step)
-                                writer.add_scalar(
-                                    f'val_noise/{noise_map_rev[i]}_mrr@10', noise_perf[i]['mrr']['10'], step)
-                                writer.add_scalar(
-                                    f'val_noise/{noise_map_rev[i]}_mrr@max', noise_perf[i]['mrr']['max'], step)
-                                writer.add_scalar(
-                                    f'val_noise/{noise_map_rev[i]}_hits@1', noise_perf[i]['hits']['1'], step)
-                                writer.add_scalar(
-                                    f'val_noise/{noise_map_rev[i]}_hits@5', noise_perf[i]['hits']['5'], step)
-                                writer.add_scalar(
-                                    f'val_noise/{noise_map_rev[i]}_hits@10', noise_perf[i]['hits']['10'], step)
-                                writer.add_scalar(
-                                    f'val_noise/{noise_map_rev[i]}_hits@max', noise_perf[i]['hits']['max'], step)
-                                writer.add_scalar(
-                                    f'val_noise/{noise_map_rev[i]}_ndcg@1', noise_perf[i]['ndcg']['1'], step)
-                                writer.add_scalar(
-                                    f'val_noise/{noise_map_rev[i]}_ndcg@5', noise_perf[i]['ndcg']['5'], step)
-                                writer.add_scalar(
-                                    f'val_noise/{noise_map_rev[i]}_ndcg@10', noise_perf[i]['ndcg']['10'], step)
-                                writer.add_scalar(
-                                    f'val_noise/{noise_map_rev[i]}_ndcg@max', noise_perf[i]['ndcg']['max'], step)
+                                for k in ['1', '5', '10', 'max']:
+                                    writer.add_scalar(
+                                        f'val_noise/{noise_map_rev[i]}_mrr@{k}', noise_perf[i]['mrr'][k], step)
+                                    writer.add_scalar(
+                                        f'val_noise/{noise_map_rev[i]}_hits@{k}', noise_perf[i]['hits'][k], step)
+                                    writer.add_scalar(
+                                        f'val_noise/{noise_map_rev[i]}_ndcg@{k}', noise_perf[i]['ndcg'][k], step)
 
                 if args.split_models:
                     model_articles.train()
@@ -1345,7 +1284,7 @@ if __name__ == '__main__':
                     for link in titles:
                         temp.append(
                             f"{current_links[link]['target_title']}{tokenizer.sep_token}{current_links[link]['target_lead']}")
-                        if len(temp) == 10:
+                        if len(temp) == args.n_links:
                             break
                     if temp:
                         output[f'current_links_{index}'] = temp
@@ -1382,7 +1321,7 @@ if __name__ == '__main__':
                         for link in titles:
                             temp.append(
                                 f"{current_links_neg[link]['target_title']}{tokenizer.sep_token}{current_links_neg[link]['target_lead']}")
-                            if len(temp) == 10:
+                            if len(temp) == args.n_links:
                                 break
                         if temp:
                             output[f'current_links_{index}_neg_{i}'] = temp
@@ -1413,7 +1352,7 @@ if __name__ == '__main__':
                     for link in titles:
                         temp.append(
                             f"{current_links[link]['target_title']}{tokenizer.sep_token}{current_links[link]['target_lead']}")
-                        if len(temp) == 10:
+                        if len(temp) == args.n_links:
                             break
                     if temp:
                         output[f'current_links_{index}'] = temp
@@ -1450,7 +1389,7 @@ if __name__ == '__main__':
                         for link in titles:
                             temp.append(
                                 f"{current_links_neg[link]['target_title']}{tokenizer.sep_token}{current_links_neg[link]['target_lead']}")
-                            if len(temp) == 10:
+                            if len(temp) == args.n_links:
                                 break
                         if temp:
                             output[f'current_links_{index}_neg_{i}'] = temp
@@ -1518,12 +1457,16 @@ if __name__ == '__main__':
             # multiple forward passes accumulate gradients
             # source: https://discuss.pytorch.org/t/multiple-model-forward-followed-by-one-loss-backward/20868
             if args.split_models:
-                output_source = model_articles(**data['sources'])['last_hidden_state'][:, 0, :]
-                output_target = model_articles(**data['targets'])['last_hidden_state'][:, 0, :]
+                output_source = model_articles(
+                    **data['sources'])['last_hidden_state'][:, 0, :]
+                output_target = model_articles(
+                    **data['targets'])['last_hidden_state'][:, 0, :]
             else:
-                output_source = model(**data['sources'])['last_hidden_state'][:, 0, :]
-                output_target = model(**data['targets'])['last_hidden_state'][:, 0, :]
-                
+                output_source = model(
+                    **data['sources'])['last_hidden_state'][:, 0, :]
+                output_target = model(
+                    **data['targets'])['last_hidden_state'][:, 0, :]
+
             if args.use_current_links:
                 if args.split_models:
                     output_context_pos_text = model_contexts(
@@ -1581,7 +1524,7 @@ if __name__ == '__main__':
                 else:
                     output_context_pos = model(
                         **data['contexts'])['last_hidden_state'][:, 0, :]
-                
+
             embeddings_pos = [output_source,
                               output_context_pos,
                               output_target]
@@ -1596,7 +1539,8 @@ if __name__ == '__main__':
                         output_context_neg_text = model_contexts(
                             **data[f"contexts_neg_{i}"])["last_hidden_state"][:, 0, :]
                     else:
-                        output_context_neg_text = model(**data[f"contexts_neg_{i}"])["last_hidden_state"][:, 0, :]
+                        output_context_neg_text = model(
+                            **data[f"contexts_neg_{i}"])["last_hidden_state"][:, 0, :]
                     current_links_embeddings = []
                     for index in range(len(data[f"contexts_neg_{i}"]['input_ids'])):
                         if f'current_links_{index}_neg_{i}' not in data:
@@ -1640,12 +1584,13 @@ if __name__ == '__main__':
                         joint_context_embeddings, dim=1)
                     output_context_neg = link_fuser(
                         joint_context_embeddings)
-                else:                    
+                else:
                     if args.split_models:
                         output_context_neg = model_contexts(
                             **data[f"contexts_neg_{i}"])['last_hidden_state'][:, 0, :]
                     else:
-                        output_context_neg = model(**data[f"contexts_neg_{i}"])['last_hidden_state'][:, 0, :]
+                        output_context_neg = model(
+                            **data[f"contexts_neg_{i}"])['last_hidden_state'][:, 0, :]
                 embeddings_neg = [output_source,
                                   output_context_neg,
                                   output_target]
@@ -1743,9 +1688,11 @@ if __name__ == '__main__':
                             output_target = model_articles(
                                 **val_data['targets'])['last_hidden_state'][:, 0, :]
                         else:
-                            output_source = model(**val_data['sources'])['last_hidden_state'][:, 0, :]
-                            output_target = model(**val_data['targets'])[ 'last_hidden_state'][:, 0, :]
-                        
+                            output_source = model(
+                                **val_data['sources'])['last_hidden_state'][:, 0, :]
+                            output_target = model(
+                                **val_data['targets'])['last_hidden_state'][:, 0, :]
+
                         if args.use_current_links:
                             current_links_embeddings = []
                             for index in range(len(val_data['sources'])):
@@ -1797,7 +1744,7 @@ if __name__ == '__main__':
                             else:
                                 output_context_pos = model(
                                     **val_data['contexts'])['last_hidden_state'][:, 0, :]
-                        
+
                         val_embeddings = [output_source,
                                           output_context_pos,
                                           output_target]
@@ -1811,7 +1758,8 @@ if __name__ == '__main__':
                                     output_context_neg_text = model_contexts(
                                         **data[f"contexts_neg_{i}"])["last_hidden_state"][:, 0, :]
                                 else:
-                                    output_context_neg_text = model(**data[f"contexts_neg_{i}"])["last_hidden_state"][:, 0, :]
+                                    output_context_neg_text = model(
+                                        **data[f"contexts_neg_{i}"])["last_hidden_state"][:, 0, :]
                                 current_links_embeddings = []
                                 for index in range(len(val_data['sources'])):
                                     if f'current_links_{index}_neg_{i}' not in val_data:
@@ -1907,32 +1855,23 @@ if __name__ == '__main__':
                             val_logits, dim=1, descending=True)
                         labels = torch.gather(labels, dim=1, index=indices)
                         # calculate mrr
-                        mrr_at_k['1'] += torch.sum(
-                            1 / (torch.nonzero(labels[:, :1])[:, 1].float() + 1)).item()
-                        mrr_at_k['5'] += torch.sum(
-                            1 / (torch.nonzero(labels[:, :5])[:, 1].float() + 1)).item()
-                        mrr_at_k['10'] += torch.sum(
-                            1 / (torch.nonzero(labels[:, :10])[:, 1].float() + 1)).item()
+                        for k in [1, 5, 10]:
+                            mrr_at_k[str(k)] += torch.sum(
+                                1 / (torch.nonzero(labels[:, :k])[:, 1].float() + 1)).item()
                         mrr_at_k['max'] += torch.sum(
                             1 / (torch.nonzero(labels)[:, 1].float() + 1)).item()
 
                         # calculate hits@k
-                        hits_at_k['1'] += torch.sum(
-                            torch.sum(labels[:, :1], dim=1)).item()
-                        hits_at_k['5'] += torch.sum(
-                            torch.sum(labels[:, :5], dim=1)).item()
-                        hits_at_k['10'] += torch.sum(
-                            torch.sum(labels[:, :10], dim=1)).item()
+                        for k in [1, 5, 10]:
+                            hits_at_k[str(k)] += torch.sum(
+                                torch.sum(labels[:, :k], dim=1)).item()
                         hits_at_k['max'] += torch.sum(
                             torch.sum(labels, dim=1)).item()
 
                         # calculate ndcg@k
-                        ndcg_at_k['1'] += torch.sum(
-                            torch.sum(labels[:, :1] / torch.log2(torch.arange(2, 3).float()), dim=1)).item()
-                        ndcg_at_k['5'] += torch.sum(
-                            torch.sum(labels[:, :5] / torch.log2(torch.arange(2, 7).float()), dim=1)).item()
-                        ndcg_at_k['10'] += torch.sum(
-                            torch.sum(labels[:, :10] / torch.log2(torch.arange(2, 12).float()), dim=1)).item()
+                        for k in [1, 5, 10]:
+                            ndcg_at_k[str(k)] += torch.sum(
+                                torch.sum(labels[:, :k] / torch.log2(torch.arange(2, k + 2).float()), dim=1)).item()
                         ndcg_at_k['max'] += torch.sum(
                             torch.sum(labels / torch.log2(torch.arange(2, labels.shape[1] + 2).float()), dim=1)).item()
 
@@ -1941,30 +1880,17 @@ if __name__ == '__main__':
                             noise_part = noise == i
                             labels_part = labels[noise_part]
 
-                            noise_perf[i]['mrr']['1'] += torch.sum(
-                                1 / (torch.nonzero(labels_part[:, :1])[:, 1].float() + 1)).item()
-                            noise_perf[i]['mrr']['5'] += torch.sum(
-                                1 / (torch.nonzero(labels_part[:, :5])[:, 1].float() + 1)).item()
-                            noise_perf[i]['mrr']['10'] += torch.sum(
-                                1 / (torch.nonzero(labels_part[:, :10])[:, 1].float() + 1)).item()
+                            for k in [1, 5, 10]:
+                                noise_perf[i]['mrr'][str(k)] += torch.sum(
+                                    1 / (torch.nonzero(labels_part[:, :k])[:, 1].float() + 1)).item()
+                                noise_perf[i]['hits'][str(k)] += torch.sum(
+                                    torch.sum(labels_part[:, :k], dim=1)).item()
+                                noise_perf[i]['ndcg'][str(k)] += torch.sum(
+                                    torch.sum(labels_part[:, :k] / torch.log2(torch.arange(2, k + 2).float()), dim=1)).item()
                             noise_perf[i]['mrr']['max'] += torch.sum(
                                 1 / (torch.nonzero(labels_part)[:, 1].float() + 1)).item()
-
-                            noise_perf[i]['hits']['1'] += torch.sum(
-                                torch.sum(labels_part[:, :1], dim=1)).item()
-                            noise_perf[i]['hits']['5'] += torch.sum(
-                                torch.sum(labels_part[:, :5], dim=1)).item()
-                            noise_perf[i]['hits']['10'] += torch.sum(
-                                torch.sum(labels_part[:, :10], dim=1)).item()
                             noise_perf[i]['hits']['max'] += torch.sum(
                                 torch.sum(labels_part, dim=1)).item()
-
-                            noise_perf[i]['ndcg']['1'] += torch.sum(
-                                torch.sum(labels_part[:, :1] / torch.log2(torch.arange(2, 3).float()), dim=1)).item()
-                            noise_perf[i]['ndcg']['5'] += torch.sum(
-                                torch.sum(labels_part[:, :5] / torch.log2(torch.arange(2, 7).float()), dim=1)).item()
-                            noise_perf[i]['ndcg']['10'] += torch.sum(
-                                torch.sum(labels_part[:, :10] / torch.log2(torch.arange(2, 12).float()), dim=1)).item()
                             noise_perf[i]['ndcg']['max'] += torch.sum(
                                 torch.sum(labels_part / torch.log2(torch.arange(2, labels_part.shape[1] + 2).float()), dim=1)).item()
 
@@ -2010,46 +1936,21 @@ if __name__ == '__main__':
                                 k: v / noise_perf[i]['n_lists'] for k, v in noise_perf[i]['ndcg'].items()}
                     running_val_loss /= len(val_loader)
 
-                    logger.info(f"MRR@1: {mrr_at_k['1']}")
-                    logger.info(f"MRR@5: {mrr_at_k['5']}")
-                    logger.info(f"MRR@10: {mrr_at_k['10']}")
-                    logger.info(f"MRR@max: {mrr_at_k['max']}")
-                    logger.info(f"Hits@1: {hits_at_k['1']}")
-                    logger.info(f"Hits@5: {hits_at_k['5']}")
-                    logger.info(f"Hits@10: {hits_at_k['10']}")
-                    logger.info(f"Hits@max: {hits_at_k['max']}")
-                    logger.info(f"NDCG@1: {ndcg_at_k['1']}")
-                    logger.info(f"NDCG@5: {ndcg_at_k['5']}")
-                    logger.info(f"NDCG@10: {ndcg_at_k['10']}")
-                    logger.info(f"NDCG@max: {ndcg_at_k['max']}")
+                    for k in ['1', '5', '10', 'max']:
+                        logger.info(f"MRR@{k}: {mrr_at_k[k]}")
+                        logger.info(f"Hits@{k}: {hits_at_k[k]}")
+                        logger.info(f"NDCG@{k}: {ndcg_at_k[k]}")
                     for i in range(len(missing_map)):
                         if noise_perf[i]['n_lists'] > 0:
                             logger.info(
                                 f"Noise strategy {missing_map_rev[i]}:")
-                            logger.info(
-                                f"\t- MRR@1: {noise_perf[i]['mrr']['1']}")
-                            logger.info(
-                                f"\t- MRR@5: {noise_perf[i]['mrr']['5']}")
-                            logger.info(
-                                f"\t- MRR@10: {noise_perf[i]['mrr']['10']}")
-                            logger.info(
-                                f"\t- MRR@max: {noise_perf[i]['mrr']['max']}")
-                            logger.info(
-                                f"\t- Hits@1: {noise_perf[i]['hits']['1']}")
-                            logger.info(
-                                f"\t- Hits@5: {noise_perf[i]['hits']['5']}")
-                            logger.info(
-                                f"\t- Hits@10: {noise_perf[i]['hits']['10']}")
-                            logger.info(
-                                f"\t- Hits@max: {noise_perf[i]['hits']['max']}")
-                            logger.info(
-                                f"\t- NDCG@1: {noise_perf[i]['ndcg']['1']}")
-                            logger.info(
-                                f"\t- NDCG@5: {noise_perf[i]['ndcg']['5']}")
-                            logger.info(
-                                f"\t- NDCG@10: {noise_perf[i]['ndcg']['10']}")
-                            logger.info(
-                                f"\t- NDCG@max: {noise_perf[i]['ndcg']['max']}")
+                            for k in ['1', '5', '10', 'max']:
+                                logger.info(
+                                    f"\t- MRR@{k}: {noise_perf[i]['mrr'][k]}")
+                                logger.info(
+                                    f"\t- Hits@{k}: {noise_perf[i]['hits'][k]}")
+                                logger.info(
+                                    f"\t- NDCG@{k}: {noise_perf[i]['ndcg'][k]}")
                     logger.info(f"Accuracy: {accuracy}")
                     logger.info(f"Precision: {precision}")
                     logger.info(f"Recall: {recall}")
@@ -2057,30 +1958,13 @@ if __name__ == '__main__':
                     logger.info(f"Validation loss: {running_val_loss}")
 
                     if accelerator.is_main_process:
-                        writer.add_scalar('val_stage2/mrr@1',
-                                          mrr_at_k['1'], step)
-                        writer.add_scalar('val_stage2/mrr@5',
-                                          mrr_at_k['5'], step)
-                        writer.add_scalar('val_stage2/mrr@10',
-                                          mrr_at_k['10'], step)
-                        writer.add_scalar('val_stage2/mrr@max',
-                                          mrr_at_k['max'], step)
-                        writer.add_scalar('val_stage2/hits@1',
-                                          hits_at_k['1'], step)
-                        writer.add_scalar('val_stage2/hits@5',
-                                          hits_at_k['5'], step)
-                        writer.add_scalar('val_stage2/hits@10',
-                                          hits_at_k['10'], step)
-                        writer.add_scalar(
-                            'val_stage2/hits@max', hits_at_k['max'], step)
-                        writer.add_scalar('val_stage2/ndcg@1',
-                                          ndcg_at_k['1'], step)
-                        writer.add_scalar('val_stage2/ndcg@5',
-                                          ndcg_at_k['5'], step)
-                        writer.add_scalar('val_stage2/ndcg@10',
-                                          ndcg_at_k['10'], step)
-                        writer.add_scalar(
-                            'val_stage2/ndcg@max', ndcg_at_k['max'], step)
+                        for k in ['1', '5', '10', 'max']:
+                            writer.add_scalar('val_stage2/mrr@' + k,
+                                              mrr_at_k[k], step)
+                            writer.add_scalar('val_stage2/hits@' + k,
+                                              hits_at_k[k], step)
+                            writer.add_scalar('val_stage2/ndcg@' + k,
+                                              ndcg_at_k[k], step)
                         writer.add_scalar(
                             'val_stage2/accuracy', accuracy, step)
                         writer.add_scalar(
@@ -2091,30 +1975,13 @@ if __name__ == '__main__':
                                           running_val_loss, step)
                         for i in range(len(noise_map)):
                             if noise_perf[i]['n_lists'] > 0:
-                                writer.add_scalar(
-                                    f'val_noise_stage2/{noise_map_rev[i]}_mrr@1', noise_perf[i]['mrr']['1'], step)
-                                writer.add_scalar(
-                                    f'val_noise_stage2/{noise_map_rev[i]}_mrr@5', noise_perf[i]['mrr']['5'], step)
-                                writer.add_scalar(
-                                    f'val_noise_stage2/{noise_map_rev[i]}_mrr@10', noise_perf[i]['mrr']['10'], step)
-                                writer.add_scalar(
-                                    f'val_noise_stage2/{noise_map_rev[i]}_mrr@max', noise_perf[i]['mrr']['max'], step)
-                                writer.add_scalar(
-                                    f'val_noise_stage2/{noise_map_rev[i]}_hits@1', noise_perf[i]['hits']['1'], step)
-                                writer.add_scalar(
-                                    f'val_noise_stage2/{noise_map_rev[i]}_hits@5', noise_perf[i]['hits']['5'], step)
-                                writer.add_scalar(
-                                    f'val_noise_stage2/{noise_map_rev[i]}_hits@10', noise_perf[i]['hits']['10'], step)
-                                writer.add_scalar(
-                                    f'val_noise_stage2/{noise_map_rev[i]}_hits@max', noise_perf[i]['hits']['max'], step)
-                                writer.add_scalar(
-                                    f'val_noise_stage2/{noise_map_rev[i]}_ndcg@1', noise_perf[i]['ndcg']['1'], step)
-                                writer.add_scalar(
-                                    f'val_noise_stage2/{noise_map_rev[i]}_ndcg@5', noise_perf[i]['ndcg']['5'], step)
-                                writer.add_scalar(
-                                    f'val_noise_stage2/{noise_map_rev[i]}_ndcg@10', noise_perf[i]['ndcg']['10'], step)
-                                writer.add_scalar(
-                                    f'val_noise_stage2/{noise_map_rev[i]}_ndcg@max', noise_perf[i]['ndcg']['max'], step)
+                                for k in ['1', '5', '10', 'max']:
+                                    writer.add_scalar(
+                                        f'val_noise_stage2/{noise_map_rev[i]}_mrr@' + k, noise_perf[i]['mrr'][k], step)
+                                    writer.add_scalar(
+                                        f'val_noise_stage2/{noise_map_rev[i]}_hits@' + k, noise_perf[i]['hits'][k], step)
+                                    writer.add_scalar(
+                                        f'val_noise_stage2/{noise_map_rev[i]}_ndcg@' + k, noise_perf[i]['ndcg'][k], step)
 
                 if args.split_models:
                     model_articles.train()
