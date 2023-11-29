@@ -11,6 +11,7 @@ import re
 from multiprocessing import Pool, cpu_count
 import math
 from ast import literal_eval
+import json
 
 def unencode_title(title):
     clean_title = urllib.parse.unquote(title).replace('_', ' ')
@@ -230,18 +231,21 @@ def replace_context(source_title, target_title, source_depth, page_sections, ava
         new_context = " ".join(
             page_sections[source_title][new_section]['sentences'][left_limit:right_limit])
         # find the existing links in this new context
-        candidate_current_links = [[]]
+        candidate_current_links = [{}]
         prev_fail = False
         for link in page_sections[source_title][new_section]['links']:
             if link['mention'] not in new_context:
                 prev_fail = True
                 continue
             if prev_fail:
-                candidate_current_links.append([])
+                candidate_current_links.append({})
                 prev_fail = False
-            candidate_current_links[-1].append(link)
+            candidate_current_links[-1][link['target_title']] = {'target_title': link['target_title'],
+                                                                 'target_lead': link['target_lead']}
         candidate_current_links.sort(key=lambda x: len(x), reverse=True)
         current_links = candidate_current_links[0]
+        if len(current_links) > 10:
+            current_links = dict(random.sample(current_links.items(), 10))
         # remove all the sentences from the available indices that would produce the same context
         if available_sentences:
             if left_limit == new_sentence_range['range'][0] and right_limit == new_sentence_range['range'][1] + 1:
@@ -251,7 +255,7 @@ def replace_context(source_title, target_title, source_depth, page_sections, ava
             else:
                 available_sentences[new_section].remove(new_sentence_index)
 
-        return {'context': new_context, 'section': new_section, 'current_links': current_links}
+        return {'context': new_context, 'section': new_section, 'current_links': json.dumps(current_links)}
 
 
 def extract_sections(row):
@@ -493,12 +497,17 @@ if __name__ == '__main__':
     for row in tqdm(df_links_train):
         if row['source_title'] not in page_sections_train:
             continue
-        current_links = literal_eval(row['current_links'])
+        current_links = json.loads(row['current_links'])
         processed_current_links = {}
         for target in current_links:
-            if target in page_leads:
-                processed_current_links[target] = {'target_title': target,
-                                                   'target_lead': page_leads[target]}
+            clean_target = unencode_title(target)
+            if clean_target in page_leads:
+                processed_current_links[target] = {'target_title': clean_target,
+                                                   'target_lead': page_leads[clean_target],
+                                                   'region': current_links[target]['region']}
+        if len(processed_current_links) > 10:
+            processed_current_links = dict(random.sample(
+                processed_current_links.items(), 10))
         positive_samples_train.append({
             'source_title': row['source_title'],
             'source_lead': page_leads[row['source_title']],
@@ -512,10 +521,8 @@ if __name__ == '__main__':
             'context_sentence_end_index': row['context_sentence_end_index'],
             'context_mention_start_index': row['context_mention_start_index'],
             'context_mention_end_index': row['context_mention_end_index'],
-            'label': 1,
-            'neg_type': 'none',
             'depth': row['link_section_depth'],
-            'current_links': str(processed_current_links),
+            'current_links': json.dumps(processed_current_links),
         })
     random.shuffle(positive_samples_train)
 
@@ -523,12 +530,15 @@ if __name__ == '__main__':
     for row in tqdm(df_links_val):
         if row['source_title'] not in page_sections_val:
             continue
-        current_links = literal_eval(row['current_links'])
+        current_links = json.loads(row['current_links'])
         processed_current_links = {}
         for target in current_links:
             if target in page_leads:
                 processed_current_links[target] = {'target_title': target,
                                                    'target_lead': page_leads[target]}
+        if len(processed_current_links) > 10:
+            processed_current_links = dict(random.sample(
+                processed_current_links.items(), 10))
         positive_samples_val.append({
             'source_title': row['source_title'],
             'source_lead': page_leads[row['source_title']],
@@ -543,7 +553,7 @@ if __name__ == '__main__':
             'context_mention_start_index': row['context_mention_start_index'],
             'context_mention_end_index': row['context_mention_end_index'],
             'depth': row['link_section_depth'],
-            'current_links': str(processed_current_links),
+            'current_links': json.dumps(processed_current_links),
         })
     random.shuffle(positive_samples_val)
 
@@ -585,28 +595,30 @@ if __name__ == '__main__':
             n=min(args.max_val_samples, len(df_val))).reset_index(drop=True)
     else:
         full_samples_train = positive_samples_train.copy()
-        for i, sample in enumerate(negative_samples_train):
+        for i, sample in enumerate(tqdm(negative_samples_train)):
             true_index = i // args.neg_samples_train
             rel_index = i % args.neg_samples_train
-            keys = ['link_context', 'label', 'neg_type', 'source_section']
+            keys = ['link_context', 'source_section', 'current_links']
             for key in keys:
                 if key in sample:
                     full_samples_train[true_index][f'{key}_neg_{rel_index}'] = sample[key]
                 else:
                     full_samples_train[true_index][f'{key}_neg_{rel_index}'] = None
         df_train = pd.DataFrame(full_samples_train)
+        print(df_train)
 
         full_samples_val = positive_samples_val.copy()
-        for i, sample in enumerate(negative_samples_val):
+        for i, sample in enumerate(tqdm(negative_samples_val)):
             true_index = i // args.neg_samples_val
             rel_index = i % args.neg_samples_val
-            keys = ['link_context', 'label', 'neg_type', 'source_section']
+            keys = ['link_context', 'source_section', 'current_links']
             for key in keys:
                 if key in sample:
                     full_samples_val[true_index][f'{key}_neg_{rel_index}'] = sample[key]
                 else:
                     full_samples_val[true_index][f'{key}_neg_{rel_index}'] = None
         df_val = pd.DataFrame(full_samples_val)
+        print(df_val)
 
     # create directories if they don't exist
     if not os.path.exists(os.path.join(args.output_dir, 'train')):

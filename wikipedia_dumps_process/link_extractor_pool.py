@@ -40,6 +40,8 @@ def invalid_parent(parent):
 def fix_sentence_tokenizer(sentences):
     # dont allow parenthesis to be separated across sentences
     i = 0
+    first_stage_sentences = []
+    join_prev = False
     while i < len(sentences) - 1:
         # find right-most occurrence of ')' and '(' in sentences[i]
         right_paren_before = sentences[i].rfind(')')
@@ -54,34 +56,36 @@ def fix_sentence_tokenizer(sentences):
         left_paren_after = left_paren_after if left_paren_after != - \
             1 else len(sentences[i+1])
 
-        if right_paren_before < left_paren_before and right_parent_after < left_paren_after:
-            sentences[i] = sentences[i] + ' ' + sentences[i+1]
-            del sentences[i+1]
+        if join_prev:
+            first_stage_sentences[-1] += ' ' + sentences[i]
+            join_prev = False
         else:
-            i += 1
+            first_stage_sentences.append(sentences[i])
+
+        if right_paren_before < left_paren_before and right_parent_after < left_paren_after:
+            join_prev = True
+        
+        i += 1
 
     # for each sentence, if it is less than 10 characters, merge it with the next and previous sentences
     i = 0
-    if len(sentences) > 1:
-        while i < len(sentences):
-            if len(sentences[i]) < 10:
-                if i > 0 and i < len(sentences) - 1:
-                    sentences[i-1] = sentences[i-1] + ' ' + \
-                        sentences[i] + ' ' + sentences[i+1]
-                    del sentences[i]
-                    del sentences[i]
-                elif i == 0:
-                    sentences[i] = sentences[i] + ' ' + sentences[i+1]
-                    del sentences[i+1]
-                else:
-                    sentences[i-1] = sentences[i-1] + ' ' + sentences[i]
-                    del sentences[i]
+    final_sentences = []
+    join_prev = 0
+    while i < len(first_stage_sentences):
+        if len(first_stage_sentences[i]) < 10:
+            if final_sentences == []:
+                final_sentences.append(first_stage_sentences[i])
+                join_prev = 2
             else:
-                i += 1
-            if len(sentences) == 1:
-                break
-
-    return sentences
+                final_sentences[-1] += ' ' + first_stage_sentences[i]
+                join_prev = 2
+        elif join_prev > 0:
+            final_sentences[-1] += ' ' + first_stage_sentences[i]
+            join_prev -= 1
+        else:
+            final_sentences.append(first_stage_sentences[i])
+        i += 1
+    return final_sentences
 
 
 def extract_links(source_page):
@@ -122,6 +126,7 @@ def extract_links(source_page):
             sentences.append(
                 {'sentence': part, 'start_index': start_index, 'end_index': end_index})
             start_index = end_index
+    del temp_sentences
 
     depth = [0, 0, 0]
     sections = ["Lead"]
@@ -153,8 +158,8 @@ def extract_links(source_page):
                         if temp:
                             temp[-1] = temp[-1][:-1]
                         section_sentences = []
-                        for sentence in temp:
-                            new_sentences = sent_tokenize(sentence)
+                        for span in temp:
+                            new_sentences = sent_tokenize(span)
                             new_sentences = fix_sentence_tokenizer(
                                 new_sentences)
                             if new_sentences:
@@ -292,7 +297,7 @@ def extract_links(source_page):
                                                                       ]['region'] = region
                                             else:
                                                 break
-                                        link['current_links'] = str(
+                                        link['current_links'] = json.dumps(
                                             current_links)
                                         break
                             section_text[sections[0]]['links'].append({'mention': link['mention'],
@@ -699,7 +704,7 @@ def extract_links(source_page):
                                                       ]['region'] = region
                             else:
                                 break
-                        link['current_links'] = str(
+                        link['current_links'] = json.dumps(
                             current_links)
 
                         break
@@ -753,19 +758,21 @@ if __name__ == '__main__':
     files.sort()
 
     mention_map = set([])
+    counter = 0
+    links = []
+    sections = []
     for i, file in (pbar := tqdm(enumerate(files), total=len(files))):
         df = pd.read_parquet(file)
         list_data = []
         for j in range(len(df)):
             list_data.append(df.iloc[j].to_dict())
-        links = []
-        sections = []
+        del df
 
         pool = Pool(min(cpu_count(), args.processes), initializer=initializer)
         for j, (page_links, section_text) in enumerate(pool.imap(extract_links, list_data)):
             if j % 1000 == 0:
                 pbar.set_description(
-                    f"Processing file {file} at element {j}/{len(df)}")
+                    f"Processing file {file} at element {j}/{len(list_data)}")
             for link in page_links:
                 links.append(link)
                 if link['mention'].strip() != '':
@@ -778,18 +785,36 @@ if __name__ == '__main__':
                      'depth': section_text[section]['depth'], 
                      'title': section_text[section]['title'],
                      'links': section_text[section]['links']})
+                
+            if len(links) > 250_000:
+                df_links = pd.DataFrame(links)
+                df_links.to_parquet(f"{args.output_dir}/links_{counter}.parquet")
+                del df_links
+                del links
 
-        df_links = pd.DataFrame(links)
-        df_links.to_parquet(f"{args.output_dir}/links_{i}.parquet")
+                df_sections = pd.DataFrame(sections)
+                df_sections.to_parquet(f"{args.output_dir}/sections_{counter}.parquet")
+                del df_sections
+                del sections
+                counter += 1
 
-        df_sections = pd.DataFrame(sections)
-        df_sections.to_parquet(f"{args.output_dir}/sections_{i}.parquet")
-        
-        del df_links
-        del df_sections
-        gc.collect()
+                gc.collect()
+                links = []
+                sections = []
+        del list_data
         pool.close()
         pool.join()
+    
+    if links:
+        df_links = pd.DataFrame(links)
+        df_links.to_parquet(f"{args.output_dir}/links_{counter}.parquet")
+        del df_links
+        del links
+    if sections:
+        df_sections = pd.DataFrame(sections)
+        df_sections.to_parquet(f"{args.output_dir}/sections_{counter}.parquet")
+        del df_sections
+        del sections
 
     mention_map = [{'mention': mention.split('<sep>')[0], 'target_title': mention.split(
         '<sep>')[1]} for mention in mention_map]

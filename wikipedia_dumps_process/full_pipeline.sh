@@ -1,4 +1,4 @@
-start=`date +%s`
+# start=`date +%s`
 
 # use getopt to parse long arguments
 
@@ -120,7 +120,7 @@ python synth_test_data_generator.py \
 
 echo "Running the real test data versions finder..."
 echo "Running it for the time span between $first_month and $second_month..."
-python test_data_versions_finder.py \
+python test_data_version_finder.py \
     --raw_data_dir ${data_dir}/${lang}wiki-NS0-${second_month}/raw_data \
     --first_month_dir ${data_dir}/${lang}wiki-NS0-${first_month}/processed_data \
     --second_month_dir ${data_dir}/${lang}wiki-NS0-${second_month}/processed_data \
@@ -129,7 +129,7 @@ python test_data_versions_finder.py \
     --first_date $first_month \
     --second_date $second_month
 echo "Running it for the time span between $second_month and $third_month..."
-python test_data_versions_finder.py \
+python test_data_version_finder.py \
     --raw_data_dir ${data_dir}/${lang}wiki-NS0-${third_month}/raw_data \
     --first_month_dir ${data_dir}/${lang}wiki-NS0-${second_month}/processed_data \
     --second_month_dir ${data_dir}/${lang}wiki-NS0-${third_month}/processed_data \
@@ -203,8 +203,8 @@ python input_generator_stage2.py \
     --neg_samples_val $neg_samples_val \
 
 # Print the time taken
-end=`date +%s`
-runtime=$((end-start))
-echo "Time taken: $runtime seconds"
+# end=`date +%s`
+# runtime=$((end-start))
+# echo "Time taken: $runtime seconds"
 
 # End of script

@@ -12,6 +12,7 @@ from tqdm import tqdm
 import os
 import warnings
 from multiprocessing import Pool, cpu_count
+import json
 tqdm.pandas()
 
 warnings.filterwarnings("ignore", category=MarkupResemblesLocatorWarning)
@@ -223,7 +224,7 @@ def find_negative_contexts(section_sentences, mentions, curr_section, index, cor
                         new_contexts.append(context)
                     else:
                         continue
-                    candidate_current_links = [[]]
+                    candidate_current_links = [{}]
                     section_found = False
                     for current_link in all_links:
                         if current_link['section'] != section:
@@ -232,18 +233,17 @@ def find_negative_contexts(section_sentences, mentions, curr_section, index, cor
                             continue
                         section_found = True
                         if current_link['mention'] not in context:
-                            if candidate_current_links[-1] != []:
-                                candidate_current_links.append([])
+                            if candidate_current_links[-1] != {}:
+                                candidate_current_links.append({})
                             continue
-                        candidate_current_links[-1].append(
-                            current_link['target_title'])
+                        candidate_current_links[-1][current_link['target_title']] = current_link['target_title']
                     # the current_links is the candidate with the most links
                     candidate_current_links.sort(
                         key=lambda x: len(x), reverse=True)
                     current_links = candidate_current_links[0]
                     new_current_links.append(current_links)
                 for context, current_links in zip(new_contexts, new_current_links):
-                    contexts.append({'context': context, 'section': section, 'current_links': list(set(current_links))})
+                    contexts.append({'context': context, 'section': section, 'current_links': current_links})
                 curr_sentences = []
 
         if len(curr_sentences) != 0:
@@ -259,7 +259,7 @@ def find_negative_contexts(section_sentences, mentions, curr_section, index, cor
                     new_contexts.append(context)
                 else:
                     continue
-                candidate_current_links = [[]]
+                candidate_current_links = [{}]
                 section_found = False
                 for current_link in all_links:
                     if current_link['section'] != section:
@@ -268,19 +268,17 @@ def find_negative_contexts(section_sentences, mentions, curr_section, index, cor
                         continue
                     section_found = True
                     if current_link['mention'] not in context:
-                        if candidate_current_links != []:
-                            candidate_current_links.append([])
+                        if candidate_current_links != {}:
+                            candidate_current_links.append({})
                         continue
-                    candidate_current_links[-1].append(
-                        current_link['target_title'])
+                    candidate_current_links[-1][current_link['target_title']] = current_link['target_title']
                 # the current_links is the candidate with the most links
                 candidate_current_links.sort(
                     key=lambda x: len(x), reverse=True)
                 current_links = candidate_current_links[0]
                 new_current_links.append(current_links)
             for context, current_links in zip(new_contexts, new_current_links):
-                contexts.append({'context': context, 'section': section, 'current_links': list(set(current_links))})
-
+                contexts.append({'context': context, 'section': section, 'current_links': current_links})
     return contexts
 
 
@@ -589,7 +587,7 @@ def process_version(input):
                     href[6:].split('#')[0], redirect_1, redirect_2)
                 mentions = mentions_map.get(
                     target_title, [urllib.parse.unquote(target_title).replace('_', ' ')])
-                candidate_current_links = [[]]
+                candidate_current_links = [{}]
                 section_found = False
                 for current_link in all_links:
                     if current_link['section'] != section:
@@ -598,11 +596,10 @@ def process_version(input):
                         continue
                     section_found = True
                     if current_link['mention'] not in context:
-                        if candidate_current_links[-1] != []:
-                            candidate_current_links.append([])
+                        if candidate_current_links[-1] != {}:
+                            candidate_current_links.append({})
                         continue
-                    candidate_current_links[-1].append(
-                        current_link['target_title'])
+                    candidate_current_links[-1][current_link['target_title']] = current_link['target_title']
                 # the current_links is the candidate with the most links
                 candidate_current_links.sort(key=lambda x: len(x), reverse=True)
                 current_links = candidate_current_links[0]
@@ -621,8 +618,8 @@ def process_version(input):
                         'second_version': second_version,
                         'direct_match': direct_match,
                         'missing_category': missing_category,
-                        'negative_contexts': str(negative_contexts),
-                        'current_links': str(list(set(current_links)))
+                        'negative_contexts': json.dumps(negative_contexts),
+                        'current_links': json.dumps(current_links)
                     })
                     found_links.append(output[-1])
         # if len(found_links) != len(input['versions'][second_version]):

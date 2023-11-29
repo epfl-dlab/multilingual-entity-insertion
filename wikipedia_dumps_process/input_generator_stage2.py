@@ -11,6 +11,7 @@ import re
 from multiprocessing import Pool, cpu_count
 import math
 from ast import literal_eval
+import json
 
 
 def unencode_title(title):
@@ -149,8 +150,9 @@ if __name__ == '__main__':
     for link in tqdm(df_links):
         all_contexts.append(link['context'])
         all_sections.append(link['section'])
-        all_current_links.append(literal_eval(link['current_links']))
-        for negative_context in literal_eval(link['negative_contexts']):
+        # all_current_links.append(literal_eval(link['current_links']))
+        all_current_links.append(json.loads(link['current_links']))
+        for negative_context in json.loads(link['negative_contexts']):
             all_contexts.append(negative_context['context'])
             all_sections.append(negative_context['section'])
             all_current_links.append(negative_context['current_links'])
@@ -163,7 +165,8 @@ if __name__ == '__main__':
         link = df_links.pop()
         if link['target_title'] not in page_leads:
             continue
-        current_links = literal_eval(link['current_links'])
+        # current_links = literal_eval(link['current_links'])
+        current_links = json.loads(link['current_links'])
         processed_current_links = {}
         for current_link in current_links:
             title = unencode_title(current_link)
@@ -178,8 +181,9 @@ if __name__ == '__main__':
                             'link_context': link['context'],
                             'source_section': link['section'],
                             'missing_category': link['missing_category'] if link['missing_category'] is not None else 'present',
-                            'current_links': str(processed_current_links)})
-        negative_contexts = literal_eval(link['negative_contexts'])
+                            'current_links': json.dumps(processed_current_links)})
+        # negative_contexts = literal_eval(link['negative_contexts'])
+        negative_contexts = json.loads(link['negative_contexts'])
         if len(negative_contexts) > args.neg_samples_train:
             negative_contexts = random.sample(
                 negative_contexts, args.neg_samples_train)
@@ -194,7 +198,7 @@ if __name__ == '__main__':
                         continue
                     processed_current_links[title] = {'target_title': title,
                                                       'target_lead': page_leads[title]}
-                train_links[-1][f'current_links_neg_{i}'] = str(
+                train_links[-1][f'current_links_neg_{i}'] = json.dumps(
                     processed_current_links)
         else:
             for i, negative_context in enumerate(negative_contexts):
@@ -208,7 +212,7 @@ if __name__ == '__main__':
                         continue
                     processed_current_links[title] = {'target_title': title,
                                                       'target_lead': page_leads[title]}
-                train_links[-1][f'current_links_neg_{i}'] = str(
+                train_links[-1][f'current_links_neg_{i}'] = json.dumps(
                     processed_current_links)
             counter = len(negative_contexts)
             while f'source_section_neg_{args.neg_samples_train - 1}' not in train_links[-1]:
@@ -231,14 +235,15 @@ if __name__ == '__main__':
                         continue
                     processed_neg_current_links[title] = {'target_title': title,
                                                           'target_lead': page_leads[title]}
-                train_links[-1][f'current_links_neg_{counter}'] = str(
+                train_links[-1][f'current_links_neg_{counter}'] = json.dumps(
                     processed_neg_current_links)
                 counter += 1
     while len(val_links) < args.max_val_samples / (1 + args.neg_samples_val) and len(df_links) != 0:
         link = df_links.pop()
         if link['target_title'] not in page_leads:
             continue
-        current_links = literal_eval(link['current_links'])
+        # current_links = literal_eval(link['current_links'])
+        current_links = json.loads(link['current_links'])
         processed_current_links = {}
         for current_link in current_links:
             title = unencode_title(current_link)
@@ -253,8 +258,9 @@ if __name__ == '__main__':
                           'link_context': link['context'],
                           'source_section': link['section'],
                           'missing_category': link['missing_category'] if link['missing_category'] is not None else 'present',
-                          'current_links': str(processed_current_links)})
-        negative_contexts = literal_eval(link['negative_contexts'])
+                          'current_links': json.dumps(processed_current_links)})
+        # negative_contexts = literal_eval(link['negative_contexts'])
+        negative_contexts = json.loads(link['negative_contexts'])
         if len(negative_contexts) > args.neg_samples_val:
             negative_contexts = random.sample(
                 negative_contexts, args.neg_samples_val)
@@ -269,7 +275,7 @@ if __name__ == '__main__':
                         continue
                     processed_current_links[title] = {'target_title': title,
                                                       'target_lead': page_leads[title]}
-                val_links[-1][f'current_links_neg_{i}'] = str(
+                val_links[-1][f'current_links_neg_{i}'] = json.dumps(
                     processed_current_links)
         else:
             for i, negative_context in enumerate(negative_contexts):
@@ -283,7 +289,7 @@ if __name__ == '__main__':
                         continue
                     processed_current_links[title] = {'target_title': title,
                                                       'target_lead': page_leads[title]}
-                val_links[-1][f'current_links_neg_{i}'] = str(
+                val_links[-1][f'current_links_neg_{i}'] = json.dumps(
                     processed_current_links)
             counter = len(negative_contexts)
             while f'source_section_neg_{args.neg_samples_val - 1}' not in val_links[-1]:
@@ -306,7 +312,7 @@ if __name__ == '__main__':
                         continue
                     processed_neg_current_links[title] = {'target_title': title,
                                                           'target_lead': page_leads[title]}
-                val_links[-1][f'current_links_neg_{counter}'] = str(
+                val_links[-1][f'current_links_neg_{counter}'] = json.dumps(
                     processed_neg_current_links)
                 counter += 1
 
