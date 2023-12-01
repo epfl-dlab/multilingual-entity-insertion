@@ -27,6 +27,7 @@ import nltk
 from nltk import sent_tokenize
 from urllib.parse import unquote
 import json
+from ast import literal_eval
 
 multiprocess.set_start_method("spawn", force=True)
 nltk.download('punkt', download_dir='/dlabdata1/tsoares/nltk_data')
@@ -122,8 +123,8 @@ if __name__ == '__main__':
                         help='Directory with checkpoint to resume training from')
     parser.add_argument('--ga_steps', nargs='+', type=int, default=[1],
                         help='Number of steps for gradient accumulation')
-    parser.add_argument('--full_freeze_epochs', type=int, default=0,
-                        help='Number of epochs to freeze all layers except classification head (and link fuser if use_current_links is set)')
+    parser.add_argument('--full_freeze_steps', type=int, default=0,
+                        help='Number of steps to freeze all layers except classification head (and link fuser if use_current_links is set)')
     parser.add_argument('--freeze_layers', type=int,
                         default=2, help='Number of initial layers to freeze')
     parser.add_argument('--head_lr_factor', type=float,
@@ -158,10 +159,14 @@ if __name__ == '__main__':
                         help='If set, use the links already in the context as an additional signal')
     parser.add_argument('--current_links_mode', type=str, choices=[
                         'sum', 'average', 'weighted_sum', 'weighted_average'], default='weighted_sum', help='How to aggregate the current links')
+    parser.add_argument('--current_links_residuals', action='store_true',
+                        help='If set, use the current links as residuals')
     parser.add_argument('--n_links', type=int, default=10,
                         help='Number of current links to use')
+    parser.add_argument('--delay_fuser_steps', type=int, default=0,
+                        help='Number of steps without using the knowledge fuser (anf thus not using current link knowledge)')
     parser.set_defaults(resume=False, insert_section=False, mask_negatives=False,
-                        split_models=False, two_stage=False, use_current_links=False)
+                        split_models=False, two_stage=False, use_current_links=False, current_links_residuals=False)
 
     args = parser.parse_args()
 
@@ -407,7 +412,8 @@ if __name__ == '__main__':
                             valid_noise_types, weights=weights[-len(valid_noise_types):], k=1)[0]
 
                 if args.use_current_links:
-                    current_links = json.loads(item['current_links'])
+                    # current_links = json.loads(item['current_links'])
+                    current_links = literal_eval(item['current_links'])
                     temp = []
                     titles = list(current_links.keys())
                     random.shuffle(titles)
@@ -471,8 +477,14 @@ if __name__ == '__main__':
                     source_section_neg = item[f"source_section_neg_{i}"]
                     link_context_neg = item[f"link_context_neg_{i}"]
                     if args.use_current_links:
-                        current_links_neg = json.loads(
-                            item[f"current_links_neg_{i}"])
+                        # current_links_neg = json.loads(
+                        #     item[f"current_links_neg_{i}"])
+                        try:
+                            current_links_neg = literal_eval(
+                                item[f"current_links_neg_{i}"])
+                        except:
+                            print(item[f"current_links_neg_{i}"])
+                            raise ValueError
                         temp = []
                         titles = list(current_links_neg.keys())
                         random.shuffle(titles)
@@ -523,7 +535,8 @@ if __name__ == '__main__':
                     target_input = f"{item['target_title']}{tokenizer.sep_token}{item['target_lead']}"
 
                 if args.use_current_links:
-                    current_links = json.loads(item['current_links'])
+                    # current_links = json.loads(item['current_links'])
+                    current_links = literal_eval(item['current_links'])
                     temp = []
                     titles = list(current_links.keys())
                     random.shuffle(titles)
@@ -548,7 +561,9 @@ if __name__ == '__main__':
                     source_section_neg = item[f"source_section_neg_{i}"]
                     link_context_neg = item[f"link_context_neg_{i}"]
                     if args.use_current_links:
-                        current_links_neg = json.loads(
+                        # current_links_neg = json.loads(
+                        #     item[f"current_links_neg_{i}"])
+                        current_links_neg = literal_eval(
                             item[f"current_links_neg_{i}"])
                         temp = []
                         titles = list(current_links_neg.keys())
@@ -626,9 +641,9 @@ if __name__ == '__main__':
             mention_map[mention] = random.sample(mention_map[mention], 10)
         mention_map[mention] = ' '.join(mention_map[mention])
 
-    if args.full_freeze_epochs > 0:
+    if args.full_freeze_steps > 0:
         logger.info(
-            f"Freezing all layers except classification head for {args.full_freeze_epochs} epochs")
+            f"Freezing all layers except classification head for {args.full_freeze_steps} steps")
         if args.split_models:
             for param in model_articles.parameters():
                 param.requires_grad = False
@@ -688,7 +703,7 @@ if __name__ == '__main__':
                 output_target = model(
                     **data['targets'])['last_hidden_state'][:, 0, :]
 
-            if args.use_current_links:
+            if args.use_current_links and step > args.delay_fuser_steps:
                 if args.split_models:
                     output_context_text = model_contexts(
                         **data['contexts'])['last_hidden_state'][:, 0, :]
@@ -727,6 +742,8 @@ if __name__ == '__main__':
                             joint_embeddings.append(torch.cat([output_context_text[triplet_index + candidate_index].unsqueeze(0), current_links_subset_pooled], dim=1))
                 joint_embeddings = torch.cat(joint_embeddings, dim=0)
                 output_context = link_fuser(joint_embeddings)
+                if args.current_links_residuals:
+                    output_context = output_context + output_context_text
             else:
                 if args.split_models:
                     output_context = model_contexts(
@@ -764,6 +781,38 @@ if __name__ == '__main__':
                 optimizer.zero_grad()
             # save running loss
             running_loss += loss.item() * args.ga_steps[0]
+            # unfreeze model if necessary
+            if step == args.full_freeze_steps:
+                logger.info(
+                    f"Unfreezing model except first {args.freeze_layers} layers")
+                if args.split_models:
+                    model_articles = accelerator.unwrap_model(model_articles)
+                    model_contexts = accelerator.unwrap_model(model_contexts)
+                    for param in model_articles.parameters():
+                        param.requires_grad = True
+                    for param in model_contexts.parameters():
+                        param.requires_grad = True
+                    for param in model_articles.base_model.embeddings.parameters():
+                        param.requires_grad = False
+                    for param in model_articles.base_model.encoder.layer[:args.freeze_layers].parameters():
+                        param.requires_grad = False
+                    for param in model_contexts.base_model.embeddings.parameters():
+                        param.requires_grad = False
+                    for param in model_contexts.base_model.encoder.layer[:args.freeze_layers].parameters():
+                        param.requires_grad = False
+                    model_articles = accelerator.prepare(model_articles)
+                    model_contexts = accelerator.prepare(model_contexts)
+                else:
+                    model = accelerator.unwrap_model(model)
+                    for param in model.parameters():
+                        param.requires_grad = True
+                    for param in model.base_model.embeddings.parameters():
+                        param.requires_grad = False
+                    for param in model.base_model.encoder.layer[:args.freeze_layers].parameters():
+                        param.requires_grad = False
+                    model = accelerator.prepare(model)
+                
+            
             # print loss
             if step % args.print_steps[0] == 0:
                 logger.info(
@@ -843,7 +892,7 @@ if __name__ == '__main__':
                             output_target = model(
                                 **val_data['targets'])['last_hidden_state'][:, 0, :]
                             
-                        if args.use_current_links:
+                        if args.use_current_links and step > args.delay_fuser_steps:
                             if args.split_models:
                                 output_context_text = model_contexts(
                                     **val_data['contexts'])['last_hidden_state'][:, 0, :]
@@ -882,6 +931,8 @@ if __name__ == '__main__':
                                         joint_embeddings.append(torch.cat([output_context_text[triplet_index + candidate_index].unsqueeze(0), current_links_subset_pooled], dim=1))
                             joint_embeddings = torch.cat(joint_embeddings, dim=0)
                             output_context = link_fuser(joint_embeddings)
+                            if args.current_links_residuals:
+                                output_context = output_context + output_context_text
                         else:
                             if args.split_models:
                                 output_context = model_contexts(
@@ -1065,37 +1116,6 @@ if __name__ == '__main__':
                 torch.cuda.empty_cache()
                 gc.collect()
 
-        # unfreeze model if necessary
-        if epoch + 1 == args.full_freeze_epochs:
-            logger.info(
-                f"Unfreezing model except first {args.freeze_layers} layers")
-            if args.split_models:
-                model_articles = accelerator.unwrap_model(model_articles)
-                model_contexts = accelerator.unwrap_model(model_contexts)
-                for param in model_articles.parameters():
-                    param.requires_grad = True
-                for param in model_contexts.parameters():
-                    param.requires_grad = True
-                for param in model_articles.base_model.embeddings.parameters():
-                    param.requires_grad = False
-                for param in model_articles.base_model.encoder.layer[:args.freeze_layers].parameters():
-                    param.requires_grad = False
-                for param in model_contexts.base_model.embeddings.parameters():
-                    param.requires_grad = False
-                for param in model_contexts.base_model.encoder.layer[:args.freeze_layers].parameters():
-                    param.requires_grad = False
-                model_articles = accelerator.prepare(model_articles)
-                model_contexts = accelerator.prepare(model_contexts)
-            else:
-                model = accelerator.unwrap_model(model)
-                for param in model.parameters():
-                    param.requires_grad = True
-                for param in model.base_model.embeddings.parameters():
-                    param.requires_grad = False
-                for param in model.base_model.encoder.layer[:args.freeze_layers].parameters():
-                    param.requires_grad = False
-                model = accelerator.prepare(model)
-
     if not args.two_stage:
         logger.info("Training finished")
         if accelerator.is_main_process:
@@ -1120,6 +1140,10 @@ if __name__ == '__main__':
         sys.exit()
 
     logger.info("Starting second stage of training")
+    # delete all unnecessary objects
+    del train_set, val_set, train_loader, val_loader
+    gc.collect()
+    torch.cuda.empty_cache()
 
     missing_map = {'present': 0, 'missing_mention': 1,
                    'missing_sentence': 2, 'missing_span': 3}
@@ -1138,7 +1162,8 @@ if __name__ == '__main__':
                     mention_map[item['target_title']] = item['target_title']
                 source_input = f"{item['source_title']}{tokenizer.sep_token}{item['source_lead']}"
                 if args.use_current_links:
-                    current_links = json.loads(item['current_links'])
+                    # current_links = json.loads(item['current_links'])
+                    current_links = literal_eval(item['current_links'])
                     titles = list(current_links.keys())
                     random.shuffle(titles)
                     temp = []
@@ -1177,7 +1202,9 @@ if __name__ == '__main__':
                     source_section_neg = item[f"source_section_neg_{i}"]
                     link_context_neg = item[f"link_context_neg_{i}"]
                     if args.use_current_links:
-                        current_links_neg = json.loads(
+                        # current_links_neg = json.loads(
+                        #     item[f"current_links_neg_{i}"])
+                        current_links_neg = literal_eval(
                             item[f"current_links_neg_{i}"])
                         titles = list(current_links_neg.keys())
                         random.shuffle(titles)
@@ -1214,7 +1241,8 @@ if __name__ == '__main__':
                     mention_map[item['target_title']] = item['target_title']
                 source_input = f"{item['source_title']}{tokenizer.sep_token}{item['source_lead']}"
                 if args.use_current_links:
-                    current_links = json.loads(item['current_links'])
+                    # current_links = json.loads(item['current_links'])
+                    current_links = literal_eval(item['current_links'])
                     titles = list(current_links.keys())
                     random.shuffle(titles)
                     temp = []
@@ -1253,7 +1281,9 @@ if __name__ == '__main__':
                     source_section_neg = item[f"source_section_neg_{i}"]
                     link_context_neg = item[f"link_context_neg_{i}"]
                     if args.use_current_links:
-                        current_links_neg = json.loads(
+                        # current_links_neg = json.loads(
+                        #     item[f"current_links_neg_{i}"])
+                        current_links_neg = literal_eval(
                             item[f"current_links_neg_{i}"])
                         titles = list(current_links_neg.keys())
                         random.shuffle(titles)
@@ -1284,7 +1314,7 @@ if __name__ == '__main__':
                     output['contexts'].append(context_input)
 
         for key in output:
-            if key == 'noises':
+            if key in ['noises', 'current_links_supindex', 'current_links_subindex']:
                 output[key] = torch.tensor(output[key])
             else:
                 output[key] = tokenizer(output[key], padding='max_length',
@@ -1384,6 +1414,8 @@ if __name__ == '__main__':
                             joint_embeddings.append(torch.cat([output_context_text[triplet_index + candidate_index].unsqueeze(0), current_links_subset_pooled], dim=1))
                 joint_embeddings = torch.cat(joint_embeddings, dim=0)
                 output_context = link_fuser(joint_embeddings)
+                if args.current_links_residuals:
+                    output_context = output_context + output_context_text
             else:
                 if args.split_models:
                     output_context = model_contexts(
@@ -1527,6 +1559,8 @@ if __name__ == '__main__':
                                         joint_embeddings.append(torch.cat([output_context_text[triplet_index + candidate_index].unsqueeze(0), current_links_subset_pooled], dim=1))
                             joint_embeddings = torch.cat(joint_embeddings, dim=0)
                             output_context = link_fuser(joint_embeddings)
+                            if args.current_links_residuals:
+                                output_context = output_context + output_context_text
                         else:
                             if args.split_models:
                                 output_context = model_contexts(
