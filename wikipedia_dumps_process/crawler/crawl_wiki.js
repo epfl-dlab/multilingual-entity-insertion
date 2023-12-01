@@ -10,7 +10,8 @@ async function main(){
 
     var fname = '';
     var numThreads = 1;
-    var directory = ''
+    var directory = '';
+    var lang = '';
     process.argv.forEach(function (val, index, array) {
         // update the fname, numThreads, directory variables
         if (val == '-a' || val == '--articles') {
@@ -24,6 +25,9 @@ async function main(){
         if (val == '-d' || val == '--destinationDirectory') {
             directory = array[index+1];
         }
+        if (val == '-l' || val == '--language') {
+            lang = array[index+1];
+        }
       });
     
     if (fname == '') {
@@ -32,6 +36,10 @@ async function main(){
     }
     if (directory == '') {
         console.log('Please provide a path to the directory for downloading html!');
+        return;
+    }
+    if (lang == '') {
+        console.log('Please provide a language!');
         return;
     }
 
@@ -58,10 +66,10 @@ async function main(){
                 const article = {
                     // link: anchorNode.href,
                     pid: items[0],
-                    revid: items[1]
+                    revid: items[1],
                 };
                 articles.push(article);
-                preparedUrls.push(`https://simple.wikipedia.org/wiki/?curid=${article.pid}&oldid=${article.revid}`);
+                preparedUrls.push(`https://${lang}.wikipedia.org/wiki/?curid=${article.pid}&oldid=${article.revid}`);
             }
         }
         // rl.on('line', (line) => {
