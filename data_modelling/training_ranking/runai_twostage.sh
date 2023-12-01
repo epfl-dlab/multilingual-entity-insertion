@@ -34,7 +34,99 @@ accelerate launch main_list_softmax.py \
     --insert_section \
     --mask_negatives \
     --two_stage \
-    --current_links_mode weighted_average \
-    --normalize_current_links \
-    --n_links 9 \
-    --delay_fuser_steps 10000
+&& \
+for POOL_STRATEGY in weighted_average weighted_sum max_similarity
+do
+    for DELAY_STEPS in 0 10000
+    do
+        accelerate launch main_list_softmax.py \
+            --model_name bert-base-uncased \
+            --data_dir datasets/simple_stage_1 \
+            --data_dir_2 datasets/simple_stage_2 \
+            --num_epochs 2 10 \
+            --batch_size 2 \
+            --num_workers 52 \
+            --lr 0.00002 \
+            --gamma_lr 0.9 \
+            --print_steps 500 10 \
+            --save_steps 10000 1000 \
+            --eval_steps 5000 500 \
+            --scheduler_steps 5000 500 \
+            --ga_steps 2 2 \
+            --full_freeze_steps 0 \
+            --freeze_layers 2 \
+            --head_lr_factor 10 \
+            --neg_samples_train 9 \
+            --neg_samples_eval 19 \
+            --temperature 1 \
+            --insert_mentions candidates \
+            --insert_section \
+            --mask_negatives \
+            --two_stage \
+            --use_current_links \
+            --current_links_mode $POOL_STRATEGY \
+            --n_links 9 \
+            --delay_fuser_steps $DELAY_STEPS \
+        && \
+        accelerate launch main_list_softmax.py \
+            --model_name bert-base-uncased \
+            --data_dir datasets/simple_stage_1 \
+            --data_dir_2 datasets/simple_stage_2 \
+            --num_epochs 2 10 \
+            --batch_size 2 \
+            --num_workers 52 \
+            --lr 0.00002 \
+            --gamma_lr 0.9 \
+            --print_steps 500 10 \
+            --save_steps 10000 1000 \
+            --eval_steps 5000 500 \
+            --scheduler_steps 5000 500 \
+            --ga_steps 2 2 \
+            --full_freeze_steps 0 \
+            --freeze_layers 2 \
+            --head_lr_factor 10 \
+            --neg_samples_train 9 \
+            --neg_samples_eval 19 \
+            --temperature 1 \
+            --insert_mentions candidates \
+            --insert_section \
+            --mask_negatives \
+            --two_stage \
+            --use_current_links \
+            --current_links_mode $POOL_STRATEGY \
+            --n_links 9 \
+            --delay_fuser_steps $DELAY_STEPS \
+            --normalize_current_links \
+        && \
+        accelerate launch main_list_softmax.py \
+            --model_name bert-base-uncased \
+            --data_dir datasets/simple_stage_1 \
+            --data_dir_2 datasets/simple_stage_2 \
+            --num_epochs 2 10 \
+            --batch_size 2 \
+            --num_workers 52 \
+            --lr 0.00002 \
+            --gamma_lr 0.9 \
+            --print_steps 500 10 \
+            --save_steps 10000 1000 \
+            --eval_steps 5000 500 \
+            --scheduler_steps 5000 500 \
+            --ga_steps 2 2 \
+            --full_freeze_steps 0 \
+            --freeze_layers 2 \
+            --head_lr_factor 10 \
+            --neg_samples_train 9 \
+            --neg_samples_eval 19 \
+            --temperature 1 \
+            --insert_mentions candidates \
+            --insert_section \
+            --mask_negatives \
+            --two_stage \
+            --use_current_links \
+            --current_links_mode $POOL_STRATEGY \
+            --n_links 9 \
+            --delay_fuser_steps $DELAY_STEPS \
+            --current_links_residuals
+    done
+done
+            
