@@ -161,6 +161,8 @@ if __name__ == '__main__':
                         'sum', 'average', 'weighted_sum', 'weighted_average'], default='weighted_sum', help='How to aggregate the current links')
     parser.add_argument('--current_links_residuals', action='store_true',
                         help='If set, use the current links as residuals')
+    parser.add_argument('--normalize_current_links', action='store_true',
+                        help='If set, normalize the fuser output to have the same norm as the context text embeddings')
     parser.add_argument('--n_links', type=int, default=10,
                         help='Number of current links to use')
     parser.add_argument('--delay_fuser_steps', type=int, default=0,
@@ -369,9 +371,11 @@ if __name__ == '__main__':
 
     def collator(input):
         if args.use_current_links:
-            output = {'sources': [], 'contexts': [], 'targets': [], 'noises': [], 'current_links': [], 'current_links_supindex': [], 'current_links_subindex': []}
+            output = {'sources': [], 'contexts': [], 'targets': [], 'noises': [
+            ], 'current_links': [], 'current_links_supindex': [], 'current_links_subindex': []}
         else:
-            output = {'sources': [], 'contexts': [], 'targets': [], 'noises': []}
+            output = {'sources': [], 'contexts': [],
+                      'targets': [], 'noises': []}
         if input[0]['split'] == 'train':
             # for i in range(args.neg_samples_train[0]):
             #     output[f"contexts_neg_{i}"] = []
@@ -431,8 +435,10 @@ if __name__ == '__main__':
                             break
                     if temp:
                         output['current_links'].extend(temp)
-                        output['current_links_supindex'].extend([index] * len(temp))
-                        output['current_links_subindex'].extend([0] * len(temp))
+                        output['current_links_supindex'].extend(
+                            [index] * len(temp))
+                        output['current_links_subindex'].extend(
+                            [0] * len(temp))
 
                 if noise_type == 'mask_span':
                     item['link_context'] = item['link_context'][:int(
@@ -496,8 +502,10 @@ if __name__ == '__main__':
                         if temp:
                             # output[f'current_links_{index}_neg_{i}'] = temp
                             output['current_links'].extend(temp)
-                            output['current_links_supindex'].extend([index] * len(temp))
-                            output['current_links_subindex'].extend([i + 1] * len(temp))
+                            output['current_links_supindex'].extend(
+                                [index] * len(temp))
+                            output['current_links_subindex'].extend(
+                                [i + 1] * len(temp))
                     if args.mask_negatives:
                         link_context_neg = mask_negative_contexts(
                             link_context_neg, mask_probs, neg_noise_backlog)
@@ -548,8 +556,10 @@ if __name__ == '__main__':
                     if temp:
                         # output[f'current_links_{index}'] = temp
                         output['current_links'].extend(temp)
-                        output['current_links_supindex'].extend([index] * len(temp))
-                        output['current_links_subindex'].extend([0] * len(temp))
+                        output['current_links_supindex'].extend(
+                            [index] * len(temp))
+                        output['current_links_subindex'].extend(
+                            [0] * len(temp))
 
                 output['noises'].append(noise_map[item['noise_strategy']])
                 output['sources'].append(source_input)
@@ -576,8 +586,10 @@ if __name__ == '__main__':
                         if temp:
                             # output[f'current_links_{index}_neg_{i}'] = temp
                             output['current_links'].extend(temp)
-                            output['current_links_supindex'].extend([index] * len(temp))
-                            output['current_links_subindex'].extend([i + 1] * len(temp))
+                            output['current_links_supindex'].extend(
+                                [index] * len(temp))
+                            output['current_links_subindex'].extend(
+                                [i + 1] * len(temp))
                     if args.mask_negatives:
                         link_context_neg = mask_negative_contexts(
                             link_context_neg, mask_probs, neg_noise_backlog)
@@ -717,33 +729,46 @@ if __name__ == '__main__':
                 joint_embeddings = []
                 for triplet_index in range(len(data['sources']['input_ids'])):
                     for candidate_index in range(args.neg_samples_train[0] + 1):
-                        current_link_subset = output_current_links[(data['current_links_supindex'] == triplet_index) & (data['current_links_subindex'] == candidate_index)]
+                        current_link_subset = output_current_links[(data['current_links_supindex'] == triplet_index) & (
+                            data['current_links_subindex'] == candidate_index)]
                         # check if there are now current links
                         if len(current_link_subset) == 0:
                             # represent the lack of lists as a zero tensor
-                            joint_embeddings.append(torch.cat([output_context_text[triplet_index + candidate_index].unsqueeze(0), torch.zeros((1, model_contexts_size), device=device)], dim=1))
+                            joint_embeddings.append(torch.cat([output_context_text[triplet_index + candidate_index].unsqueeze(
+                                0), torch.zeros((1, model_contexts_size), device=device)], dim=1))
                         else:
                             if args.current_links_mode == 'sum':
-                                current_links_subset_pooled = torch.sum(current_link_subset, dim=0, keepdim=True)
+                                current_links_subset_pooled = torch.sum(
+                                    current_link_subset, dim=0, keepdim=True)
                             elif args.current_links_mode == 'average':
-                                current_links_subset_pooled = torch.mean(current_link_subset, dim=0, keepdim=True)
+                                current_links_subset_pooled = torch.mean(
+                                    current_link_subset, dim=0, keepdim=True)
                             elif args.current_links_mode == 'weighted_sum':
                                 # weight the links by their similarity to the target
                                 # first, compute the similarity
-                                similarities = torch.cosine_similarity(current_link_subset, output_target[triplet_index].unsqueeze(0)).view(-1, 1)
-                                current_links_subset_pooled = torch.sum(current_link_subset * similarities, dim=0, keepdim=True)
+                                similarities = torch.cosine_similarity(
+                                    current_link_subset, output_target[triplet_index].unsqueeze(0)).view(-1, 1)
+                                current_links_subset_pooled = torch.sum(
+                                    current_link_subset * similarities, dim=0, keepdim=True)
                             elif args.current_links_mode == 'weighted_average':
                                 # weight the links by their similarity to the target
                                 # first, compute the similarity
-                                similarities = torch.cosine_similarity(current_link_subset, output_target[triplet_index].unsqueeze(0)).view(-1, 1)
+                                similarities = torch.cosine_similarity(
+                                    current_link_subset, output_target[triplet_index].unsqueeze(0)).view(-1, 1)
                                 # then, compute the weights using softmax
                                 weights = torch.softmax(similarities, dim=0)
-                                current_links_subset_pooled = torch.sum(current_link_subset * weights, dim=0, keepdim=True)
-                            joint_embeddings.append(torch.cat([output_context_text[triplet_index + candidate_index].unsqueeze(0), current_links_subset_pooled], dim=1))
+                                current_links_subset_pooled = torch.sum(
+                                    current_link_subset * weights, dim=0, keepdim=True)
+                            joint_embeddings.append(torch.cat(
+                                [output_context_text[triplet_index + candidate_index].unsqueeze(0), current_links_subset_pooled], dim=1))
                 joint_embeddings = torch.cat(joint_embeddings, dim=0)
                 output_context = link_fuser(joint_embeddings)
                 if args.current_links_residuals:
                     output_context = output_context + output_context_text
+                if args.normalize_current_links:
+                    output_context = output_context * \
+                        torch.norm(output_context_text, dim=1).view(-1, 1) / \
+                        torch.norm(output_context, dim=1).view(-1, 1)
             else:
                 if args.split_models:
                     output_context = model_contexts(
@@ -766,7 +791,7 @@ if __name__ == '__main__':
             logits = classification_head(embeddings)
             # logits has shape (batch_size * (neg_samples + 1), 1)
             # we need to reshape it to (batch_size, neg_samples + 1)
-            logits = logits.view(-1, args.neg_samples_train[0] + 1)    
+            logits = logits.view(-1, args.neg_samples_train[0] + 1)
             labels = torch.zeros_like(logits)
             labels[:, 0] = 1
             # shuffle logits and labels
@@ -811,8 +836,7 @@ if __name__ == '__main__':
                     for param in model.base_model.encoder.layer[:args.freeze_layers].parameters():
                         param.requires_grad = False
                     model = accelerator.prepare(model)
-                
-            
+
             # print loss
             if step % args.print_steps[0] == 0:
                 logger.info(
@@ -891,7 +915,7 @@ if __name__ == '__main__':
                                 **val_data['sources'])['last_hidden_state'][:, 0, :]
                             output_target = model(
                                 **val_data['targets'])['last_hidden_state'][:, 0, :]
-                            
+
                         if args.use_current_links and step > args.delay_fuser_steps:
                             if args.split_models:
                                 output_context_text = model_contexts(
@@ -906,33 +930,49 @@ if __name__ == '__main__':
                             joint_embeddings = []
                             for triplet_index in range(len(val_data['sources']['input_ids'])):
                                 for candidate_index in range(args.neg_samples_eval[0] + 1):
-                                    current_link_subset = output_current_links[(val_data['current_links_supindex'] == triplet_index) & (val_data['current_links_subindex'] == candidate_index)]
+                                    current_link_subset = output_current_links[(val_data['current_links_supindex'] == triplet_index) & (
+                                        val_data['current_links_subindex'] == candidate_index)]
                                     # check if there are now current links
                                     if len(current_link_subset) == 0:
                                         # represent the lack of lists as a zero tensor
-                                        joint_embeddings.append(torch.cat([output_context_text[triplet_index + candidate_index].unsqueeze(0), torch.zeros((1, model_contexts_size), device=device)], dim=1))
+                                        joint_embeddings.append(torch.cat([output_context_text[triplet_index + candidate_index].unsqueeze(
+                                            0), torch.zeros((1, model_contexts_size), device=device)], dim=1))
                                     else:
                                         if args.current_links_mode == 'sum':
-                                            current_links_subset_pooled = torch.sum(current_link_subset, dim=0, keepdim=True)
+                                            current_links_subset_pooled = torch.sum(
+                                                current_link_subset, dim=0, keepdim=True)
                                         elif args.current_links_mode == 'average':
-                                            current_links_subset_pooled = torch.mean(current_link_subset, dim=0, keepdim=True)
+                                            current_links_subset_pooled = torch.mean(
+                                                current_link_subset, dim=0, keepdim=True)
                                         elif args.current_links_mode == 'weighted_sum':
                                             # weight the links by their similarity to the target
                                             # first, compute the similarity
-                                            similarities = torch.cosine_similarity(current_link_subset, output_target[triplet_index].unsqueeze(0)).view(-1, 1)
-                                            current_links_subset_pooled = torch.sum(current_link_subset * similarities, dim=0, keepdim=True)
+                                            similarities = torch.cosine_similarity(
+                                                current_link_subset, output_target[triplet_index].unsqueeze(0)).view(-1, 1)
+                                            current_links_subset_pooled = torch.sum(
+                                                current_link_subset * similarities, dim=0, keepdim=True)
                                         elif args.current_links_mode == 'weighted_average':
                                             # weight the links by their similarity to the target
                                             # first, compute the similarity
-                                            similarities = torch.cosine_similarity(current_link_subset, output_target[triplet_index].unsqueeze(0)).view(-1, 1)
+                                            similarities = torch.cosine_similarity(
+                                                current_link_subset, output_target[triplet_index].unsqueeze(0)).view(-1, 1)
                                             # then, compute the weights using softmax
-                                            weights = torch.softmax(similarities, dim=0)
-                                            current_links_subset_pooled = torch.sum(current_link_subset * weights, dim=0, keepdim=True)
-                                        joint_embeddings.append(torch.cat([output_context_text[triplet_index + candidate_index].unsqueeze(0), current_links_subset_pooled], dim=1))
-                            joint_embeddings = torch.cat(joint_embeddings, dim=0)
+                                            weights = torch.softmax(
+                                                similarities, dim=0)
+                                            current_links_subset_pooled = torch.sum(
+                                                current_link_subset * weights, dim=0, keepdim=True)
+                                        joint_embeddings.append(torch.cat(
+                                            [output_context_text[triplet_index + candidate_index].unsqueeze(0), current_links_subset_pooled], dim=1))
+                            joint_embeddings = torch.cat(
+                                joint_embeddings, dim=0)
                             output_context = link_fuser(joint_embeddings)
                             if args.current_links_residuals:
                                 output_context = output_context + output_context_text
+                            if args.normalize_current_links:
+                                output_context = output_context * \
+                                    torch.norm(output_context_text, dim=1).view(-1, 1) / \
+                                    torch.norm(output_context,
+                                               dim=1).view(-1, 1)
                         else:
                             if args.split_models:
                                 output_context = model_contexts(
@@ -948,11 +988,12 @@ if __name__ == '__main__':
                                                 output_context,
                                                 output_target], dim=1)
                         val_logits = classification_head(embeddings)
-                        val_logits = val_logits.view(-1, args.neg_samples_eval[0] + 1)
+                        val_logits = val_logits.view(-1,
+                                                     args.neg_samples_eval[0] + 1)
                         labels = torch.zeros_like(val_logits)
                         labels[:, 0] = 1
                         val_loss = loss_fn(val_logits, labels)
-                        
+
                         # gather the results from all processes
                         val_logits = accelerator.pad_across_processes(
                             val_logits, dim=0, pad_index=-1)
@@ -1151,9 +1192,11 @@ if __name__ == '__main__':
 
     def simple_collator(input):
         if args.use_current_links:
-            output = {'sources': [], 'contexts': [], 'targets': [], 'noises': [], 'current_links': [], 'current_links_supindex': [], 'current_links_subindex': []}
+            output = {'sources': [], 'contexts': [], 'targets': [], 'noises': [
+            ], 'current_links': [], 'current_links_supindex': [], 'current_links_subindex': []}
         else:
-            output = {'sources': [], 'contexts': [], 'targets': [], 'noises': []}
+            output = {'sources': [], 'contexts': [],
+                      'targets': [], 'noises': []}
         if input[0]['split'] == 'train':
             # for i in range(args.neg_samples_train[1]):
             #     output[f"contexts_neg_{i}"] = []
@@ -1374,7 +1417,7 @@ if __name__ == '__main__':
                     **data['sources'])['last_hidden_state'][:, 0, :]
                 output_target = model(
                     **data['targets'])['last_hidden_state'][:, 0, :]
-            
+
             if args.use_current_links:
                 if args.split_models:
                     output_context_text = model_contexts(
@@ -1389,33 +1432,46 @@ if __name__ == '__main__':
                 joint_embeddings = []
                 for triplet_index in range(len(data['sources']['input_ids'])):
                     for candidate_index in range(args.neg_samples_train[1] + 1):
-                        current_link_subset = output_current_links[(data['current_links_supindex'] == triplet_index) & (data['current_links_subindex'] == candidate_index)]
+                        current_link_subset = output_current_links[(data['current_links_supindex'] == triplet_index) & (
+                            data['current_links_subindex'] == candidate_index)]
                         # check if there are now current links
                         if len(current_link_subset) == 0:
                             # represent the lack of lists as a zero tensor
-                            joint_embeddings.append(torch.cat([output_context_text[triplet_index + candidate_index].unsqueeze(0), torch.zeros((1, model_contexts_size), device=device)], dim=1))
+                            joint_embeddings.append(torch.cat([output_context_text[triplet_index + candidate_index].unsqueeze(
+                                0), torch.zeros((1, model_contexts_size), device=device)], dim=1))
                         else:
                             if args.current_links_mode == 'sum':
-                                current_links_subset_pooled = torch.sum(current_link_subset, dim=0, keepdim=True)
+                                current_links_subset_pooled = torch.sum(
+                                    current_link_subset, dim=0, keepdim=True)
                             elif args.current_links_mode == 'average':
-                                current_links_subset_pooled = torch.mean(current_link_subset, dim=0, keepdim=True)
+                                current_links_subset_pooled = torch.mean(
+                                    current_link_subset, dim=0, keepdim=True)
                             elif args.current_links_mode == 'weighted_sum':
                                 # weight the links by their similarity to the target
                                 # first, compute the similarity
-                                similarities = torch.cosine_similarity(current_link_subset, output_target[triplet_index].unsqueeze(0)).view(-1, 1)
-                                current_links_subset_pooled = torch.sum(current_link_subset * similarities, dim=0, keepdim=True)
+                                similarities = torch.cosine_similarity(
+                                    current_link_subset, output_target[triplet_index].unsqueeze(0)).view(-1, 1)
+                                current_links_subset_pooled = torch.sum(
+                                    current_link_subset * similarities, dim=0, keepdim=True)
                             elif args.current_links_mode == 'weighted_average':
                                 # weight the links by their similarity to the target
                                 # first, compute the similarity
-                                similarities = torch.cosine_similarity(current_link_subset, output_target[triplet_index].unsqueeze(0)).view(-1, 1)
+                                similarities = torch.cosine_similarity(
+                                    current_link_subset, output_target[triplet_index].unsqueeze(0)).view(-1, 1)
                                 # then, compute the weights using softmax
                                 weights = torch.softmax(similarities, dim=0)
-                                current_links_subset_pooled = torch.sum(current_link_subset * weights, dim=0, keepdim=True)
-                            joint_embeddings.append(torch.cat([output_context_text[triplet_index + candidate_index].unsqueeze(0), current_links_subset_pooled], dim=1))
+                                current_links_subset_pooled = torch.sum(
+                                    current_link_subset * weights, dim=0, keepdim=True)
+                            joint_embeddings.append(torch.cat(
+                                [output_context_text[triplet_index + candidate_index].unsqueeze(0), current_links_subset_pooled], dim=1))
                 joint_embeddings = torch.cat(joint_embeddings, dim=0)
                 output_context = link_fuser(joint_embeddings)
                 if args.current_links_residuals:
                     output_context = output_context + output_context_text
+                if args.normalize_current_links:
+                    output_context = output_context * \
+                        torch.norm(output_context_text, dim=1).view(-1, 1) / \
+                        torch.norm(output_context, dim=1).view(-1, 1)
             else:
                 if args.split_models:
                     output_context = model_contexts(
@@ -1434,7 +1490,8 @@ if __name__ == '__main__':
             logits = logits.view(-1, args.neg_samples_train[1] + 1)
             labels = torch.zeros_like(logits)
             labels[:, 0] = 1
-            loss = loss_fn(logits /args.temperature[1], labels) / args.ga_steps[1]
+            loss = loss_fn(
+                logits / args.temperature[1], labels) / args.ga_steps[1]
             accelerator.backward(loss)
             if (index + 1) % args.ga_steps[1] == 0:
                 optimizer.step()
@@ -1519,7 +1576,7 @@ if __name__ == '__main__':
                                 **val_data['sources'])['last_hidden_state'][:, 0, :]
                             output_target = model(
                                 **val_data['targets'])['last_hidden_state'][:, 0, :]
-                            
+
                         if args.use_current_links:
                             if args.split_models:
                                 output_context_text = model_contexts(
@@ -1534,33 +1591,49 @@ if __name__ == '__main__':
                             joint_embeddings = []
                             for triplet_index in range(len(val_data['sources']['input_ids'])):
                                 for candidate_index in range(args.neg_samples_eval[1] + 1):
-                                    current_link_subset = output_current_links[(val_data['current_links_supindex'] == triplet_index) & (val_data['current_links_subindex'] == candidate_index)]
+                                    current_link_subset = output_current_links[(val_data['current_links_supindex'] == triplet_index) & (
+                                        val_data['current_links_subindex'] == candidate_index)]
                                     # check if there are now current links
                                     if len(current_link_subset) == 0:
                                         # represent the lack of lists as a zero tensor
-                                        joint_embeddings.append(torch.cat([output_context_text[triplet_index + candidate_index].unsqueeze(0), torch.zeros((1, model_contexts_size), device=device)], dim=1))
+                                        joint_embeddings.append(torch.cat([output_context_text[triplet_index + candidate_index].unsqueeze(
+                                            0), torch.zeros((1, model_contexts_size), device=device)], dim=1))
                                     else:
                                         if args.current_links_mode == 'sum':
-                                            current_links_subset_pooled = torch.sum(current_link_subset, dim=0, keepdim=True)
+                                            current_links_subset_pooled = torch.sum(
+                                                current_link_subset, dim=0, keepdim=True)
                                         elif args.current_links_mode == 'average':
-                                            current_links_subset_pooled = torch.mean(current_link_subset, dim=0, keepdim=True)
+                                            current_links_subset_pooled = torch.mean(
+                                                current_link_subset, dim=0, keepdim=True)
                                         elif args.current_links_mode == 'weighted_sum':
                                             # weight the links by their similarity to the target
                                             # first, compute the similarity
-                                            similarities = torch.cosine_similarity(current_link_subset, output_target[triplet_index].unsqueeze(0)).view(-1, 1)
-                                            current_links_subset_pooled = torch.sum(current_link_subset * similarities, dim=0, keepdim=True)
+                                            similarities = torch.cosine_similarity(
+                                                current_link_subset, output_target[triplet_index].unsqueeze(0)).view(-1, 1)
+                                            current_links_subset_pooled = torch.sum(
+                                                current_link_subset * similarities, dim=0, keepdim=True)
                                         elif args.current_links_mode == 'weighted_average':
                                             # weight the links by their similarity to the target
                                             # first, compute the similarity
-                                            similarities = torch.cosine_similarity(current_link_subset, output_target[triplet_index].unsqueeze(0)).view(-1, 1)
+                                            similarities = torch.cosine_similarity(
+                                                current_link_subset, output_target[triplet_index].unsqueeze(0)).view(-1, 1)
                                             # then, compute the weights using softmax
-                                            weights = torch.softmax(similarities, dim=0)
-                                            current_links_subset_pooled = torch.sum(current_link_subset * weights, dim=0, keepdim=True)
-                                        joint_embeddings.append(torch.cat([output_context_text[triplet_index + candidate_index].unsqueeze(0), current_links_subset_pooled], dim=1))
-                            joint_embeddings = torch.cat(joint_embeddings, dim=0)
+                                            weights = torch.softmax(
+                                                similarities, dim=0)
+                                            current_links_subset_pooled = torch.sum(
+                                                current_link_subset * weights, dim=0, keepdim=True)
+                                        joint_embeddings.append(torch.cat(
+                                            [output_context_text[triplet_index + candidate_index].unsqueeze(0), current_links_subset_pooled], dim=1))
+                            joint_embeddings = torch.cat(
+                                joint_embeddings, dim=0)
                             output_context = link_fuser(joint_embeddings)
                             if args.current_links_residuals:
                                 output_context = output_context + output_context_text
+                            if args.normalize_current_links:
+                                output_context = output_context * \
+                                    torch.norm(output_context_text, dim=1).view(-1, 1) / \
+                                    torch.norm(output_context,
+                                               dim=1).view(-1, 1)
                         else:
                             if args.split_models:
                                 output_context = model_contexts(
