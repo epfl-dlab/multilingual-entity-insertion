@@ -255,7 +255,8 @@ def replace_context(source_title, target_title, source_depth, page_sections, ava
             else:
                 available_sentences[new_section].remove(new_sentence_index)
 
-        return {'context': new_context, 'section': new_section, 'current_links': json.dumps(current_links)}
+        # return {'context': new_context, 'section': new_section, 'current_links': json.dumps(current_links)}
+        return {'context': new_context, 'section': new_section, 'current_links': str(current_links)}
 
 
 def extract_sections(row):
@@ -442,7 +443,7 @@ if __name__ == '__main__':
 
     print('\tProcessing pages')
     page_leads = {row['title']: row['lead_paragraph']
-                  for row in tqdm(df_pages)}
+                  for row in tqdm(df_pages) if row['lead_paragraph'] != '' and row['lead_paragraph'] is not None}
 
     print('\tProcessing sections')
     page_sections_train = {}
@@ -455,19 +456,17 @@ if __name__ == '__main__':
         links = output['links']
         if not sentences:
             continue
-        for link in links:
-            link['target_title'] = unencode_title(link['target_title'])
-            if link['target_title'] in page_leads:
-                link['target_lead'] = page_leads[link['target_title']]
-            else:
-                link['target_lead'] = None
         if title not in page_sections_train:
             page_sections_train[title] = {}
         if section not in page_sections_train[title]:
             page_sections_train[title][section] = {
                 'depth': depth, 'sentences': [], 'links': []}
         page_sections_train[title][section]['sentences'].extend(sentences)
-        page_sections_train[title][section]['links'].extend(links)
+        for link in links:
+            link['target_title'] = unencode_title(link['target_title'])
+            if link['target_title'] in page_leads:
+                link['target_lead'] = page_leads[link['target_title']]
+                page_sections_train[title][section]['links'].append(link)
 
     page_sections_val = {}
     for output in tqdm(pool.imap_unordered(extract_sections, df_sections_val), total=len(df_sections_val)):
@@ -476,19 +475,17 @@ if __name__ == '__main__':
         sentences = output['sentences']
         depth = output['depth']
         links = output['links']
-        for link in links:
-            link['target_title'] = unencode_title(link['target_title'])
-            if link['target_title'] in page_leads:
-                link['target_lead'] = page_leads[link['target_title']]
-            else:
-                link['target_lead'] = None
         if title not in page_sections_val:
             page_sections_val[title] = {}
         if section not in page_sections_val[title]:
             page_sections_val[title][section] = {
                 'depth': depth, 'sentences': [], 'links': []}
         page_sections_val[title][section]['sentences'].extend(sentences)
-        page_sections_val[title][section]['links'].extend(links)
+        for link in links:
+            link['target_title'] = unencode_title(link['target_title'])
+            if link['target_title'] in page_leads:
+                link['target_lead'] = page_leads[link['target_title']]
+                page_sections_val[title][section]['links'].append(link)
     pool.close()
     pool.join()
 
@@ -497,7 +494,10 @@ if __name__ == '__main__':
     for row in tqdm(df_links_train):
         if row['source_title'] not in page_sections_train:
             continue
-        current_links = json.loads(row['current_links'])
+        if row['source_title'] not in page_leads or row['target_title'] not in page_leads:
+            continue
+        # current_links = json.loads(row['current_links'])
+        current_links = literal_eval(row['current_links'])
         processed_current_links = {}
         for target in current_links:
             clean_target = unencode_title(target)
@@ -522,7 +522,9 @@ if __name__ == '__main__':
             'context_mention_start_index': row['context_mention_start_index'],
             'context_mention_end_index': row['context_mention_end_index'],
             'depth': row['link_section_depth'],
-            'current_links': json.dumps(processed_current_links),
+            'noise_strategy': None,
+            # 'current_links': json.dumps(processed_current_links),
+            'current_links': str(processed_current_links),
         })
     random.shuffle(positive_samples_train)
 
@@ -530,7 +532,10 @@ if __name__ == '__main__':
     for row in tqdm(df_links_val):
         if row['source_title'] not in page_sections_val:
             continue
-        current_links = json.loads(row['current_links'])
+        if row['source_title'] not in page_leads or row['target_title'] not in page_leads:
+            continue
+        # current_links = json.loads(row['current_links'])
+        current_links = literal_eval(row['current_links'])
         processed_current_links = {}
         for target in current_links:
             if target in page_leads:
@@ -553,7 +558,9 @@ if __name__ == '__main__':
             'context_mention_start_index': row['context_mention_start_index'],
             'context_mention_end_index': row['context_mention_end_index'],
             'depth': row['link_section_depth'],
-            'current_links': json.dumps(processed_current_links),
+            'noise_strategy': row['noise_strategy'],
+            # 'current_links': json.dumps(processed_current_links),
+            'current_links': str(processed_current_links),
         })
     random.shuffle(positive_samples_val)
 
@@ -598,7 +605,7 @@ if __name__ == '__main__':
         for i, sample in enumerate(tqdm(negative_samples_train)):
             true_index = i // args.neg_samples_train
             rel_index = i % args.neg_samples_train
-            keys = ['link_context', 'source_section', 'current_links']
+            keys = ['link_context', 'source_section', 'noise_strategy', 'current_links']
             for key in keys:
                 if key in sample:
                     full_samples_train[true_index][f'{key}_neg_{rel_index}'] = sample[key]
@@ -611,7 +618,7 @@ if __name__ == '__main__':
         for i, sample in enumerate(tqdm(negative_samples_val)):
             true_index = i // args.neg_samples_val
             rel_index = i % args.neg_samples_val
-            keys = ['link_context', 'source_section', 'current_links']
+            keys = ['link_context', 'source_section', 'noise_strategy', 'current_links']
             for key in keys:
                 if key in sample:
                     full_samples_val[true_index][f'{key}_neg_{rel_index}'] = sample[key]

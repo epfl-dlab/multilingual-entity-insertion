@@ -153,12 +153,14 @@ echo "Downloading it for the time span between $first_month and $second_month...
 node crawler/crawl_wiki.js \
     --articles ${data_dir}/${lang}wiki-NS0-${first_month}/eval/pages/pages.txt \
     --concurrence $download_processes \
-    --destinationDirectory ${data_dir}/${lang}wiki-NS0-${first_month}/eval/pages/ 
+    --destinationDirectory ${data_dir}/${lang}wiki-NS0-${first_month}/eval/pages/ \
+    --language $lang
 echo "Downloading it for the time span between $second_month and $third_month..."
 node crawler/crawl_wiki.js \
     --articles ${data_dir}/${lang}wiki-NS0-${second_month}/eval/pages/pages.txt \
     --concurrence $download_processes \
-    --destinationDirectory ${data_dir}/${lang}wiki-NS0-${second_month}/eval/pages/
+    --destinationDirectory ${data_dir}/${lang}wiki-NS0-${second_month}/eval/pages/ \
+    --language $lang
 
 echo "Running the test data generator..."
 echo "Running it for the time span between $first_month and $second_month..."
@@ -200,7 +202,7 @@ python input_generator_stage2.py \
     --links_file ${data_dir}/${lang}wiki-NS0-${first_month}/eval/test_data.parquet \
     --output_dir ${data_dir}/${lang}wiki-NS0-${second_month}/ml_data/${lang}_stage_2 \
     --neg_samples_train $neg_samples_train \
-    --neg_samples_val $neg_samples_val \
+    --neg_samples_val $neg_samples_val
 
 # Print the time taken
 # end=`date +%s`

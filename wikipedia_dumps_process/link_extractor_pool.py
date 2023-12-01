@@ -30,14 +30,22 @@ def process_title(title):
 
 def invalid_parent(parent):
     # hard-coded invalid classes found by manual inspection
-    invalid_classes = ["mw-editsection", "metadata", "mw-jump-link", "reflist", "side-box-text plainlist", "legend",
-                       "navbox-styles nomobile", "thumbcaption", "side-box", "side-box-right", "plainlinks", "sistersitebox", "navbox"]
-    if parent.name in ['table', 'figure', 'sup', 'caption', 'map'] or parent.get("role") in ["note", "navigation"] or parent.get("class") in invalid_classes:
+    invalid_classes = ["mw-editsection", "metadata", "mw-jump-link", "reflist", "side-box-text", "plainlist", "legend",
+                       "navbox-styles", "nomobile", "thumbcaption", "side-box", "side-box-right", "plainlinks", "sistersitebox", "navbox"]
+    # some parents have multiple classes
+    # if any of the classes is invalid, then the parent is invalid
+    if parent.get("class"):
+        for class_name in parent.get("class"):
+            if class_name in invalid_classes:
+                return True
+    if parent.name in ['table', 'figure', 'sup', 'caption', 'map'] or parent.get("role") in ["note", "navigation"]:
         return True
     return False
 
 
 def fix_sentence_tokenizer(sentences):
+    if not sentences:
+        return sentences
     # dont allow parenthesis to be separated across sentences
     i = 0
     first_stage_sentences = []
@@ -66,6 +74,10 @@ def fix_sentence_tokenizer(sentences):
             join_prev = True
         
         i += 1
+    if join_prev:
+        first_stage_sentences[-1] += ' ' + sentences[i]
+    else:
+        first_stage_sentences.append(sentences[i])
 
     # for each sentence, if it is less than 10 characters, merge it with the next and previous sentences
     i = 0
@@ -178,15 +190,17 @@ def extract_links(source_page):
                                 link['context_mention_start_index'] = None
                                 link['context_mention_end_index'] = None
                                 link['context'] = None
+                                # print('Context Failure')
                             else:
                                 sentence = link['sentence'].strip()
                                 sentence = re.sub(r'\[.*?\]', '', sentence)
                                 sentence = re.sub(r' +', ' ', sentence)
                                 link['sentence'] = sentence
+                                # print(first_sentence, len(section_sentences))
                                 for j in range(first_sentence, len(section_sentences)):
                                     if j != first_sentence:
                                         first_index = 0
-                                    if re.search(r"\b" + re.escape(link['mention']) + r"\b", section_sentences[j][first_index:]) is not None:
+                                    if re.search(re.escape(link['mention']), section_sentences[j][first_index:]) is not None:
                                         first_sentence = j
                                         first_index = section_sentences[j].index(
                                             link['mention'], first_index) + len(link['mention'])
@@ -297,11 +311,28 @@ def extract_links(source_page):
                                                                       ]['region'] = region
                                             else:
                                                 break
-                                        link['current_links'] = json.dumps(
-                                            current_links)
+                                        # link['current_links'] = json.dumps(
+                                        #     current_links)
+                                        link['current_links'] = str(current_links)
                                         break
                             section_text[sections[0]]['links'].append({'mention': link['mention'],
                                                                        'target_title': link['target_title']})
+                            # if 'context' not in link:
+                            #     print('SOURCE TITLE', link['source_version'])
+                            #     print('MENTION', link['mention'])
+                            #     print('#################')
+                            #     print(section_sentences)
+                            #     print('#################')
+                            #     print(current_text)
+                            #     print('#################')
+                                
+                            # if 'context' not in link:
+                            #     for key in link:
+                            #         print(key, link[key])
+                            #     print(len(section_sentences))
+                            #     for j in range(len(section_sentences)):
+                            #         print(link['mention'], '<sep>', section_sentences[j])
+                            #     print('#################')
                             found_links.append(link)
                     section_links = []
                     sections = [re.sub(r'\[.*?\]', '', tag.text).strip()]
@@ -458,6 +489,12 @@ def extract_links(source_page):
                         index = raw_html.index(
                             f"./{full_title}", search_index_link)
                 except:
+                    # print(raw_html)
+                    # print('#################')
+                    # print(full_title)
+                    # print('#################')
+                    # print(search_index_link)
+                    # print('#################')
                     link_data['link_start_index'] = None
                     link_data['link_end_index'] = None
                     link_data['sentence'] = None
@@ -590,16 +627,18 @@ def extract_links(source_page):
                 link['context_mention_start_index'] = None
                 link['context_mention_end_index'] = None
                 link['context'] = None
+                # print('Context Failure')
             else:
                 sentence = link['sentence'].strip()
                 sentence = re.sub(r'\[.*?\]', '', sentence)
                 # sentence = re.sub(r'\n', ' ', sentence)
                 sentence = re.sub(r' +', ' ', sentence)
                 link['sentence'] = sentence
+                # print(first_sentence, len(section_sentences))
                 for j in range(first_sentence, len(section_sentences)):
                     if j != first_sentence:
                         first_index = 0
-                    if re.search(r"\b" + re.escape(link['mention']) + r"\b", section_sentences[j][first_index:]) is not None:
+                    if re.search(re.escape(link['mention']), section_sentences[j][first_index:]) is not None:
                         first_sentence = j
                         first_index = section_sentences[j].index(
                             link['mention'], first_index) + len(link['mention'])
@@ -704,14 +743,23 @@ def extract_links(source_page):
                                                       ]['region'] = region
                             else:
                                 break
-                        link['current_links'] = json.dumps(
-                            current_links)
-
+                        # link['current_links'] = json.dumps(
+                        #     current_links)
+                        link['current_links'] = str(current_links)
                         break
+            
+            # if 'context' not in link:
+            #     print('SOURCE TITLE', link['source_version'])
+            #     print('MENTION', link['mention'])
+            #     print('#################')
+            #     print(section_sentences)
+            #     print('#################')
+            #     print(current_text)
+            #     print('#################')
+                
             found_links.append(link)
 
     return found_links, section_text
-
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -775,6 +823,10 @@ if __name__ == '__main__':
                     f"Processing file {file} at element {j}/{len(list_data)}")
             for link in page_links:
                 links.append(link)
+                # if 'context' in link:
+                #     for key in link:
+                #         print(key, link[key])
+                #     raise Exception()
                 if link['mention'].strip() != '':
                     mention_map.add(
                         f"{link['mention']}<sep>{link['target_title']}")

@@ -246,14 +246,15 @@ if __name__ == '__main__':
         mod_link['context'] = re.sub('\n+', '\n', mod_link['context'])
         mod_link['context'] = mod_link['context'].strip()
         mod_link['noise_strategy'] = 'mask_span'
-        # current_links = literal_eval(mod_link['current_links'])
-        current_links = json.loads(mod_link['current_links'])
+        current_links = literal_eval(mod_link['current_links'])
+        # current_links = json.loads(mod_link['current_links'])
         clean_contexts_links = {}
         for target in current_links:
             if current_links[target]['region'] in ['sentence', 'span']:
                 continue
             clean_contexts_links[target] = current_links[target]
-        mod_link['current_links'] = json.dumps(clean_contexts_links)
+        # mod_link['current_links'] = json.dumps(clean_contexts_links)
+        mod_link['current_links'] = str(clean_contexts_links)
         final_links.append(mod_link)
 
     mask_sentence_links.extend(mask_paragraph_links[int(
@@ -275,14 +276,15 @@ if __name__ == '__main__':
         mod_link['context'] = re.sub('\n ', '\n', mod_link['context'])
         mod_link['context'] = mod_link['context'].strip()
         mod_link['noise_strategy'] = 'mask_sentence'
-        # current_links = literal_eval(mod_link['current_links'])
-        current_links = json.loads(mod_link['current_links'])
+        current_links = literal_eval(mod_link['current_links'])
+        # current_links = json.loads(mod_link['current_links'])
         clean_contexts_links = {}
         for target in current_links:
             if current_links[target]['region'] in ['sentence']:
                 continue
             clean_contexts_links[target] = current_links[target]
-        mod_link['current_links'] = json.dumps(clean_contexts_links)
+        # mod_link['current_links'] = json.dumps(clean_contexts_links)
+        mod_link['current_links'] = str(clean_contexts_links)
         final_links.append(mod_link)
 
     mask_mention_links.extend(mask_sentence_links[int(
