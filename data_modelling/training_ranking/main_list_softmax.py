@@ -98,7 +98,6 @@ if __name__ == '__main__':
                         required=True, help='Data directory')
     parser.add_argument('--data_dir_2', type=str, default='',
                         help='Data directory for second stage')
-    # make num_epochs a list argument
     parser.add_argument('--num_epochs', nargs='+', type=int,
                         default=[1], help='Number of epochs')
     parser.add_argument('--batch_size', type=int, default=4,
@@ -377,8 +376,6 @@ if __name__ == '__main__':
             output = {'sources': [], 'contexts': [],
                       'targets': [], 'noises': []}
         if input[0]['split'] == 'train':
-            # for i in range(args.neg_samples_train[0]):
-            #     output[f"contexts_neg_{i}"] = []
             noise_types = ['mask_span', 'mask_sentence',
                            'mask_mention', 'no_mask']
             for index, item in enumerate(input):
@@ -416,7 +413,6 @@ if __name__ == '__main__':
                             valid_noise_types, weights=weights[-len(valid_noise_types):], k=1)[0]
 
                 if args.use_current_links:
-                    # current_links = json.loads(item['current_links'])
                     current_links = literal_eval(item['current_links'])
                     temp = []
                     titles = list(current_links.keys())
@@ -483,8 +479,6 @@ if __name__ == '__main__':
                     source_section_neg = item[f"source_section_neg_{i}"]
                     link_context_neg = item[f"link_context_neg_{i}"]
                     if args.use_current_links:
-                        # current_links_neg = json.loads(
-                        #     item[f"current_links_neg_{i}"])
                         try:
                             current_links_neg = literal_eval(
                                 item[f"current_links_neg_{i}"])
@@ -500,7 +494,6 @@ if __name__ == '__main__':
                             if len(temp) == args.n_links:
                                 break
                         if temp:
-                            # output[f'current_links_{index}_neg_{i}'] = temp
                             output['current_links'].extend(temp)
                             output['current_links_supindex'].extend(
                                 [index] * len(temp))
@@ -520,10 +513,7 @@ if __name__ == '__main__':
                     else:
                         context_input += f"{link_context_neg}"
                     output['contexts'].append(context_input)
-                    # output[f"contexts_neg_{i}"].append(context_input)
         else:
-            # for i in range(args.neg_samples_eval[0]):
-            #     output[f"contexts_neg_{i}"] = []
             for index, item in enumerate(input):
                 if item['target_title'] not in mention_map:
                     mention_map[item['target_title']] = item['target_title']
@@ -543,7 +533,6 @@ if __name__ == '__main__':
                     target_input = f"{item['target_title']}{tokenizer.sep_token}{item['target_lead']}"
 
                 if args.use_current_links:
-                    # current_links = json.loads(item['current_links'])
                     current_links = literal_eval(item['current_links'])
                     temp = []
                     titles = list(current_links.keys())
@@ -554,7 +543,6 @@ if __name__ == '__main__':
                         if len(temp) == args.n_links:
                             break
                     if temp:
-                        # output[f'current_links_{index}'] = temp
                         output['current_links'].extend(temp)
                         output['current_links_supindex'].extend(
                             [index] * len(temp))
@@ -571,8 +559,6 @@ if __name__ == '__main__':
                     source_section_neg = item[f"source_section_neg_{i}"]
                     link_context_neg = item[f"link_context_neg_{i}"]
                     if args.use_current_links:
-                        # current_links_neg = json.loads(
-                        #     item[f"current_links_neg_{i}"])
                         current_links_neg = literal_eval(
                             item[f"current_links_neg_{i}"])
                         temp = []
@@ -584,7 +570,6 @@ if __name__ == '__main__':
                             if len(temp) == args.n_links:
                                 break
                         if temp:
-                            # output[f'current_links_{index}_neg_{i}'] = temp
                             output['current_links'].extend(temp)
                             output['current_links_supindex'].extend(
                                 [index] * len(temp))
@@ -603,7 +588,6 @@ if __name__ == '__main__':
                         context_input += f"{mention_map[item['target_title']]}{tokenizer.sep_token}{link_context_neg}"
                     else:
                         context_input += f"{link_context_neg}"
-                    # output[f"contexts_neg_{i}"].append(context_input)
                     output['contexts'].append(context_input)
 
         for key in output:
@@ -1198,14 +1182,11 @@ if __name__ == '__main__':
             output = {'sources': [], 'contexts': [],
                       'targets': [], 'noises': []}
         if input[0]['split'] == 'train':
-            # for i in range(args.neg_samples_train[1]):
-            #     output[f"contexts_neg_{i}"] = []
             for index, item in enumerate(input):
                 if item['target_title'] not in mention_map:
                     mention_map[item['target_title']] = item['target_title']
                 source_input = f"{item['source_title']}{tokenizer.sep_token}{item['source_lead']}"
                 if args.use_current_links:
-                    # current_links = json.loads(item['current_links'])
                     current_links = literal_eval(item['current_links'])
                     titles = list(current_links.keys())
                     random.shuffle(titles)
@@ -1216,7 +1197,6 @@ if __name__ == '__main__':
                         if len(temp) == args.n_links:
                             break
                     if temp:
-                        # output[f'current_links_{index}'] = temp
                         output['current_links'].extend(temp)
                         output['current_links_supindex'].extend(
                             [index] * len(temp))
@@ -1245,8 +1225,6 @@ if __name__ == '__main__':
                     source_section_neg = item[f"source_section_neg_{i}"]
                     link_context_neg = item[f"link_context_neg_{i}"]
                     if args.use_current_links:
-                        # current_links_neg = json.loads(
-                        #     item[f"current_links_neg_{i}"])
                         current_links_neg = literal_eval(
                             item[f"current_links_neg_{i}"])
                         titles = list(current_links_neg.keys())
@@ -1258,7 +1236,6 @@ if __name__ == '__main__':
                             if len(temp) == args.n_links:
                                 break
                         if temp:
-                            # output[f'current_links_{index}_neg_{i}'] = temp
                             output['current_links'].extend(temp)
                             output['current_links_supindex'].extend(
                                 [index] * len(temp))
@@ -1274,17 +1251,13 @@ if __name__ == '__main__':
                         context_input += f"{mention_map[item['target_title']]}{tokenizer.sep_token}{link_context_neg}"
                     else:
                         context_input += f"{link_context_neg}"
-                    # output[f"contexts_neg_{i}"].append(context_input)
                     output['contexts'].append(context_input)
         else:
-            # for i in range(args.neg_samples_eval[1]):
-            #     output[f"contexts_neg_{i}"] = []
             for index, item in enumerate(input):
                 if item['target_title'] not in mention_map:
                     mention_map[item['target_title']] = item['target_title']
                 source_input = f"{item['source_title']}{tokenizer.sep_token}{item['source_lead']}"
                 if args.use_current_links:
-                    # current_links = json.loads(item['current_links'])
                     current_links = literal_eval(item['current_links'])
                     titles = list(current_links.keys())
                     random.shuffle(titles)
@@ -1295,7 +1268,6 @@ if __name__ == '__main__':
                         if len(temp) == args.n_links:
                             break
                     if temp:
-                        # output[f'current_links_{index}'] = temp
                         output['current_links'].extend(temp)
                         output['current_links_supindex'].extend(
                             [index] * len(temp))
@@ -1324,8 +1296,6 @@ if __name__ == '__main__':
                     source_section_neg = item[f"source_section_neg_{i}"]
                     link_context_neg = item[f"link_context_neg_{i}"]
                     if args.use_current_links:
-                        # current_links_neg = json.loads(
-                        #     item[f"current_links_neg_{i}"])
                         current_links_neg = literal_eval(
                             item[f"current_links_neg_{i}"])
                         titles = list(current_links_neg.keys())
@@ -1337,7 +1307,6 @@ if __name__ == '__main__':
                             if len(temp) == args.n_links:
                                 break
                         if temp:
-                            # output[f'current_links_{index}_neg_{i}'] = temp
                             output['current_links'].extend(temp)
                             output['current_links_supindex'].extend(
                                 [index] * len(temp))
@@ -1353,7 +1322,6 @@ if __name__ == '__main__':
                         context_input += f"{mention_map[item['target_title']]}{tokenizer.sep_token}{link_context_neg}"
                     else:
                         context_input += f"{link_context_neg}"
-                    # output[f"contexts_neg_{i}"].append(context_input)
                     output['contexts'].append(context_input)
 
         for key in output:
