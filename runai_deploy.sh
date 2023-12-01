@@ -8,10 +8,13 @@ export IMAGE_TAG="prod"
 export IMAGE="ic-registry.epfl.ch/dlab/${IMAGE_CREATOR}/${IMAGE_NAME}:${IMAGE_TAG}"
 export NODE_TYPE="G10"
 export NUM_GPUS=1
-export NUM_CPUS=4
+export NUM_CPUS=8
 export MEMORY="48G"
-export SLEEP_TIME="3h"
-EXP_NAME="runai-${IMAGE_NAME}-${IMAGE_TAG}-${SLEEP_TIME}-${NODE_TYPE}-${NUM_GPUS}-${NUM_CPUS}-${MEMORY}"
+export SLEEP_TIME="24h"
+export COMMENT="last-try"
+# runai-conda-prod-24h-g10-1-8-48g-current-links-average-split-models
+# runai-conda-prod-24h-g10-1-8-48g-current-links-average-start-freeze
+EXP_NAME="runai-${IMAGE_NAME}-${IMAGE_TAG}-${SLEEP_TIME}-${NODE_TYPE}-${NUM_GPUS}-${NUM_CPUS}-${MEMORY}-${COMMENT}"
 # lowercase EXP_NAME, because k8s doesn't allow uppercase letters in the name
 # shellcheck disable=SC2155
 export EXP_NAME=$(echo "$EXP_NAME" | tr '[:upper:]' '[:lower:]')
