@@ -166,6 +166,7 @@ if __name__ == '__main__':
                         help='Number of current links to use')
     parser.add_argument('--delay_fuser_steps', type=int, default=0,
                         help='Number of steps without using the knowledge fuser (anf thus not using current link knowledge)')
+    parser.add_argument('--no_link_strategy', type=str, choices=['zero_vector', 'empty_embedding'], default='zero_vector', help='What to do when there are no current links')
     parser.set_defaults(resume=False, insert_section=False, mask_negatives=False, split_models=False, two_stage=False,
                         use_current_links=False, current_links_residuals=False, normalize_current_links=False)
 
@@ -262,15 +263,16 @@ if __name__ == '__main__':
                 model_contexts = AutoModel.from_pretrained(args.model_name)
             else:
                 model = AutoModel.from_pretrained(args.model_name)
+        if args.split_models:
+            model_contexts_size = model_contexts.config.hidden_size
+            model_articles_size = model_articles.config.hidden_size
+        else:
+            model_contexts_size = model.config.hidden_size
+            model_articles_size = model.config.hidden_size
         try:
-            if args.split_models:
-                classification_head = Sequential(nn.Linear(model_articles.config.hidden_size * 2 + model_contexts.config.hidden_size, model_articles.config.hidden_size),
-                                                 nn.ReLU(),
-                                                 nn.Linear(model_articles.config.hidden_size, 1))
-            else:
-                classification_head = Sequential(nn.Linear(model.config.hidden_size * 3, model.config.hidden_size),
-                                                 nn.ReLU(),
-                                                 nn.Linear(model.config.hidden_size, 1))
+            classification_head = Sequential(nn.Linear(model_articles_size * 2 + model_contexts_size, model_articles_size),
+                                             nn.ReLU(),
+                                             nn.Linear(model_articles_size, 1))
             classification_head.load_state_dict(torch.load(os.path.join(
                 args.checkpoint_dir, 'classification_head.pth'), map_location='cpu'))
             logger.info("Classification head loaded from checkpoint directory")
@@ -278,24 +280,20 @@ if __name__ == '__main__':
             logger.info(
                 "Could not load classification head from checkpoint directory")
             logger.info("Initializing classification head with random weights")
-            if args.split_models:
-                classification_head = Sequential(nn.Linear(model_articles.config.hidden_size * 2 + model_contexts.config.hidden_size, model_articles.config.hidden_size),
-                                                 nn.ReLU(),
-                                                 nn.Linear(model_articles.config.hidden_size, 1))
-            else:
-                classification_head = Sequential(nn.Linear(model.config.hidden_size * 3, model.config.hidden_size),
-                                                 nn.ReLU(),
-                                                 nn.Linear(model.config.hidden_size, 1))
+            classification_head = Sequential(nn.Linear(model_articles_size * 2 + model_contexts_size, model_articles_size),
+                                             nn.ReLU(),
+                                             nn.Linear(model_articles_size, 1))
         if args.use_current_links:
             try:
-                if args.split_models:
-                    link_fuser = Sequential(nn.Linear(model_articles.config.hidden_size + model_contexts.config.hidden_size, model_contexts.config.hidden_size),
+                if args.current_links_residuals:
+                    link_fuser = Sequential(nn.Linear(model_articles_size, model_contexts_size),
                                             nn.ReLU(),
-                                            nn.Linear(model_contexts.config.hidden_size, model_contexts.config.hidden_size))
+                                            nn.Linear(model_contexts_size, model_contexts_size))
                 else:
-                    link_fuser = Sequential(nn.Linear(model.config.hidden_size * 2, model.config.hidden_size),
+                    link_fuser = Sequential(nn.Linear(model_articles_size + model_contexts_size, model_contexts_size),
                                             nn.ReLU(),
-                                            nn.Linear(model.config.hidden_size, model.config.hidden_size))
+                                            # nn.BatchNorm1d(model_contexts_size),
+                                            nn.Linear(model_contexts_size, model_contexts_size))
                 link_fuser.load_state_dict(torch.load(os.path.join(
                     args.checkpoint_dir, 'link_fuser.pth'), map_location='cpu'))
                 logger.info("Link fuser loaded from checkpoint directory")
@@ -303,42 +301,40 @@ if __name__ == '__main__':
                 logger.info(
                     "Could not load link fuser from checkpoint directory")
                 logger.info("Initializing link fuser with random weights")
-                if args.split_models:
-                    link_fuser = Sequential(nn.Linear(model_articles.config.hidden_size + model_contexts.config.hidden_size, model_contexts.config.hidden_size),
+                if args.current_links_residuals:
+                    link_fuser = Sequential(nn.Linear(model_articles_size, model_contexts_size),
                                             nn.ReLU(),
-                                            nn.Linear(model_contexts.config.hidden_size, model_contexts.config.hidden_size))
+                                            nn.Linear(model_contexts_size, model_contexts_size))
                 else:
-                    link_fuser = Sequential(nn.Linear(model.config.hidden_size * 2, model.config.hidden_size),
+                    link_fuser = Sequential(nn.Linear(model_articles_size + model_contexts_size, model_contexts_size),
                                             nn.ReLU(),
-                                            nn.Linear(model.config.hidden_size, model.config.hidden_size))
+                                            # nn.BatchNorm1d(model_contexts_size),
+                                            nn.Linear(model_contexts_size, model_contexts_size))
     else:
         logger.info("Initializing model")
         if args.split_models:
             model_articles = AutoModel.from_pretrained(args.model_name)
             model_contexts = AutoModel.from_pretrained(args.model_name)
-            classification_head = Sequential(nn.Linear(model_articles.config.hidden_size * 2 + model_contexts.config.hidden_size, model_articles.config.hidden_size),
-                                             nn.ReLU(),
-                                             nn.Linear(model_articles.config.hidden_size, 1))
-            if args.use_current_links:
-                link_fuser = Sequential(nn.Linear(model_articles.config.hidden_size + model_contexts.config.hidden_size, model_contexts.config.hidden_size),
-                                        nn.ReLU(),
-                                        nn.Linear(model_contexts.config.hidden_size, model_contexts.config.hidden_size))
+            model_articles_size = model_articles.config.hidden_size
+            model_contexts_size = model_contexts.config.hidden_size
         else:
             model = AutoModel.from_pretrained(args.model_name)
-            classification_head = Sequential(nn.Linear(model.config.hidden_size * 3, model.config.hidden_size),
-                                             nn.ReLU(),
-                                             nn.Linear(model.config.hidden_size, 1))
-            if args.use_current_links:
-                link_fuser = Sequential(nn.Linear(model.config.hidden_size * 2, model.config.hidden_size),
-                                        nn.ReLU(),
-                                        nn.Linear(model.config.hidden_size, model.config.hidden_size))
+            model_articles_size = model.config.hidden_size
+            model_contexts_size = model.config.hidden_size
 
-    if args.split_models:
-        model_contexts_size = model_contexts.config.hidden_size
-        model_articles_size = model_articles.config.hidden_size
-    else:
-        model_contexts_size = model.config.hidden_size
-        model_articles_size = model.config.hidden_size
+        classification_head = Sequential(nn.Linear(model_articles_size * 2 + model_contexts_size, model_articles_size),
+                                         nn.ReLU(),
+                                         nn.Linear(model_articles_size, 1))
+        if args.use_current_links:
+            if args.current_links_residuals:
+                link_fuser = Sequential(nn.Linear(model_articles_size, model_contexts_size),
+                                        nn.ReLU(),
+                                        nn.Linear(model_contexts_size, model_contexts_size))
+            else:
+                link_fuser = Sequential(nn.Linear(model_articles_size + model_contexts_size, model_contexts_size),
+                                        nn.ReLU(),
+                                        # nn.BatchNorm1d(model_contexts_size),
+                                        nn.Linear(model_contexts_size, model_contexts_size))
 
     tokenizer = AutoTokenizer.from_pretrained(args.model_name)
     tokenizer.save_pretrained(os.path.join(output_dir, 'tokenizer'))
@@ -495,12 +491,8 @@ if __name__ == '__main__':
                     source_section_neg = item[f"source_section_neg_{i}"]
                     link_context_neg = item[f"link_context_neg_{i}"]
                     if args.use_current_links:
-                        try:
-                            current_links_neg = literal_eval(
-                                item[f"current_links_neg_{i}"])
-                        except:
-                            print(item[f"current_links_neg_{i}"])
-                            raise ValueError
+                        current_links_neg = literal_eval(
+                            item[f"current_links_neg_{i}"])
                         temp = []
                         titles = list(current_links_neg.keys())
                         random.shuffle(titles)
@@ -744,21 +736,39 @@ if __name__ == '__main__':
                         **data['contexts'])['last_hidden_state'][:, 0, :]
                     output_current_links = model_articles(
                         **data['current_links'])['last_hidden_state'][:, 0, :]
+                    empty_token_sequence = tokenizer([['','']], padding='max_length', truncation=True,
+                                     return_tensors='pt', max_length=args.max_tokens).to(device)
+                    empty_embedding = model_articles(**empty_token_sequence)['last_hidden_state'][:, 0, :]
                 else:
                     output_context_text = model(
                         **data['contexts'])['last_hidden_state'][:, 0, :]
                     output_current_links = model(
                         **data['current_links'])['last_hidden_state'][:, 0, :]
+                    empty_token_sequence = tokenizer([['','']], padding='max_length', truncation=True,
+                                     return_tensors='pt', max_length=args.max_tokens).to(device)
+                    empty_embedding = model(**empty_token_sequence)['last_hidden_state'][:, 0, :]
                 joint_embeddings = []
+                joint_sources = []
+                joint_targets = []
                 for triplet_index in range(len(data['sources']['input_ids'])):
                     for candidate_index in range(args.neg_samples_train[0] + 1):
                         current_link_subset = output_current_links[(data['current_links_supindex'] == triplet_index) & (
                             data['current_links_subindex'] == candidate_index)]
                         # check if there are now current links
                         if len(current_link_subset) == 0:
-                            # represent the lack of lists as a zero tensor
-                            joint_embeddings.append(torch.cat([output_context_text[triplet_index + candidate_index].unsqueeze(
-                                0), torch.zeros((1, model_contexts_size), device=device)], dim=1))
+                            if args.no_link_strategy == 'zero_vector':
+                                # represent the lack of lists as a zero tensor
+                                if args.current_links_residuals:
+                                    joint_embeddings.append(torch.zeros((1, model_contexts_size), device=device))
+                                else:
+                                    joint_embeddings.append(torch.cat([output_context_text[triplet_index + candidate_index].unsqueeze(
+                                        0), torch.zeros((1, model_contexts_size), device=device)], dim=1))
+                            elif args.no_link_strategy == 'empty_embedding':
+                                if args.current_links_residuals:
+                                    joint_embeddings.append(empty_embedding)
+                                else:
+                                    joint_embeddings.append(torch.cat([output_context_text[triplet_index + candidate_index].unsqueeze(
+                                        0), empty_embedding], dim=1))
                         else:
                             if args.current_links_mode == 'sum':
                                 current_links_subset_pooled = torch.sum(
@@ -790,8 +800,11 @@ if __name__ == '__main__':
                                 max_index = torch.argmax(similarities)
                                 current_links_subset_pooled = current_link_subset[max_index].unsqueeze(
                                     0)
-                            joint_embeddings.append(torch.cat(
-                                [output_context_text[triplet_index + candidate_index].unsqueeze(0), current_links_subset_pooled], dim=1))
+                            if args.current_links_residuals:
+                                joint_embeddings.append(current_links_subset_pooled)
+                            else:
+                                joint_embeddings.append(torch.cat(
+                                    [output_context_text[triplet_index + candidate_index].unsqueeze(0), current_links_subset_pooled], dim=1))
                 joint_embeddings = torch.cat(joint_embeddings, dim=0)
                 output_context = link_fuser(joint_embeddings)
                 if args.current_links_residuals:
@@ -916,6 +929,7 @@ if __name__ == '__main__':
                     model_contexts.eval()
                 else:
                     model.eval()
+                link_fuser.eval()
                 with torch.no_grad():
                     true_pos = 0
                     true_neg = 0
@@ -953,11 +967,17 @@ if __name__ == '__main__':
                                     **val_data['contexts'])['last_hidden_state'][:, 0, :]
                                 output_current_links = model_articles(
                                     **val_data['current_links'])['last_hidden_state'][:, 0, :]
+                                empty_token_sequence = tokenizer([['','']], padding='max_length', truncation=True,
+                                     return_tensors='pt', max_length=args.max_tokens).to(device)
+                                empty_embedding = model_articles(**empty_token_sequence)['last_hidden_state'][:, 0, :]
                             else:
                                 output_context_text = model(
                                     **val_data['contexts'])['last_hidden_state'][:, 0, :]
                                 output_current_links = model(
                                     **val_data['current_links'])['last_hidden_state'][:, 0, :]
+                                empty_token_sequence = tokenizer([['','']], padding='max_length', truncation=True,
+                                     return_tensors='pt', max_length=args.max_tokens).to(device)
+                                empty_embedding = model(**empty_token_sequence)['last_hidden_state'][:, 0, :]
                             joint_embeddings = []
                             for triplet_index in range(len(val_data['sources']['input_ids'])):
                                 for candidate_index in range(args.neg_samples_eval[0] + 1):
@@ -965,9 +985,19 @@ if __name__ == '__main__':
                                         val_data['current_links_subindex'] == candidate_index)]
                                     # check if there are now current links
                                     if len(current_link_subset) == 0:
-                                        # represent the lack of lists as a zero tensor
-                                        joint_embeddings.append(torch.cat([output_context_text[triplet_index + candidate_index].unsqueeze(
-                                            0), torch.zeros((1, model_contexts_size), device=device)], dim=1))
+                                        if args.no_link_strategy == 'zero_vector':
+                                            # represent the lack of lists as a zero tensor
+                                            if args.current_links_residuals:
+                                                joint_embeddings.append(torch.zeros((1, model_contexts_size), device=device))
+                                            else:
+                                                joint_embeddings.append(torch.cat([output_context_text[triplet_index + candidate_index].unsqueeze(
+                                                    0), torch.zeros((1, model_contexts_size), device=device)], dim=1))
+                                        elif args.no_link_strategy == 'empty_embedding':
+                                            if args.current_links_residuals:
+                                                joint_embeddings.append(empty_embedding)
+                                            else:
+                                                joint_embeddings.append(torch.cat([output_context_text[triplet_index + candidate_index].unsqueeze(
+                                                    0), empty_embedding], dim=1))
                                     else:
                                         if args.current_links_mode == 'sum':
                                             current_links_subset_pooled = torch.sum(
@@ -992,8 +1022,12 @@ if __name__ == '__main__':
                                                 similarities, dim=0)
                                             current_links_subset_pooled = torch.sum(
                                                 current_link_subset * weights, dim=0, keepdim=True)
-                                        joint_embeddings.append(torch.cat(
-                                            [output_context_text[triplet_index + candidate_index].unsqueeze(0), current_links_subset_pooled], dim=1))
+                                        if args.current_links_residuals:
+                                            joint_embeddings.append(
+                                                current_links_subset_pooled)
+                                        else:
+                                            joint_embeddings.append(torch.cat(
+                                                [output_context_text[triplet_index + candidate_index].unsqueeze(0), current_links_subset_pooled], dim=1))
                             joint_embeddings = torch.cat(
                                 joint_embeddings, dim=0)
                             output_context = link_fuser(joint_embeddings)
@@ -1185,6 +1219,7 @@ if __name__ == '__main__':
                     model_contexts.train()
                 else:
                     model.train()
+                link_fuser.train()
                 torch.cuda.empty_cache()
                 gc.collect()
 
@@ -1471,11 +1506,17 @@ if __name__ == '__main__':
                         **data['contexts'])['last_hidden_state'][:, 0, :]
                     output_current_links = model_articles(
                         **data['current_links'])['last_hidden_state'][:, 0, :]
+                    empty_token_sequence = tokenizer([['','']], padding='max_length', truncation=True,
+                                     return_tensors='pt', max_length=args.max_tokens).to(device)
+                    empty_embedding = model_articles(**empty_token_sequence)['last_hidden_state'][:, 0, :]
                 else:
                     output_context_text = model(
                         **data['contexts'])['last_hidden_state'][:, 0, :]
                     output_current_links = model(
                         **data['current_links'])['last_hidden_state'][:, 0, :]
+                    empty_token_sequence = tokenizer([['','']], padding='max_length', truncation=True,
+                                     return_tensors='pt', max_length=args.max_tokens).to(device)
+                    empty_embedding = model(**empty_token_sequence)['last_hidden_state'][:, 0, :]
                 joint_embeddings = []
                 for triplet_index in range(len(data['sources']['input_ids'])):
                     for candidate_index in range(args.neg_samples_train[1] + 1):
@@ -1483,9 +1524,19 @@ if __name__ == '__main__':
                             data['current_links_subindex'] == candidate_index)]
                         # check if there are now current links
                         if len(current_link_subset) == 0:
-                            # represent the lack of lists as a zero tensor
-                            joint_embeddings.append(torch.cat([output_context_text[triplet_index + candidate_index].unsqueeze(
-                                0), torch.zeros((1, model_contexts_size), device=device)], dim=1))
+                            if args.no_link_strategy == 'zero_vector':
+                                # represent the lack of lists as a zero tensor
+                                if args.current_links_residuals:
+                                    joint_embeddings.append(torch.zeros((1, model_contexts_size), device=device))
+                                else:
+                                    joint_embeddings.append(torch.cat([output_context_text[triplet_index + candidate_index].unsqueeze(
+                                        0), torch.zeros((1, model_contexts_size), device=device)], dim=1))
+                            elif args.no_link_strategy == 'empty_embedding':
+                                if args.current_links_residuals:
+                                    joint_embeddings.append(empty_embedding)
+                                else:
+                                    joint_embeddings.append(torch.cat([output_context_text[triplet_index + candidate_index].unsqueeze(
+                                        0), empty_embedding], dim=1))
                         else:
                             if args.current_links_mode == 'sum':
                                 current_links_subset_pooled = torch.sum(
@@ -1509,8 +1560,12 @@ if __name__ == '__main__':
                                 weights = torch.softmax(similarities, dim=0)
                                 current_links_subset_pooled = torch.sum(
                                     current_link_subset * weights, dim=0, keepdim=True)
-                            joint_embeddings.append(torch.cat(
-                                [output_context_text[triplet_index + candidate_index].unsqueeze(0), current_links_subset_pooled], dim=1))
+                            if args.current_links_residuals:
+                                joint_embeddings.append(
+                                    current_links_subset_pooled)
+                            else:
+                                joint_embeddings.append(torch.cat(
+                                    [output_context_text[triplet_index + candidate_index].unsqueeze(0), current_links_subset_pooled], dim=1))
                 joint_embeddings = torch.cat(joint_embeddings, dim=0)
                 output_context = link_fuser(joint_embeddings)
                 if args.current_links_residuals:
@@ -1593,6 +1648,7 @@ if __name__ == '__main__':
                     model_contexts.eval()
                 else:
                     model.eval()
+                link_fuser.eval()
                 with torch.no_grad():
                     true_pos = 0
                     true_neg = 0
@@ -1630,11 +1686,17 @@ if __name__ == '__main__':
                                     **val_data['contexts'])['last_hidden_state'][:, 0, :]
                                 output_current_links = model_articles(
                                     **val_data['current_links'])['last_hidden_state'][:, 0, :]
+                                empty_token_sequence = tokenizer([['','']], padding='max_length', truncation=True,
+                                     return_tensors='pt', max_length=args.max_tokens).to(device)
+                                empty_embedding = model_articles(**empty_token_sequence)['last_hidden_state'][:, 0, :]
                             else:
                                 output_context_text = model(
                                     **val_data['contexts'])['last_hidden_state'][:, 0, :]
                                 output_current_links = model(
                                     **val_data['current_links'])['last_hidden_state'][:, 0, :]
+                                empty_token_sequence = tokenizer([['','']], padding='max_length', truncation=True,
+                                     return_tensors='pt', max_length=args.max_tokens).to(device)
+                                empty_embedding = model(**empty_token_sequence)['last_hidden_state'][:, 0, :]
                             joint_embeddings = []
                             for triplet_index in range(len(val_data['sources']['input_ids'])):
                                 for candidate_index in range(args.neg_samples_eval[1] + 1):
@@ -1642,9 +1704,19 @@ if __name__ == '__main__':
                                         val_data['current_links_subindex'] == candidate_index)]
                                     # check if there are now current links
                                     if len(current_link_subset) == 0:
-                                        # represent the lack of lists as a zero tensor
-                                        joint_embeddings.append(torch.cat([output_context_text[triplet_index + candidate_index].unsqueeze(
-                                            0), torch.zeros((1, model_contexts_size), device=device)], dim=1))
+                                        if args.no_link_strategy == 'zero_vector':
+                                            # represent the lack of lists as a zero tensor
+                                            if args.current_links_residuals:
+                                                joint_embeddings.append(torch.zeros((1, model_contexts_size), device=device))
+                                            else:
+                                                joint_embeddings.append(torch.cat([output_context_text[triplet_index + candidate_index].unsqueeze(
+                                                    0), torch.zeros((1, model_contexts_size), device=device)], dim=1))
+                                        elif args.no_link_strategy == 'empty_embedding':
+                                            if args.current_links_residuals:
+                                                joint_embeddings.append(empty_embedding)
+                                            else:
+                                                joint_embeddings.append(torch.cat([output_context_text[triplet_index + candidate_index].unsqueeze(
+                                                    0), empty_embedding], dim=1))
                                     else:
                                         if args.current_links_mode == 'sum':
                                             current_links_subset_pooled = torch.sum(
@@ -1669,8 +1741,12 @@ if __name__ == '__main__':
                                                 similarities, dim=0)
                                             current_links_subset_pooled = torch.sum(
                                                 current_link_subset * weights, dim=0, keepdim=True)
-                                        joint_embeddings.append(torch.cat(
-                                            [output_context_text[triplet_index + candidate_index].unsqueeze(0), current_links_subset_pooled], dim=1))
+                                        if args.current_links_residuals:
+                                            joint_embeddings.append(
+                                                current_links_subset_pooled)
+                                        else:
+                                            joint_embeddings.append(torch.cat(
+                                                [output_context_text[triplet_index + candidate_index].unsqueeze(0), current_links_subset_pooled], dim=1))
                             joint_embeddings = torch.cat(
                                 joint_embeddings, dim=0)
                             output_context = link_fuser(joint_embeddings)
@@ -1862,6 +1938,7 @@ if __name__ == '__main__':
                     model_contexts.train()
                 else:
                     model.train()
+                link_fuser.train()
                 torch.cuda.empty_cache()
                 gc.collect()
 
