@@ -89,120 +89,120 @@ for MONTH in $first_month $second_month $third_month; do
         --output_dir ${data_dir}/${lang}wiki-NS0-${MONTH}/processed_data
 done
 
-echo "Extracting information about all the links for the three months..."
-for MONTH in $first_month $second_month $third_month; do
-    echo "Extracting information about all the links for $MONTH..."
-    python link_extractor_pool.py \
-        --input_dir ${data_dir}/${lang}wiki-NS0-${MONTH}/processed_data \
-        --page_ids ${data_dir}/${lang}wiki-NS0-${MONTH}/processed_data/simple_pages.parquet \
-        --redirect_map ${data_dir}/${lang}wiki-NS0-${MONTH}/processed_data/redirect_map.parquet \
-        --output_dir ${data_dir}/${lang}wiki-NS0-${MONTH}/processed_data \
-        --processes $processes
-done
+# echo "Extracting information about all the links for the three months..."
+# for MONTH in $first_month $second_month $third_month; do
+#     echo "Extracting information about all the links for $MONTH..."
+#     python link_extractor_pool.py \
+#         --input_dir ${data_dir}/${lang}wiki-NS0-${MONTH}/processed_data \
+#         --page_ids ${data_dir}/${lang}wiki-NS0-${MONTH}/processed_data/simple_pages.parquet \
+#         --redirect_map ${data_dir}/${lang}wiki-NS0-${MONTH}/processed_data/redirect_map.parquet \
+#         --output_dir ${data_dir}/${lang}wiki-NS0-${MONTH}/processed_data \
+#         --processes $processes
+# done
 
-echo "Running the post-processing script to clean-up the data for the three months..."
-for MONTH in $first_month $second_month $third_month; do
-    echo "Running the post-processing script to clean-up the data for $MONTH..."
-    python post_processing.py \
-        --input_dir ${data_dir}/${lang}wiki-NS0-${MONTH}/processed_data \
-        --output_dir ${data_dir}/${lang}wiki-NS0-${MONTH}/processed_data
-done
+# echo "Running the post-processing script to clean-up the data for the three months..."
+# for MONTH in $first_month $second_month $third_month; do
+#     echo "Running the post-processing script to clean-up the data for $MONTH..."
+#     python post_processing.py \
+#         --input_dir ${data_dir}/${lang}wiki-NS0-${MONTH}/processed_data \
+#         --output_dir ${data_dir}/${lang}wiki-NS0-${MONTH}/processed_data
+# done
 
-echo "Generating the synthetic test data..."
-python synth_test_data_generator.py \
-    --first_month_dir ${data_dir}/${lang}wiki-NS0-${second_month}/processed_data \
-    --second_month_dir ${data_dir}/${lang}wiki-NS0-${third_month}/processed_data \
-    --output_dir ${data_dir}/${lang}wiki-NS0-${second_month}/eval_synth \
-    --no_mask_perc $no_mask_perc \
-    --mask_mention_perc $mask_mention_perc \
-    --mask_sentence_perc $mask_sentence_perc \
-    --mask_paragraph_perc $mask_paragraph_perc
+# echo "Generating the synthetic test data..."
+# python synth_test_data_generator.py \
+#     --first_month_dir ${data_dir}/${lang}wiki-NS0-${second_month}/processed_data \
+#     --second_month_dir ${data_dir}/${lang}wiki-NS0-${third_month}/processed_data \
+#     --output_dir ${data_dir}/${lang}wiki-NS0-${second_month}/eval_synth \
+#     --no_mask_perc $no_mask_perc \
+#     --mask_mention_perc $mask_mention_perc \
+#     --mask_sentence_perc $mask_sentence_perc \
+#     --mask_paragraph_perc $mask_paragraph_perc
 
-echo "Running the real test data versions finder..."
-echo "Running it for the time span between $first_month and $second_month..."
-python test_data_version_finder.py \
-    --raw_data_dir ${data_dir}/${lang}wiki-NS0-${second_month}/raw_data \
-    --first_month_dir ${data_dir}/${lang}wiki-NS0-${first_month}/processed_data \
-    --second_month_dir ${data_dir}/${lang}wiki-NS0-${second_month}/processed_data \
-    --output_dir ${data_dir}/${lang}wiki-NS0-${first_month}/eval \
-    --lang $lang \
-    --first_date $first_month \
-    --second_date $second_month
-echo "Running it for the time span between $second_month and $third_month..."
-python test_data_version_finder.py \
-    --raw_data_dir ${data_dir}/${lang}wiki-NS0-${third_month}/raw_data \
-    --first_month_dir ${data_dir}/${lang}wiki-NS0-${second_month}/processed_data \
-    --second_month_dir ${data_dir}/${lang}wiki-NS0-${third_month}/processed_data \
-    --output_dir ${data_dir}/${lang}wiki-NS0-${second_month}/eval \
-    --lang $lang \
-    --first_date $second_month \
-    --second_date $third_month
+# echo "Running the real test data versions finder..."
+# echo "Running it for the time span between $first_month and $second_month..."
+# python test_data_version_finder.py \
+#     --raw_data_dir ${data_dir}/${lang}wiki-NS0-${second_month}/raw_data \
+#     --first_month_dir ${data_dir}/${lang}wiki-NS0-${first_month}/processed_data \
+#     --second_month_dir ${data_dir}/${lang}wiki-NS0-${second_month}/processed_data \
+#     --output_dir ${data_dir}/${lang}wiki-NS0-${first_month}/eval \
+#     --lang $lang \
+#     --first_date $first_month \
+#     --second_date $second_month
+# echo "Running it for the time span between $second_month and $third_month..."
+# python test_data_version_finder.py \
+#     --raw_data_dir ${data_dir}/${lang}wiki-NS0-${third_month}/raw_data \
+#     --first_month_dir ${data_dir}/${lang}wiki-NS0-${second_month}/processed_data \
+#     --second_month_dir ${data_dir}/${lang}wiki-NS0-${third_month}/processed_data \
+#     --output_dir ${data_dir}/${lang}wiki-NS0-${second_month}/eval \
+#     --lang $lang \
+#     --first_date $second_month \
+#     --second_date $third_month
 
-echo "Running HTML download prep script..."
-echo "Running it for the time span between $first_month and $second_month..."
-python test_html_downloader_prep.py \
-    --input_file ${data_dir}/${lang}wiki-NS0-${first_month}/eval/link_versions.parquet \
-    --output_directory ${data_dir}/${lang}wiki-NS0-${first_month}/eval/pages
-echo "Running it for the time span between $second_month and $third_month..."
-python test_html_downloader_prep.py \
-    --input_file ${data_dir}/${lang}wiki-NS0-${second_month}/eval/link_versions.parquet \
-    --output_directory ${data_dir}/${lang}wiki-NS0-${second_month}/eval/pages
+# echo "Running HTML download prep script..."
+# echo "Running it for the time span between $first_month and $second_month..."
+# python test_html_downloader_prep.py \
+#     --input_file ${data_dir}/${lang}wiki-NS0-${first_month}/eval/link_versions.parquet \
+#     --output_directory ${data_dir}/${lang}wiki-NS0-${first_month}/eval/pages
+# echo "Running it for the time span between $second_month and $third_month..."
+# python test_html_downloader_prep.py \
+#     --input_file ${data_dir}/${lang}wiki-NS0-${second_month}/eval/link_versions.parquet \
+#     --output_directory ${data_dir}/${lang}wiki-NS0-${second_month}/eval/pages
 
-echo "Downloading the HTML pages..."
-echo "Downloading it for the time span between $first_month and $second_month..."
-node crawler/crawl_wiki.js \
-    --articles ${data_dir}/${lang}wiki-NS0-${first_month}/eval/pages/pages.txt \
-    --concurrence $download_processes \
-    --destinationDirectory ${data_dir}/${lang}wiki-NS0-${first_month}/eval/pages/ \
-    --language $lang
-echo "Downloading it for the time span between $second_month and $third_month..."
-node crawler/crawl_wiki.js \
-    --articles ${data_dir}/${lang}wiki-NS0-${second_month}/eval/pages/pages.txt \
-    --concurrence $download_processes \
-    --destinationDirectory ${data_dir}/${lang}wiki-NS0-${second_month}/eval/pages/ \
-    --language $lang
+# echo "Downloading the HTML pages..."
+# echo "Downloading it for the time span between $first_month and $second_month..."
+# node crawler/crawl_wiki.js \
+#     --articles ${data_dir}/${lang}wiki-NS0-${first_month}/eval/pages/pages.txt \
+#     --concurrence $download_processes \
+#     --destinationDirectory ${data_dir}/${lang}wiki-NS0-${first_month}/eval/pages/ \
+#     --language $lang
+# echo "Downloading it for the time span between $second_month and $third_month..."
+# node crawler/crawl_wiki.js \
+#     --articles ${data_dir}/${lang}wiki-NS0-${second_month}/eval/pages/pages.txt \
+#     --concurrence $download_processes \
+#     --destinationDirectory ${data_dir}/${lang}wiki-NS0-${second_month}/eval/pages/ \
+#     --language $lang
 
-echo "Running the test data generator..."
-echo "Running it for the time span between $first_month and $second_month..."
-python test_data_generator.py \
-    --versions_file ${data_dir}/${lang}wiki-NS0-${first_month}/eval/link_versions.parquet \
-    --html_dir ${data_dir}/${lang}wiki-NS0-${first_month}/eval/pages \
-    --redirect_1 ${data_dir}/${lang}wiki-NS0-${first_month}/processed_data/redirect_map.parquet \
-    --redirect_2 ${data_dir}/${lang}wiki-NS0-${second_month}/processed_data/redirect_map.parquet \
-    --mention_map ${data_dir}/${lang}wiki-NS0-${first_month}/processed_data/mention_map.parquet \
-    --output_dir ${data_dir}/${lang}wiki-NS0-${first_month}/eval \
-    --n_processes $processes
-echo "Running it for the time span between $second_month and $third_month..."
-python test_data_generator.py \
-    --versions_file ${data_dir}/${lang}wiki-NS0-${second_month}/eval/link_versions.parquet \
-    --html_dir ${data_dir}/${lang}wiki-NS0-${second_month}/eval/pages \
-    --redirect_1 ${data_dir}/${lang}wiki-NS0-${second_month}/processed_data/redirect_map.parquet \
-    --redirect_2 ${data_dir}/${lang}wiki-NS0-${third_month}/processed_data/redirect_map.parquet \
-    --mention_map ${data_dir}/${lang}wiki-NS0-${second_month}/processed_data/mention_map.parquet \
-    --output_dir ${data_dir}/${lang}wiki-NS0-${second_month}/eval \
-    --n_processes $processes
+# echo "Running the test data generator..."
+# echo "Running it for the time span between $first_month and $second_month..."
+# python test_data_generator.py \
+#     --versions_file ${data_dir}/${lang}wiki-NS0-${first_month}/eval/link_versions.parquet \
+#     --html_dir ${data_dir}/${lang}wiki-NS0-${first_month}/eval/pages \
+#     --redirect_1 ${data_dir}/${lang}wiki-NS0-${first_month}/processed_data/redirect_map.parquet \
+#     --redirect_2 ${data_dir}/${lang}wiki-NS0-${second_month}/processed_data/redirect_map.parquet \
+#     --mention_map ${data_dir}/${lang}wiki-NS0-${first_month}/processed_data/mention_map.parquet \
+#     --output_dir ${data_dir}/${lang}wiki-NS0-${first_month}/eval \
+#     --n_processes $processes
+# echo "Running it for the time span between $second_month and $third_month..."
+# python test_data_generator.py \
+#     --versions_file ${data_dir}/${lang}wiki-NS0-${second_month}/eval/link_versions.parquet \
+#     --html_dir ${data_dir}/${lang}wiki-NS0-${second_month}/eval/pages \
+#     --redirect_1 ${data_dir}/${lang}wiki-NS0-${second_month}/processed_data/redirect_map.parquet \
+#     --redirect_2 ${data_dir}/${lang}wiki-NS0-${third_month}/processed_data/redirect_map.parquet \
+#     --mention_map ${data_dir}/${lang}wiki-NS0-${second_month}/processed_data/mention_map.parquet \
+#     --output_dir ${data_dir}/${lang}wiki-NS0-${second_month}/eval \
+#     --n_processes $processes
 
-echo "Running the input generator for stage 1..."
-python input_generator_stage1.py \
-    --input_month1_dir ${data_dir}/${lang}wiki-NS0-${second_month}/processed_data \
-    --input_month2_dir ${data_dir}/${lang}wiki-NS0-${third_month}/processed_data \
-    --input_dir_val ${data_dir}/${lang}wiki-NS0-${second_month}/eval_synth \
-    --output_dir ${data_dir}/${lang}wiki-NS0-${second_month}/ml_data/${lang}_stage_1 \
-    --neg_strategies 6 \
-    --neg_samples_train $neg_samples_train \
-    --neg_samples_val $neg_samples_val \
-    --max_train_samples $max_train_samples \
-    --max_val_samples $max_val_samples \
-    --join_samples
+# echo "Running the input generator for stage 1..."
+# python input_generator_stage1.py \
+#     --input_month1_dir ${data_dir}/${lang}wiki-NS0-${second_month}/processed_data \
+#     --input_month2_dir ${data_dir}/${lang}wiki-NS0-${third_month}/processed_data \
+#     --input_dir_val ${data_dir}/${lang}wiki-NS0-${second_month}/eval_synth \
+#     --output_dir ${data_dir}/${lang}wiki-NS0-${second_month}/ml_data/${lang}_stage_1 \
+#     --neg_strategies 6 \
+#     --neg_samples_train $neg_samples_train \
+#     --neg_samples_val $neg_samples_val \
+#     --max_train_samples $max_train_samples \
+#     --max_val_samples $max_val_samples \
+#     --join_samples
 
-echo "Running the input generator for stage 2..."
-python input_generator_stage2.py \
-    --input_month1_dir ${data_dir}/${lang}wiki-NS0-${first_month}/processed_data \
-    --input_month2_dir ${data_dir}/${lang}wiki-NS0-${second_month}/processed_data \
-    --links_file ${data_dir}/${lang}wiki-NS0-${first_month}/eval/test_data.parquet \
-    --output_dir ${data_dir}/${lang}wiki-NS0-${second_month}/ml_data/${lang}_stage_2 \
-    --neg_samples_train $neg_samples_train \
-    --neg_samples_val $neg_samples_val
+# echo "Running the input generator for stage 2..."
+# python input_generator_stage2.py \
+#     --input_month1_dir ${data_dir}/${lang}wiki-NS0-${first_month}/processed_data \
+#     --input_month2_dir ${data_dir}/${lang}wiki-NS0-${second_month}/processed_data \
+#     --links_file ${data_dir}/${lang}wiki-NS0-${first_month}/eval/test_data.parquet \
+#     --output_dir ${data_dir}/${lang}wiki-NS0-${second_month}/ml_data/${lang}_stage_2 \
+#     --neg_samples_train $neg_samples_train \
+#     --neg_samples_val $neg_samples_val
 
 # Print the time taken
 # end=`date +%s`

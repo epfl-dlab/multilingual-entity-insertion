@@ -7,7 +7,7 @@ import bz2
 from xml.etree.ElementTree import iterparse
 from html import unescape
 import re
-import urllib
+import urllib.request
 from collections import Counter
 import json
 from multiprocessing import Pool, cpu_count
@@ -100,18 +100,18 @@ if __name__ == '__main__':
     print('Loading data')
     dfs = []
     for file in tqdm(first_month_link_files):
-        dfs.append(pd.read_parquet(file))
+        dfs.append(pd.read_parquet(file, columns=['source_title', 'target_title', 'source_ID', 'target_ID', 'source_version']))
     df_1 = pd.concat(dfs)
 
     dfs = []
     for file in tqdm(second_month_link_files):
-        dfs.append(pd.read_parquet(file))
+        dfs.append(pd.read_parquet(file, columns=['source_title', 'target_title', 'source_ID', 'target_ID', 'source_version']))
     df_2 = pd.concat(dfs)
 
-    dfs = []
-    for file in tqdm(first_month_page_files):
-        dfs.append(pd.read_parquet(file))
-    df_pages_1 = pd.concat(dfs)
+    # dfs = []
+    # for file in tqdm(first_month_page_files):
+    #     dfs.append(pd.read_parquet(file))
+    # df_pages_1 = pd.concat(dfs)
 
     redirect_map = pd.concat([pd.read_parquet(os.path.join(args.first_month_dir, 'redirect_map.parquet')), pd.read_parquet(
         os.path.join(args.second_month_dir, 'redirect_map.parquet'))]).drop_duplicates(ignore_index=False)
@@ -253,27 +253,19 @@ if __name__ == '__main__':
                            'max_id': max_id, 
                            'file_name': os.path.join(args.raw_data_dir, file_name),
                            'url': url})
-        files = set([])
+        files = {}
         for id in link_struc:
             for range in ranges:
                 if range['min_id'] <= id <= range['max_id']:
-                    files.add(range['file_name'])
+                    files[range['file_name']] = range['url']
                     break
-        files = [os.path.join(args.raw_data_dir, file) for file in files]
         print(f"Downloading {len(files)} revision history files")
+        print(files)
         # download in parallel
-        with Pool(min(args.download_processes, cpu_count())) as p:
-            p.starmap(download_url, [(file['url'], file['file_name']) for file in ranges])
-
-        # for file in files:
-        #     if not os.path.exists(file):
-        #         print(f"Downloading {file} from {url}")
-        #         try:
-        #             download_url(url, file)
-        #         except urllib.error.HTTPError:
-        #             print(f'Could not download {url}.')
-        #             print(f'Check if the url is still available at https://dumps.wikimedia.org/.')
-            
+        # with Pool(min(args.download_processes, cpu_count())) as p:
+        #     p.starmap(download_url, [(files[file], file) for file in files])
+        for file in files:
+            download_url(files[file], file)            
         
     print("Finding links in revision history file(s)")
     # read the revision history
@@ -327,8 +319,8 @@ if __name__ == '__main__':
                                     elif timestamp < first_date:
                                         old = True
 
-                                    # if timestamp is more than 1 month before the first date, set leave to True
-                                    if timestamp < first_date - pd.DateOffset(months=1):
+                                    # if timestamp is more than 7 days before the first date, set leave to True
+                                    if timestamp < first_date - pd.Timedelta(days=7):
                                         leave = True
                                 if revision_data.tag.endswith('id') and not revision_data.tag.endswith('parentid'):
                                     # if int(revision_data.text) < link_struc[current_id]['old_version']:
@@ -340,8 +332,6 @@ if __name__ == '__main__':
                                     version_id = int(revision_data.text)
                                 if revision_data.tag.endswith('text') and revision_data.text is not None:
                                     clean_text = unescape(revision_data.text)
-                                    # remove all comments
-                                    # remove multi-line comments
                                     clean_text = clean_xml(clean_text)
                                     if old == 0:
                                         pages.append(

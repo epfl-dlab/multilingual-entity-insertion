@@ -9,6 +9,7 @@ import urllib
 import re
 from ast import literal_eval
 import json
+import gc
 
 def update_targets(target_name, redirect_map):
     counter = 0
@@ -18,6 +19,13 @@ def update_targets(target_name, redirect_map):
         if counter > 10:
             break
     return target_name
+
+def simplify_html(html):
+    if html is None:
+        return None
+    if html == '':
+        return ''
+    return 'a'
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(
@@ -70,41 +78,26 @@ if __name__ == '__main__':
     second_month_page_files = glob(
         os.path.join(args.second_month_dir, "pages*"))
     
+    redirect_map = pd.read_parquet(os.path.join(args.second_month_dir, 'redirect_map.parquet'))
+    redirect_map = redirect_map.to_dict()['redirect']
+    
     print('Loading data')
     dfs = []
     for file in tqdm(first_month_link_files):
         dfs.append(pd.read_parquet(file))
     df_1 = pd.concat(dfs)
-    
-    dfs = []
-    for file in tqdm(second_month_link_files):
-        dfs.append(pd.read_parquet(file))
-    df_2 = pd.concat(dfs)
-
-    dfs = []
-    for file in tqdm(second_month_page_files):
-        dfs.append(pd.read_parquet(file))
-    df_pages = pd.concat(dfs)
-    
-    redirect_map = pd.read_parquet(os.path.join(args.second_month_dir, 'redirect_map.parquet'))
-    redirect_map = redirect_map.to_dict()['redirect']
-    
     df_1['target_title'] = df_1['target_title'].apply(lambda x: update_targets(x, redirect_map))
-
+    
     print('Converting data into a better structure')
     df_links_1 = df_1.to_dict(orient='records')
-    df_links_2 = df_2.to_dict(orient='records')
-
+    del df_1
+    gc.collect()
+    
     for row in tqdm(df_links_1):
         for key in row:
             if 'index' in key and row[key] == row[key]:
                 row[key] = int(row[key])
-
-    for row in tqdm(df_links_2):
-        for key in row:
-            if 'index' in key and row[key] == row[key]:
-                row[key] = int(row[key])
-
+    
     old_data = {}
     for mod_link in tqdm(df_links_1):
         if mod_link['source_title'] not in old_data:
@@ -113,6 +106,25 @@ if __name__ == '__main__':
             old_data[mod_link['source_title']][mod_link['target_title']] = []
         old_data[mod_link['source_title']
                  ][mod_link['target_title']].append(mod_link)
+    del df_links_1
+    gc.collect()
+
+
+    print('Loading data')
+    dfs = []
+    for file in tqdm(second_month_link_files):
+        dfs.append(pd.read_parquet(file))
+    df_2 = pd.concat(dfs)
+
+    print('Converting data into a better structure')
+    df_links_2 = df_2.to_dict(orient='records')
+    del df_2
+    gc.collect()
+    
+    for row in tqdm(df_links_2):
+        for key in row:
+            if 'index' in key and row[key] == row[key]:
+                row[key] = int(row[key])
 
     new_data = {}
     for mod_link in tqdm(df_links_2):
@@ -122,6 +134,18 @@ if __name__ == '__main__':
             new_data[mod_link['source_title']][mod_link['target_title']] = []
         new_data[mod_link['source_title']
                  ][mod_link['target_title']].append(mod_link)
+    del df_links_2
+    gc.collect()
+
+    print('Loading data')
+    dfs = []
+    for file in tqdm(second_month_page_files):
+        temp = pd.read_parquet(file, columns=['title', 'HTML', 'lead_paragraph'])
+        temp['HTML'] = temp['HTML'].apply(simplify_html)
+        dfs.append(temp)
+        del temp
+    df_pages = pd.concat(dfs)
+    del dfs
 
     no_html = set(df_pages[(df_pages['HTML'].isna()) | (
         df_pages['HTML'] == '')]['title'].tolist())
@@ -129,6 +153,9 @@ if __name__ == '__main__':
         df_pages['lead_paragraph'] == '')]['title'].tolist())
     short_lead = set(df_pages[df_pages['lead_paragraph'].apply(
         lambda x: x is not None and len(x.split()) < 6)]['title'].tolist())
+
+    del df_pages
+    gc.collect()
 
     print('Finding new links')
     new_pages = 0
@@ -165,6 +192,10 @@ if __name__ == '__main__':
                         new_links.append(mod_link)
                         new_links[-1]['old_version'] = old_version
 
+    del old_data
+    del new_data
+    gc.collect()
+
     print(
         f"The new data has {new_pages} new pages and {new_page_links} links in these new pages")
     print(f"There are {len(new_links)} new links in the new data")
@@ -199,6 +230,9 @@ if __name__ == '__main__':
 
     print(
         f"Out of the {len(new_links)} new links, {len(clean_links)} ({len(clean_links) / len(new_links) * 100:.2f}%) are valid")
+
+    del new_links
+    gc.collect()
 
     print('Triaging links to know which corruptions can be applied')
     mask_paragraph_links = []

@@ -180,13 +180,25 @@ if __name__ == '__main__':
     redirects = [redirects[key] for key in redirects if 'redirect' in redirects[key]
                  and redirects[key]['redirect'] != redirects[key]['title']]
     redirect_map = {redirect['title']: redirect['redirect'] for redirect in redirects}
+    # save redirects
+    redirects = pd.DataFrame(redirects).set_index('title')
+    redirects.to_parquet(f"{args.output_dir}/redirect_map.parquet")
+    del redirects
+    gc.collect()
 
     print("Processing SQL page properties information")
     pages = process_sql_page_props(sql_page_props, pages)
+    
     simple_pages = [{'ID': page['ID'], 'title': page['title'],
                      'QID': page['QID']} for page in pages]
-    pages = {page['title']: page for page in pages}
+    simple_pages = pd.DataFrame(simple_pages)
+    simple_pages = simple_pages.set_index('title')
+    simple_pages.to_parquet(f"{args.output_dir}/simple_pages.parquet")
     print(f"{len(simple_pages)} pages found")
+    del simple_pages
+    gc.collect()
+    
+    pages = {page['title']: page for page in pages}
 
     print(f'Processing tar HTML data')
     full_pages = []
@@ -214,13 +226,14 @@ if __name__ == '__main__':
                             page['QID'] = pages[page['title']]['QID']
                         del pages[page['title']]
                     full_pages.append(page)
-                    if len(full_pages) >= 50_000:
+                    if len(full_pages) >= 10_000:
                         full_pages = pd.DataFrame(full_pages)
                         full_pages.to_parquet(
                             f"{args.output_dir}/pages_{counter}.parquet")
+                        del full_pages
+                        gc.collect()
                         full_pages = []
                         counter += 1
-                        gc.collect()
 
     # create a dataframe with the remaining titles
     for title in pages:
@@ -231,12 +244,3 @@ if __name__ == '__main__':
         full_pages[-1]['version'] = None
     full_pages = pd.DataFrame(full_pages)
     full_pages.to_parquet(f"{args.output_dir}/pages_{counter}.parquet")
-
-    # create copy of pages with reduced information
-    simple_pages = pd.DataFrame(simple_pages)
-    simple_pages = simple_pages.set_index('title')
-    simple_pages.to_parquet(f"{args.output_dir}/simple_pages.parquet")
-
-    # save redirects
-    redirects = pd.DataFrame(redirects).set_index('title')
-    redirects.to_parquet(f"{args.output_dir}/redirect_map.parquet")

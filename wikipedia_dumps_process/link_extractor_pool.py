@@ -17,6 +17,8 @@ import random
 import gc
 
 warnings.filterwarnings("ignore", category=MarkupResemblesLocatorWarning)
+# set TOKENIZERS_PARALLELISM to True to avoid warnings
+os.environ['TOKENIZERS_PARALLELISM'] = 'True'
 
 
 def process_title(title):
@@ -809,24 +811,18 @@ if __name__ == '__main__':
     counter = 0
     links = []
     sections = []
+    pool = Pool(min(cpu_count(), args.processes), initializer=initializer)
     for i, file in (pbar := tqdm(enumerate(files), total=len(files))):
         df = pd.read_parquet(file)
-        list_data = []
-        for j in range(len(df)):
-            list_data.append(df.iloc[j].to_dict())
+        list_data = df.to_dict(orient='records')
         del df
 
-        pool = Pool(min(cpu_count(), args.processes), initializer=initializer)
         for j, (page_links, section_text) in enumerate(pool.imap(extract_links, list_data)):
             if j % 1000 == 0:
                 pbar.set_description(
                     f"Processing file {file} at element {j}/{len(list_data)}")
             for link in page_links:
                 links.append(link)
-                # if 'context' in link:
-                #     for key in link:
-                #         print(key, link[key])
-                #     raise Exception()
                 if link['mention'].strip() != '':
                     mention_map.add(
                         f"{link['mention']}<sep>{link['target_title']}")
@@ -854,8 +850,9 @@ if __name__ == '__main__':
                 links = []
                 sections = []
         del list_data
-        pool.close()
-        pool.join()
+        gc.collect()
+    pool.close()
+    pool.join()
     
     if links:
         df_links = pd.DataFrame(links)
