@@ -74,7 +74,7 @@ def fix_sentence_tokenizer(sentences):
 
         if right_paren_before < left_paren_before and right_parent_after < left_paren_after:
             join_prev = True
-        
+
         i += 1
     if join_prev:
         first_stage_sentences[-1] += ' ' + sentences[i]
@@ -192,13 +192,11 @@ def extract_links(source_page):
                                 link['context_mention_start_index'] = None
                                 link['context_mention_end_index'] = None
                                 link['context'] = None
-                                # print('Context Failure')
                             else:
                                 sentence = link['sentence'].strip()
                                 sentence = re.sub(r'\[.*?\]', '', sentence)
                                 sentence = re.sub(r' +', ' ', sentence)
                                 link['sentence'] = sentence
-                                # print(first_sentence, len(section_sentences))
                                 for j in range(first_sentence, len(section_sentences)):
                                     if j != first_sentence:
                                         first_index = 0
@@ -313,28 +311,11 @@ def extract_links(source_page):
                                                                       ]['region'] = region
                                             else:
                                                 break
-                                        # link['current_links'] = json.dumps(
-                                        #     current_links)
-                                        link['current_links'] = str(current_links)
+                                        link['current_links'] = str(
+                                            current_links)
                                         break
                             section_text[sections[0]]['links'].append({'mention': link['mention'],
                                                                        'target_title': link['target_title']})
-                            # if 'context' not in link:
-                            #     print('SOURCE TITLE', link['source_version'])
-                            #     print('MENTION', link['mention'])
-                            #     print('#################')
-                            #     print(section_sentences)
-                            #     print('#################')
-                            #     print(current_text)
-                            #     print('#################')
-                                
-                            # if 'context' not in link:
-                            #     for key in link:
-                            #         print(key, link[key])
-                            #     print(len(section_sentences))
-                            #     for j in range(len(section_sentences)):
-                            #         print(link['mention'], '<sep>', section_sentences[j])
-                            #     print('#################')
                             found_links.append(link)
                     section_links = []
                     sections = [re.sub(r'\[.*?\]', '', tag.text).strip()]
@@ -491,12 +472,6 @@ def extract_links(source_page):
                         index = raw_html.index(
                             f"./{full_title}", search_index_link)
                 except:
-                    # print(raw_html)
-                    # print('#################')
-                    # print(full_title)
-                    # print('#################')
-                    # print(search_index_link)
-                    # print('#################')
                     link_data['link_start_index'] = None
                     link_data['link_end_index'] = None
                     link_data['sentence'] = None
@@ -591,10 +566,10 @@ def extract_links(source_page):
                                   source_page['title'].encode('utf-8'))
                             print('Not found')
                             print(sentences[0]['sentence'])
+                    sentences = sentences[j:]
                 link_data['source_page_length'] = len(raw_html)
                 link_data['link_section_depth'] = f"{depth[0]}.{depth[1]}.{depth[2]}"
 
-                sentences = sentences[j:]
 
                 section_links.append(link_data)
 
@@ -602,7 +577,6 @@ def extract_links(source_page):
         # save the last remaining links
         current_text = section_text[sections[0]]['text'].strip()
         current_text = re.sub(r'\[.*?\]', '', current_text)
-        # current_text = re.sub(r'\n', ' ', current_text)
         current_text = re.sub(r' +', ' ', current_text)
 
         temp = [line.strip() + '\n' for line in current_text.split('\n')
@@ -629,14 +603,11 @@ def extract_links(source_page):
                 link['context_mention_start_index'] = None
                 link['context_mention_end_index'] = None
                 link['context'] = None
-                # print('Context Failure')
             else:
                 sentence = link['sentence'].strip()
                 sentence = re.sub(r'\[.*?\]', '', sentence)
-                # sentence = re.sub(r'\n', ' ', sentence)
                 sentence = re.sub(r' +', ' ', sentence)
                 link['sentence'] = sentence
-                # print(first_sentence, len(section_sentences))
                 for j in range(first_sentence, len(section_sentences)):
                     if j != first_sentence:
                         first_index = 0
@@ -745,23 +716,13 @@ def extract_links(source_page):
                                                       ]['region'] = region
                             else:
                                 break
-                        # link['current_links'] = json.dumps(
-                        #     current_links)
                         link['current_links'] = str(current_links)
                         break
-            
-            # if 'context' not in link:
-            #     print('SOURCE TITLE', link['source_version'])
-            #     print('MENTION', link['mention'])
-            #     print('#################')
-            #     print(section_sentences)
-            #     print('#################')
-            #     print(current_text)
-            #     print('#################')
-                
+
             found_links.append(link)
 
     return found_links, section_text
+
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -828,20 +789,22 @@ if __name__ == '__main__':
                         f"{link['mention']}<sep>{link['target_title']}")
             for section in section_text:
                 sections.append(
-                    {'section': section, 
-                     'text': section_text[section]['text'], 
-                     'depth': section_text[section]['depth'], 
+                    {'section': section,
+                     'text': section_text[section]['text'],
+                     'depth': section_text[section]['depth'],
                      'title': section_text[section]['title'],
                      'links': section_text[section]['links']})
-                
+
             if len(links) > 250_000:
                 df_links = pd.DataFrame(links)
-                df_links.to_parquet(f"{args.output_dir}/links_{counter}.parquet")
+                df_links.to_parquet(
+                    f"{args.output_dir}/links_{counter}.parquet")
                 del df_links
                 del links
 
                 df_sections = pd.DataFrame(sections)
-                df_sections.to_parquet(f"{args.output_dir}/sections_{counter}.parquet")
+                df_sections.to_parquet(
+                    f"{args.output_dir}/sections_{counter}.parquet")
                 del df_sections
                 del sections
                 counter += 1
@@ -853,7 +816,7 @@ if __name__ == '__main__':
         gc.collect()
     pool.close()
     pool.join()
-    
+
     if links:
         df_links = pd.DataFrame(links)
         df_links.to_parquet(f"{args.output_dir}/links_{counter}.parquet")

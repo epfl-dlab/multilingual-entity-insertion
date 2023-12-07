@@ -82,9 +82,9 @@ if __name__ == '__main__':
     print('Saving good links')
     for file in tqdm(link_files):
         df = pd.read_parquet(file)
-        df['context'] = df['context'].apply(fix_context)
         df = df[(~df['target_ID'].isna()) & (~df['source_QID'].isna()) & (~df['target_QID'].isna()) & (~df['target_title'].isin(no_html)) & (~df['target_title'].isin(no_lead)) & (~df['source_title'].isin(
             no_lead)) & (~df['context'].isna()) & (df['context'] != '') & (~df['source_title'].isin(short_lead)) & (~df['target_title'].isin(short_lead)) & (df['source_title'] != df['target_title'])]
+        df['context'] = df['context'].apply(fix_context)
         df = df.reset_index(drop=True)
         basename = os.path.basename(file)
         df.to_parquet(os.path.join(args.output_dir,

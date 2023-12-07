@@ -12,29 +12,18 @@ from multiprocessing import Pool, cpu_count
 import math
 from ast import literal_eval
 import json
+import gc
 
 def unencode_title(title):
     clean_title = urllib.parse.unquote(title).replace('_', ' ')
     return clean_title
 
 
-def get_strategies(link, strategies, k):
-    valid_strategies = strategies.copy()
-    if len(source_to_all_targets[link['source_title']]) == 1 and 'hard_replace_target' in valid_strategies:
-        valid_strategies.remove('hard_replace_target')
-    if len(target_to_all_sources[link['target_title']]) == 1 and 'hard_replace_source' in valid_strategies:
-        valid_strategies.remove('hard_replace_source')
-    list_strategies = random.choices(
-        valid_strategies, k=k)
-    return list_strategies
-
-
 def construct_negative_samples(positive_samples, neg_samples, page_sections):
     pages = list(page_sections.keys())
     negative_samples = []
     for sample in tqdm(positive_samples):
-        list_strategies = get_strategies(
-            sample, strategies, neg_samples)
+        list_strategies = random.choices(strategies, k=neg_samples)
         new_samples = []
         available_sentences = {}
         if sample['source_title'] in page_sections:
@@ -44,18 +33,7 @@ def construct_negative_samples(positive_samples, neg_samples, page_sections):
         for strategy in list_strategies:
             new_sample = sample.copy()
             new_sample['label'] = 0
-            if strategy == 'easy_replace_source':
-                new_sample = easy_replace_source(
-                    new_sample, positive_samples)
-            elif strategy == 'easy_replace_target':
-                new_sample = easy_replace_target(
-                    new_sample, positive_samples)
-            elif strategy == 'hard_replace_source':
-                new_sample = hard_replace_source(new_sample)
-            elif strategy == 'hard_replace_target':
-                new_sample = hard_replace_target(
-                    new_sample, positive_samples)
-            elif strategy == 'easy_replace_context':
+            if strategy == 'easy_replace_context':
                 new_sample = easy_replace_context(
                     new_sample, page_sections, pages)
                 while new_sample in new_samples:
@@ -72,91 +50,47 @@ def construct_negative_samples(positive_samples, neg_samples, page_sections):
     return negative_samples
 
 
-def easy_replace_source(link, all_links):
-    new_source = random.choices(all_links, k=1)[
-        0]['source_title']
-    while new_source in target_to_all_sources[link['target_title']]:
-        new_source = random.choices(all_links, k=1)[
-            0]['source_title']
-    link['source_title'] = new_source
-    link['source_lead'] = page_leads[new_source]
-    link['neg_type'] = 'easy_replace_source'
-    return link
-
-
-def easy_replace_target(link, all_links):
-    new_target = random.choices(all_links, k=1)[
-        0]['target_title']
-    while new_target in source_to_all_targets[sample['source_title']]:
-        new_target = random.choices(all_links, k=1)[
-            0]['target_title']
-    link['target_title'] = new_target
-    link['target_lead'] = page_leads[new_target]
-    link['neg_type'] = 'easy_replace_target'
-    return link
-
-
-def hard_replace_source(link):
-    new_source_section = random.choices(
-        target_to_all_sources[link['target_title']], k=1)[0]
-    link['source_title'] = new_source_section
-    link['source_lead'] = page_leads[new_source_section]
-    link['neg_type'] = 'hard_replace_source'
-    return link
-
-
-def hard_replace_target(link, all_links):
-    safe_targets = []
-    for target in source_to_all_targets[link['source_title']]:
-        found = False
-        for mention in entity_map[target]:
-            if mention in link['link_context']:
-                found = True
-                break
-        if not found:
-            safe_targets.append(target)
-    if len(safe_targets) == 0:
-        link = easy_replace_target(link, all_links)
-        link['neg_type'] = 'easy_replace_target'
-    else:
-        new_target = random.choices(safe_targets, k=1)[0]
-        link['neg_type'] = 'hard_replace_target'
-    link['target_title'] = new_target
-    link['target_lead'] = page_leads[new_target]
-    return link
-
-
 def easy_replace_context(link, page_sections, pages):
+    if 'current_links' in link:
+        find_current_links = True
+    else:
+        find_current_links = False
     while True:
         new_file = random.choices(pages, k=1)[0]
         if new_file == link['source_title']:
             continue
         new_context = replace_context(new_file, link['target_title'], int(
-            link['depth'].split('.')[0]), page_sections)
+            link['depth'].split('.')[0]), page_sections, None, find_current_links)
         if new_context is not None:
             break
     link['link_context'] = new_context['context']
     link['source_section'] = new_context['section']
-    link['current_links'] = new_context['current_links']
+    if 'current_links' in new_context:
+        link['current_links'] = new_context['current_links']
     link['neg_type'] = 'easy_replace_context'
     return link
 
 
 def hard_replace_context(link, page_sections, pages, available_sentences):
+    if 'current_links' in link:
+        find_current_links = True
+    else:
+        find_current_links = False
     new_context = replace_context(link['source_title'], link['target_title'], int(
-        link['depth'].split('.')[0]), page_sections, available_sentences)
+        link['depth'].split('.')[0]), page_sections, available_sentences, find_current_links)
     if new_context is None:
         link = easy_replace_context(link, page_sections, pages)
         link['neg_type'] = 'easy_replace_context'
     else:
         link['link_context'] = new_context['context']
         link['source_section'] = new_context['section']
-        link['current_links'] = new_context['current_links']
+        if 'current_links' in new_context:
+            link['current_links'] = new_context['current_links']
         link['neg_type'] = 'hard_replace_context'
     return link
 
 
-def replace_context(source_title, target_title, source_depth, page_sections, available_sentences=None):
+def replace_context(source_title, target_title, source_depth, page_sections, available_sentences=None, find_current_links=False):
     valid_section_ranges = {}
     if target_title not in entity_map:
         entity_map[target_title] = [target_title]
@@ -231,21 +165,22 @@ def replace_context(source_title, target_title, source_depth, page_sections, ava
         new_context = " ".join(
             page_sections[source_title][new_section]['sentences'][left_limit:right_limit])
         # find the existing links in this new context
-        candidate_current_links = [{}]
-        prev_fail = False
-        for link in page_sections[source_title][new_section]['links']:
-            if link['mention'] not in new_context:
-                prev_fail = True
-                continue
-            if prev_fail:
-                candidate_current_links.append({})
-                prev_fail = False
-            candidate_current_links[-1][link['target_title']] = {'target_title': link['target_title'],
-                                                                 'target_lead': link['target_lead']}
-        candidate_current_links.sort(key=lambda x: len(x), reverse=True)
-        current_links = candidate_current_links[0]
-        if len(current_links) > 10:
-            current_links = dict(random.sample(current_links.items(), 10))
+        if find_current_links:
+            candidate_current_links = [{}]
+            prev_fail = False
+            for link in page_sections[source_title][new_section]['links']:
+                if link['mention'] not in new_context:
+                    prev_fail = True
+                    continue
+                if prev_fail:
+                    candidate_current_links.append({})
+                    prev_fail = False
+                candidate_current_links[-1][link['target_title']] = {'target_title': link['target_title'],
+                                                                    'target_lead': link['target_lead']}
+            candidate_current_links.sort(key=lambda x: len(x), reverse=True)
+            current_links = candidate_current_links[0]
+            if len(current_links) > 10:
+                current_links = dict(random.sample(current_links.items(), 10))
         # remove all the sentences from the available indices that would produce the same context
         if available_sentences:
             if left_limit == new_sentence_range['range'][0] and right_limit == new_sentence_range['range'][1] + 1:
@@ -254,9 +189,10 @@ def replace_context(source_title, target_title, source_depth, page_sections, ava
                         available_sentences[new_section].remove(i)
             else:
                 available_sentences[new_section].remove(new_sentence_index)
-
-        # return {'context': new_context, 'section': new_section, 'current_links': json.dumps(current_links)}
-        return {'context': new_context, 'section': new_section, 'current_links': str(current_links)}
+        if find_current_links:
+            return {'context': new_context, 'section': new_section, 'current_links': str(current_links)}
+        else:
+            return {'context': new_context, 'section': new_section}
 
 
 def extract_sections(row):
@@ -330,10 +266,12 @@ if __name__ == '__main__':
                         help='Maximum number of train samples to generate')
     parser.add_argument('--max_val_samples', type=int, default=None,
                         help='Maximum number of validation samples to generate.')
+    parser.add_argument('--add_current_links', action='store_true',
+                        help='Add current links to the samples')
     parser.add_argument('--join_samples', action='store_true',
                         help='Join positive and its negative samples into one row')
 
-    parser.set_defaults(join_samples=False)
+    parser.set_defaults(join_samples=False, add_current_links=False)
     args = parser.parse_args()
 
     strategies_map = {1: 'easy_replace_source', 2: 'hard_replace_source', 3: 'easy_replace_target',
@@ -366,20 +304,13 @@ if __name__ == '__main__':
         subset=['title']).reset_index(drop=True)
     df_pages['title'] = df_pages['title'].apply(unencode_title)
     df_pages = df_pages.to_dict(orient='records')
-
-    print('Loading training links')
-    link_files = glob(os.path.join(args.input_month1_dir, 'good_links*'))
-    link_files.sort()
-    dfs = []
-    for file in tqdm(link_files):
-        dfs.append(pd.read_parquet(file))
-    df_links_train = pd.concat(dfs)
-    df_links_train['source_title'] = df_links_train['source_title'].apply(
-        unencode_title)
-    df_links_train['target_title'] = df_links_train['target_title'].apply(
-        unencode_title)
-    df_links_train = df_links_train.to_dict(orient='records')
-
+    
+    print('\tProcessing pages')
+    page_leads = {row['title']: row['lead_paragraph']
+                  for row in tqdm(df_pages) if row['lead_paragraph'] != '' and row['lead_paragraph'] is not None}
+    del df_pages
+    gc.collect()
+    
     print('Loading training section texts')
     section_files = glob(os.path.join(args.input_month1_dir, 'sections*'))
     section_files.sort()
@@ -390,16 +321,7 @@ if __name__ == '__main__':
     df_sections_train['title'] = df_sections_train['title'].apply(
         unencode_title)
     df_sections_train = df_sections_train.to_dict(orient='records')
-
-    print('Loading validation links')
-    df_links_val = pd.read_parquet(os.path.join(
-        args.input_dir_val, 'val_links.parquet'))
-    df_links_val['source_title'] = df_links_val['source_title'].apply(
-        unencode_title)
-    df_links_val['target_title'] = df_links_val['target_title'].apply(
-        unencode_title)
-    df_links_val = df_links_val.to_dict(orient='records')
-
+    
     print('Loading validation section texts')
     section_files = glob(os.path.join(args.input_month2_dir, 'sections*'))
     section_files.sort()
@@ -410,41 +332,8 @@ if __name__ == '__main__':
     df_sections_val['title'] = df_sections_val['title'].apply(
         unencode_title)
     df_sections_val = df_sections_val.to_dict(orient='records')
-
-    print('Loading mention map')
-    mention_map = pd.read_parquet(os.path.join(
-        args.input_month1_dir, 'mention_map.parquet'))
-    mention_map_dict = mention_map.to_dict(orient='records')
-    entity_map = {}
-    for row in mention_map_dict:
-        title = unencode_title(row['target_title'])
-        mention = row['mention']
-        if mention == '':
-            continue
-        if title in entity_map:
-            entity_map[title].add(mention)
-        else:
-            entity_map[title] = set([mention])
-
+    
     print('Creating auxiliary data structures')
-    print('\tProcessing links')
-    source_to_all_targets = {}
-    target_to_all_sources = {}
-    for row in tqdm(df_links_train + df_links_val):
-        source = row['source_title']
-        target = row['target_title']
-        source_section = row['source_section'].split('<sep>')[0]
-        if source not in source_to_all_targets:
-            source_to_all_targets[source] = []
-        source_to_all_targets[source].append(target)
-        if target not in target_to_all_sources:
-            target_to_all_sources[target] = []
-        target_to_all_sources[target].append(source)
-
-    print('\tProcessing pages')
-    page_leads = {row['title']: row['lead_paragraph']
-                  for row in tqdm(df_pages) if row['lead_paragraph'] != '' and row['lead_paragraph'] is not None}
-
     print('\tProcessing sections')
     page_sections_train = {}
     pool = Pool(20)
@@ -467,6 +356,8 @@ if __name__ == '__main__':
             if link['target_title'] in page_leads:
                 link['target_lead'] = page_leads[link['target_title']]
                 page_sections_train[title][section]['links'].append(link)
+    del df_sections_train
+    gc.collect()
 
     page_sections_val = {}
     for output in tqdm(pool.imap_unordered(extract_sections, df_sections_val), total=len(df_sections_val)):
@@ -486,64 +377,53 @@ if __name__ == '__main__':
             if link['target_title'] in page_leads:
                 link['target_lead'] = page_leads[link['target_title']]
                 page_sections_val[title][section]['links'].append(link)
+    del df_sections_val
+    gc.collect()
     pool.close()
     pool.join()
-
-    print('Generating positive samples')
-    positive_samples_train = []
-    for row in tqdm(df_links_train):
-        if row['source_title'] not in page_sections_train:
+    
+    print('Loading mention map')
+    mention_map = pd.read_parquet(os.path.join(
+        args.input_month1_dir, 'mention_map.parquet'))
+    mention_map_dict = mention_map.to_dict(orient='records')
+    entity_map = {}
+    for row in mention_map_dict:
+        title = unencode_title(row['target_title'])
+        mention = row['mention']
+        if mention == '':
             continue
-        if row['source_title'] not in page_leads or row['target_title'] not in page_leads:
-            continue
-        # current_links = json.loads(row['current_links'])
-        current_links = literal_eval(row['current_links'])
-        processed_current_links = {}
-        for target in current_links:
-            clean_target = unencode_title(target)
-            if clean_target in page_leads:
-                processed_current_links[target] = {'target_title': clean_target,
-                                                   'target_lead': page_leads[clean_target],
-                                                   'region': current_links[target]['region']}
-        if len(processed_current_links) > 10:
-            processed_current_links = dict(random.sample(
-                processed_current_links.items(), 10))
-        positive_samples_train.append({
-            'source_title': row['source_title'],
-            'source_lead': page_leads[row['source_title']],
-            'target_title': row['target_title'],
-            'target_lead': page_leads[row['target_title']],
-            'link_context': row['context'],
-            'source_section': row['source_section'].split('<sep>')[0],
-            'context_span_start_index': row['context_span_start_index'],
-            'context_span_end_index': row['context_span_end_index'],
-            'context_sentence_start_index': row['context_sentence_start_index'],
-            'context_sentence_end_index': row['context_sentence_end_index'],
-            'context_mention_start_index': row['context_mention_start_index'],
-            'context_mention_end_index': row['context_mention_end_index'],
-            'depth': row['link_section_depth'],
-            'noise_strategy': None,
-            # 'current_links': json.dumps(processed_current_links),
-            'current_links': str(processed_current_links),
-        })
-    random.shuffle(positive_samples_train)
-
+        if title in entity_map:
+            entity_map[title].add(mention)
+        else:
+            entity_map[title] = set([mention])
+            
+    print('Loading validation links')
+    df_links_val = pd.read_parquet(os.path.join(
+        args.input_dir_val, 'val_links.parquet'))
+    df_links_val['source_title'] = df_links_val['source_title'].apply(
+        unencode_title)
+    df_links_val['target_title'] = df_links_val['target_title'].apply(
+        unencode_title)
+    df_links_val = df_links_val.to_dict(orient='records')
+    random.shuffle(df_links_val)
+    
+    print('Generating validation samples')
     positive_samples_val = []
     for row in tqdm(df_links_val):
         if row['source_title'] not in page_sections_val:
             continue
         if row['source_title'] not in page_leads or row['target_title'] not in page_leads:
             continue
-        # current_links = json.loads(row['current_links'])
-        current_links = literal_eval(row['current_links'])
-        processed_current_links = {}
-        for target in current_links:
-            if target in page_leads:
-                processed_current_links[target] = {'target_title': target,
-                                                   'target_lead': page_leads[target]}
-        if len(processed_current_links) > 10:
-            processed_current_links = dict(random.sample(
-                processed_current_links.items(), 10))
+        if args.add_current_links:
+            current_links = literal_eval(row['current_links'])
+            processed_current_links = {}
+            for target in current_links:
+                if target in page_leads:
+                    processed_current_links[target] = {'target_title': target,
+                                                    'target_lead': page_leads[target]}
+            if len(processed_current_links) > 10:
+                processed_current_links = dict(random.sample(
+                    processed_current_links.items(), 10))
         positive_samples_val.append({
             'source_title': row['source_title'],
             'source_lead': page_leads[row['source_title']],
@@ -559,82 +439,137 @@ if __name__ == '__main__':
             'context_mention_end_index': row['context_mention_end_index'],
             'depth': row['link_section_depth'],
             'noise_strategy': row['noise_strategy'],
-            # 'current_links': json.dumps(processed_current_links),
-            'current_links': str(processed_current_links),
         })
+        if args.add_current_links:
+            positive_samples_val[-1]['current_links'] = str(processed_current_links)
     random.shuffle(positive_samples_val)
-
-    if not args.max_train_samples:
-        args.max_train_samples = len(
-            positive_samples_train) * (1 + args.neg_samples_train)
-
+    del df_links_val
+    gc.collect()
+    
     if not args.max_val_samples:
         args.max_val_samples = len(
             positive_samples_val) * (1 + args.neg_samples_val)
-
-    if len(positive_samples_train) * (1 + args.neg_samples_train) > args.max_train_samples:
-        positive_samples_train = random.sample(
-            positive_samples_train, math.ceil(
-                args.max_train_samples / (1 + args.neg_samples_train))
-        )
     if len(positive_samples_val) * (1 + args.neg_samples_val) > args.max_val_samples:
         positive_samples_val = random.sample(
             positive_samples_val, math.ceil(
                 args.max_val_samples / (1 + args.neg_samples_val))
         )
-
-    print('Generating negative samples')
-    negative_samples_train = construct_negative_samples(
-        positive_samples_train, args.neg_samples_train, page_sections_train)
+    
     negative_samples_val = construct_negative_samples(
         positive_samples_val, args.neg_samples_val, page_sections_val)
 
-    print('Saving data')
+    print('Saving validation data')
     if not args.join_samples:
-        df_train = pd.DataFrame(
-            positive_samples_train + negative_samples_train)
-        df_train = df_train.sample(
-            n=min(args.max_train_samples, len(df_train))).reset_index(drop=True)
-
         df_val = pd.DataFrame(
             positive_samples_val + negative_samples_val)
         df_val = df_val.sample(
             n=min(args.max_val_samples, len(df_val))).reset_index(drop=True)
     else:
-        full_samples_train = positive_samples_train.copy()
-        for i, sample in enumerate(tqdm(negative_samples_train)):
-            true_index = i // args.neg_samples_train
-            rel_index = i % args.neg_samples_train
-            keys = ['link_context', 'source_section', 'noise_strategy', 'current_links']
-            for key in keys:
-                if key in sample:
-                    full_samples_train[true_index][f'{key}_neg_{rel_index}'] = sample[key]
-                else:
-                    full_samples_train[true_index][f'{key}_neg_{rel_index}'] = None
-        df_train = pd.DataFrame(full_samples_train)
-        print(df_train)
-
-        full_samples_val = positive_samples_val.copy()
         for i, sample in enumerate(tqdm(negative_samples_val)):
             true_index = i // args.neg_samples_val
             rel_index = i % args.neg_samples_val
-            keys = ['link_context', 'source_section', 'noise_strategy', 'current_links']
+            keys = ['link_context', 'source_section', 'noise_strategy']
+            if args.add_current_links:
+                keys.append('current_links')
             for key in keys:
                 if key in sample:
-                    full_samples_val[true_index][f'{key}_neg_{rel_index}'] = sample[key]
+                    positive_samples_val[true_index][f'{key}_neg_{rel_index}'] = sample[key]
                 else:
-                    full_samples_val[true_index][f'{key}_neg_{rel_index}'] = None
-        df_val = pd.DataFrame(full_samples_val)
-        print(df_val)
-
-    # create directories if they don't exist
-    if not os.path.exists(os.path.join(args.output_dir, 'train')):
-        os.makedirs(os.path.join(args.output_dir, 'train'))
+                    positive_samples_val[true_index][f'{key}_neg_{rel_index}'] = None
+        df_val = pd.DataFrame(positive_samples_val)
+    
     if not os.path.exists(os.path.join(args.output_dir, 'val')):
         os.makedirs(os.path.join(args.output_dir, 'val'))
-    df_train.to_parquet(os.path.join(
-        args.output_dir, 'train', 'train.parquet'))
     df_val.to_parquet(os.path.join(args.output_dir, 'val', 'val.parquet'))
+    del df_val
+    del positive_samples_val
+    del negative_samples_val
+    gc.collect()
+    
+    print('Processing training links')
+    if not args.max_train_samples:
+        args.max_train_samples = float('inf')
+    positive_samples_counter = 0
+    train_file_counter = 0
+    link_files = glob(os.path.join(args.input_month1_dir, 'good_links*'))
+    link_files.sort()
+    for file in tqdm(link_files):
+        df_links_train = pd.read_parquet(file)
+        df_links_train['source_title'] = df_links_train['source_title'].apply(
+            unencode_title)
+        df_links_train['target_title'] = df_links_train['target_title'].apply(
+            unencode_title)
+        df_links_train = df_links_train.to_dict(orient='records')
+        random.shuffle(df_links_train)
+        
+        positive_samples_train = []
+        for row in tqdm(df_links_train):
+            if row['source_title'] not in page_sections_train:
+                continue
+            if row['source_title'] not in page_leads or row['target_title'] not in page_leads:
+                continue
+            if args.add_current_links:
+                current_links = literal_eval(row['current_links'])
+                processed_current_links = {}
+                for target in current_links:
+                    clean_target = unencode_title(target)
+                    if clean_target in page_leads:
+                        processed_current_links[target] = {'target_title': clean_target,
+                                                        'target_lead': page_leads[clean_target],
+                                                        'region': current_links[target]['region']}
+                if len(processed_current_links) > 10:
+                    processed_current_links = dict(random.sample(
+                        processed_current_links.items(), 10))
+            positive_samples_train.append({
+                'source_title': row['source_title'],
+                'source_lead': page_leads[row['source_title']],
+                'target_title': row['target_title'],
+                'target_lead': page_leads[row['target_title']],
+                'link_context': row['context'],
+                'source_section': row['source_section'].split('<sep>')[0],
+                'context_span_start_index': row['context_span_start_index'],
+                'context_span_end_index': row['context_span_end_index'],
+                'context_sentence_start_index': row['context_sentence_start_index'],
+                'context_sentence_end_index': row['context_sentence_end_index'],
+                'context_mention_start_index': row['context_mention_start_index'],
+                'context_mention_end_index': row['context_mention_end_index'],
+                'depth': row['link_section_depth'],
+                'noise_strategy': None,
+            })
+            if args.add_current_links:
+                positive_samples_train[-1]['current_links'] = str(processed_current_links)
+            positive_samples_counter += 1
+            if positive_samples_counter * (1 + args.neg_samples_train) > args.max_train_samples:
+                break
+        del df_links_train
+        gc.collect()
+        negative_samples_train = construct_negative_samples(
+            positive_samples_train, args.neg_samples_train, page_sections_train)
+        if not args.join_samples:
+            df_train = pd.DataFrame(
+                positive_samples_train + negative_samples_train)
+            df_train = df_train.sample(
+                n=min(args.max_train_samples, len(df_train))).reset_index(drop=True)
+        else:
+            for i, sample in enumerate(negative_samples_train):
+                true_index = i // args.neg_samples_train
+                rel_index = i % args.neg_samples_train
+                keys = ['link_context', 'source_section', 'noise_strategy']
+                if args.add_current_links:
+                    keys.append('current_links')
+                for key in keys:
+                    if key in sample:
+                        positive_samples_train[true_index][f'{key}_neg_{rel_index}'] = sample[key]
+                    else:
+                        positive_samples_train[true_index][f'{key}_neg_{rel_index}'] = None
+            df_train = pd.DataFrame(positive_samples_train)
+        if not os.path.exists(os.path.join(args.output_dir, 'train')):
+            os.makedirs(os.path.join(args.output_dir, 'train'))
+        df_train.to_parquet(os.path.join(
+            args.output_dir, 'train', f'train_{train_file_counter}.parquet'))
+        train_file_counter += 1
+        if positive_samples_counter * (1 + args.neg_samples_train) > args.max_train_samples:
+            break
 
     # copy mention map to output directory
     mention_map.to_parquet(os.path.join(

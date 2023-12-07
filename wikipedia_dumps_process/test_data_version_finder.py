@@ -11,6 +11,8 @@ import urllib.request
 from collections import Counter
 import json
 from multiprocessing import Pool, cpu_count
+import gc
+tqdm.pandas()
 
 class DownloadProgressBar(tqdm):
     def update_to(self, b=1, bsize=1, tsize=None):
@@ -107,6 +109,8 @@ if __name__ == '__main__':
     for file in tqdm(second_month_link_files):
         dfs.append(pd.read_parquet(file, columns=['source_title', 'target_title', 'source_ID', 'target_ID', 'source_version']))
     df_2 = pd.concat(dfs)
+    del dfs
+    gc.collect()
 
     # dfs = []
     # for file in tqdm(first_month_page_files):
@@ -119,9 +123,9 @@ if __name__ == '__main__':
     redirect_map_clean = {process_title(k).lower(): process_title(
         v).lower() for k, v in redirect_map.items()}
 
-    df_1['target_title'] = df_1['target_title'].apply(
+    df_1['target_title'] = df_1['target_title'].progress_apply(
         lambda x: update_targets(x, redirect_map))
-    df_2['target_title'] = df_2['target_title'].apply(
+    df_2['target_title'] = df_2['target_title'].progress_apply(
         lambda x: update_targets(x, redirect_map))
 
     df_1 = df_1[['source_title', 'target_title',
@@ -140,6 +144,8 @@ if __name__ == '__main__':
     # 2. The row is present in df_1 but the count is smaller in df_1
     df_2 = df_2.merge(df_1, how='left', on=[
                       'source_title', 'target_title', 'source_ID', 'target_ID'], suffixes=('_2', '_1'))
+    del df_1
+    gc.collect()
     df_2 = df_2[(df_2['count_1'].isna()) | (df_2['count_2'] > df_2['count_1'])]
     df_2['count_1'] = df_2['count_1'].fillna(0)
     df_2['source_version_1'] = df_2['source_version_1'].fillna('&oldid=0')
@@ -223,7 +229,7 @@ if __name__ == '__main__':
     df_2 = df_2.to_dict('records')
 
     link_struc = {}
-    for link in df_2:
+    for link in tqdm(df_2):
         if int(link['source_ID']) in link_struc:
             link_struc[int(link['source_ID'])]['links'].append(link)
         else:
@@ -231,6 +237,8 @@ if __name__ == '__main__':
                                                   #   'old_version': int(link['source_version_1'].split('&oldid=')[-1]),
                                                   #   'new_version': int(link['source_version_2'].split('&oldid=')[-1]),
                                                   'page_title': link['source_title']}
+    del df_2
+    gc.collect()
 
     # check if the revision history file exists
     if os.path.exists(os.path.join(args.raw_data_dir, f'{args.lang}wiki-{args.second_date}-pages-meta-history.xml.bz2')):
