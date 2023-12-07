@@ -160,6 +160,10 @@ if __name__ == '__main__':
                         'sum', 'average', 'weighted_sum', 'weighted_average', 'max_similarity'], default='weighted_sum', help='How to aggregate the current links')
     parser.add_argument('--current_links_residuals', action='store_true',
                         help='If set, use the current links as residuals')
+    parser.add_argument('--current_links_residuals_weight', type=float, default=1,
+                        help='Weight for the current links residuals')
+    parser.add_argument('--current_links_use_mlp', action='store_true',
+                        help='If set, use an MLP to fuse the current links with the context text embeddings')
     parser.add_argument('--normalize_current_links', action='store_true',
                         help='If set, normalize the fuser output to have the same norm as the context text embeddings')
     parser.add_argument('--n_links', type=int, default=10,
@@ -167,8 +171,10 @@ if __name__ == '__main__':
     parser.add_argument('--delay_fuser_steps', type=int, default=0,
                         help='Number of steps without using the knowledge fuser (anf thus not using current link knowledge)')
     parser.add_argument('--no_link_strategy', type=str, choices=['zero_vector', 'empty_embedding'], default='zero_vector', help='What to do when there are no current links')
+    parser.add_argument('--use_only_links', action='store_true',
+                        help='If set, only use current links as input to compute the candidate embeddings')
     parser.set_defaults(resume=False, insert_section=False, mask_negatives=False, split_models=False, two_stage=False,
-                        use_current_links=False, current_links_residuals=False, normalize_current_links=False)
+                        use_current_links=False, current_links_residuals=False, normalize_current_links=False, current_links_use_mlp=False, use_only_links=False)
 
     args = parser.parse_args()
 
@@ -286,14 +292,13 @@ if __name__ == '__main__':
         if args.use_current_links:
             try:
                 if args.current_links_residuals:
-                    link_fuser = Sequential(nn.Linear(model_articles_size, model_contexts_size),
+                    link_fuser = Sequential(nn.Linear(model_articles_size, model_contexts_size, bias=False),
                                             nn.ReLU(),
-                                            nn.Linear(model_contexts_size, model_contexts_size))
+                                            nn.Linear(model_contexts_size, model_contexts_size, bias=False))
                 else:
-                    link_fuser = Sequential(nn.Linear(model_articles_size + model_contexts_size, model_contexts_size),
+                    link_fuser = Sequential(nn.Linear(model_articles_size + model_contexts_size, model_contexts_size, bias=False),
                                             nn.ReLU(),
-                                            # nn.BatchNorm1d(model_contexts_size),
-                                            nn.Linear(model_contexts_size, model_contexts_size))
+                                            nn.Linear(model_contexts_size, model_contexts_size, bias=False))
                 link_fuser.load_state_dict(torch.load(os.path.join(
                     args.checkpoint_dir, 'link_fuser.pth'), map_location='cpu'))
                 logger.info("Link fuser loaded from checkpoint directory")
@@ -302,14 +307,13 @@ if __name__ == '__main__':
                     "Could not load link fuser from checkpoint directory")
                 logger.info("Initializing link fuser with random weights")
                 if args.current_links_residuals:
-                    link_fuser = Sequential(nn.Linear(model_articles_size, model_contexts_size),
+                    link_fuser = Sequential(nn.Linear(model_articles_size, model_contexts_size, bias=False),
                                             nn.ReLU(),
-                                            nn.Linear(model_contexts_size, model_contexts_size))
+                                            nn.Linear(model_contexts_size, model_contexts_size, bias=False))
                 else:
-                    link_fuser = Sequential(nn.Linear(model_articles_size + model_contexts_size, model_contexts_size),
+                    link_fuser = Sequential(nn.Linear(model_articles_size + model_contexts_size, model_contexts_size, bias=False),
                                             nn.ReLU(),
-                                            # nn.BatchNorm1d(model_contexts_size),
-                                            nn.Linear(model_contexts_size, model_contexts_size))
+                                            nn.Linear(model_contexts_size, model_contexts_size, bias=False))
     else:
         logger.info("Initializing model")
         if args.split_models:
@@ -327,14 +331,19 @@ if __name__ == '__main__':
                                          nn.Linear(model_articles_size, 1))
         if args.use_current_links:
             if args.current_links_residuals:
-                link_fuser = Sequential(nn.Linear(model_articles_size, model_contexts_size),
+                link_fuser = Sequential(nn.Linear(model_articles_size, model_contexts_size, bias=False),
                                         nn.ReLU(),
-                                        nn.Linear(model_contexts_size, model_contexts_size))
+                                        nn.Linear(model_contexts_size, model_contexts_size, bias=False))
             else:
-                link_fuser = Sequential(nn.Linear(model_articles_size + model_contexts_size, model_contexts_size),
+                link_fuser = Sequential(nn.Linear(model_articles_size + model_contexts_size, model_contexts_size, bias=False),
                                         nn.ReLU(),
-                                        # nn.BatchNorm1d(model_contexts_size),
-                                        nn.Linear(model_contexts_size, model_contexts_size))
+                                        nn.Linear(model_contexts_size, model_contexts_size, bias=False))
+    
+    if args.split_models:
+        model_articles = model_articles.encoder
+        model_contexts = model_contexts.encoder
+    else:
+        model = model.encoder
 
     tokenizer = AutoTokenizer.from_pretrained(args.model_name)
     tokenizer.save_pretrained(os.path.join(output_dir, 'tokenizer'))
@@ -418,18 +427,12 @@ if __name__ == '__main__':
                             # split the knowledge into two different sentences
                             temp.append([f"{current_links[link]['target_title']}",
                                          f"{current_links[link]['target_lead']}"])
-                            # temp.append(
-                            #     f"{current_links[link]['target_title']}{tokenizer.sep_token}{current_links[link]['target_lead']}")
                         elif noise_type == 'mask_sentence' and current_links[link]['region'] in ['span', 'global']:
                             temp.append([f"{current_links[link]['target_title']}",
                                          f"{current_links[link]['target_lead']}"])
-                            # temp.append(
-                            #     f"{current_links[link]['target_title']}{tokenizer.sep_token}{current_links[link]['target_lead']}")
                         elif noise_type == 'mask_span' and current_links[link]['region'] == 'global':
                             temp.append([f"{current_links[link]['target_title']}",
                                          f"{current_links[link]['target_lead']}"])
-                            # temp.append(
-                            #     f"{current_links[link]['target_title']}{tokenizer.sep_token}{current_links[link]['target_lead']}")
                         if len(temp) == args.n_links:
                             break
                     if temp:
@@ -456,30 +459,24 @@ if __name__ == '__main__':
                     '\n+', '\n', item['link_context'])
                 item['link_context'] = item['link_context'].strip()
 
-                # source_input = f"{item['source_title']}{tokenizer.sep_token}{item['source_lead']}"
                 source_input = [item['source_title'], item['source_lead']]
                 if args.insert_section:
                     context_input = [item['source_section']]
-                    # context_input = f"{item['source_section']}{tokenizer.sep_token}"
                 else:
                     context_input = ['']
-                    # context_input = ''
                 if args.insert_mentions == 'candidates':
+                    if context_input[0] != '':
+                        context_input[0] += f'{tokenizer.sep_token}'
                     context_input[0] += f"{mention_map[item['target_title']]}"
-                    # context_input += f"{mention_map[item['target_title']]}{tokenizer.sep_token}{item['link_context']}"
-                # else:
-                #     context_input += f"{item['link_context']}"
                 context_input.append(item['link_context'])
 
                 if args.insert_mentions == 'target':
                     target_input = [
                         f"{item['target_title']}{tokenizer.sep_token}{mention_map[item['target_title']]}", item['target_lead']]
-                    # target_input = f"{item['target_title']}{tokenizer.sep_token}{mention_map[item['target_title']]}{tokenizer.sep_token}{item['target_lead']}"
                 else:
                     target_input = [
                         f"{item['target_title']}", item['target_lead']]
-                    # target_input = f"{item['target_title']}{tokenizer.sep_token}{item['target_lead']}"
-
+                
                 output['noises'].append(noise_map[noise_type])
                 output['sources'].append(source_input)
                 output['contexts'].append(context_input)
@@ -499,8 +496,6 @@ if __name__ == '__main__':
                         for link in titles:
                             temp.append([f"{current_links_neg[link]['target_title']}",
                                          f"{current_links_neg[link]['target_lead']}"])
-                            # temp.append(
-                            #     f"{current_links_neg[link]['target_title']}{tokenizer.sep_token}{current_links_neg[link]['target_lead']}")
                             if len(temp) == args.n_links:
                                 break
                         if temp:
@@ -515,46 +510,37 @@ if __name__ == '__main__':
 
                     if args.insert_section:
                         context_input = [source_section_neg]
-                        # context_input = f"{source_section_neg}{tokenizer.sep_token}"
                     else:
                         context_input = ['']
-                        # context_input = ''
-
+                    
                     if args.insert_mentions == 'candidates':
+                        if context_input[0] != '':
+                            context_input[0] += f'{tokenizer.sep_token}'
                         context_input[0] += f"{mention_map[item['target_title']]}"
-                        # context_input += f"{mention_map[item['target_title']]}{tokenizer.sep_token}{link_context_neg}"
-                    # else:
-                    #     context_input += f"{link_context_neg}"
                     context_input.append(link_context_neg)
                     output['contexts'].append(context_input)
         else:
             for index, item in enumerate(input):
                 if item['target_title'] not in mention_map:
                     mention_map[item['target_title']] = item['target_title']
-                # source_input = f"{item['source_title']}{tokenizer.sep_token}{item['source_lead']}"
                 source_input = [item['source_title'], item['source_lead']]
                 if args.insert_section:
                     context_input = [item['source_section']]
-                    # context_input = f"{item['source_section']}{tokenizer.sep_token}"
                 else:
                     context_input = ['']
-                    # context_input = ''
                 if args.insert_mentions == 'candidates':
+                    if context_input[0] != '':
+                        context_input[0] += f'{tokenizer.sep_token}'
                     context_input[0] += f"{mention_map[item['target_title']]}"
-                    # context_input += f"{mention_map[item['target_title']]}{tokenizer.sep_token}{item['link_context']}"
-                # else:
-                #     context_input += f"{item['link_context']}"
                 context_input.append(item['link_context'])
 
                 if args.insert_mentions == 'target':
                     target_input = [
                         f"{item['target_title']}{tokenizer.sep_token}{mention_map[item['target_title']]}", item['target_lead']]
-                    # target_input = f"{item['target_title']}{tokenizer.sep_token}{mention_map[item['target_title']]}{tokenizer.sep_token}{item['target_lead']}"
                 else:
                     target_input = [
                         f"{item['target_title']}", item['target_lead']]
-                    # target_input = f"{item['target_title']}{tokenizer.sep_token}{item['target_lead']}"
-
+           
                 if args.use_current_links:
                     current_links = literal_eval(item['current_links'])
                     temp = []
@@ -563,8 +549,6 @@ if __name__ == '__main__':
                     for link in titles:
                         temp.append([f"{current_links[link]['target_title']}",
                                      f"{current_links[link]['target_lead']}"])
-                        # temp.append(
-                        #     f"{current_links[link]['target_title']}{tokenizer.sep_token}{current_links[link]['target_lead']}")
                         if len(temp) == args.n_links:
                             break
                     if temp:
@@ -592,8 +576,6 @@ if __name__ == '__main__':
                         for link in titles:
                             temp.append([f"{current_links_neg[link]['target_title']}",
                                          f"{current_links_neg[link]['target_lead']}"])
-                            # temp.append(
-                            #     f"{current_links_neg[link]['target_title']}{tokenizer.sep_token}{current_links_neg[link]['target_lead']}")
                             if len(temp) == args.n_links:
                                 break
                         if temp:
@@ -608,16 +590,13 @@ if __name__ == '__main__':
 
                     if args.insert_section:
                         context_input = [source_section_neg]
-                        # context_input = f"{source_section_neg}{tokenizer.sep_token}"
                     else:
                         context_input = ['']
-                        # context_input = ''
 
                     if args.insert_mentions == 'candidates':
+                        if context_input[0] != '':
+                            context_input[0] += f'{tokenizer.sep_token}'
                         context_input[0] += f"{mention_map[item['target_title']]}"
-                        # context_input += f"{mention_map[item['target_title']]}{tokenizer.sep_token}{link_context_neg}"
-                    # else:
-                    #     context_input += f"{link_context_neg}"
                     context_input.append(link_context_neg)
                     output['contexts'].append(context_input)
 
@@ -806,9 +785,13 @@ if __name__ == '__main__':
                                 joint_embeddings.append(torch.cat(
                                     [output_context_text[triplet_index + candidate_index].unsqueeze(0), current_links_subset_pooled], dim=1))
                 joint_embeddings = torch.cat(joint_embeddings, dim=0)
-                output_context = link_fuser(joint_embeddings)
+                if args.current_links_use_mlp:
+                    output_context = link_fuser(joint_embeddings)
+                else:
+                    output_context = joint_embeddings
                 if args.current_links_residuals:
-                    output_context = output_context + output_context_text
+                    if not args.use_only_links:
+                        output_context = output_context_text + output_context * args.current_links_residuals_weight
                 if args.normalize_current_links:
                     output_context = output_context * \
                         torch.norm(output_context_text, dim=1).view(-1, 1) / \
@@ -1030,9 +1013,13 @@ if __name__ == '__main__':
                                                 [output_context_text[triplet_index + candidate_index].unsqueeze(0), current_links_subset_pooled], dim=1))
                             joint_embeddings = torch.cat(
                                 joint_embeddings, dim=0)
-                            output_context = link_fuser(joint_embeddings)
+                            if args.current_links_use_mlp:
+                                output_context = link_fuser(joint_embeddings)
+                            else:
+                                output_context = joint_embeddings
                             if args.current_links_residuals:
-                                output_context = output_context + output_context_text
+                                if not args.use_only_links:
+                                    output_context = output_context_text + output_context * args.current_links_residuals_weight
                             if args.normalize_current_links:
                                 output_context = output_context * \
                                     torch.norm(output_context_text, dim=1).view(-1, 1) / \
@@ -1267,7 +1254,6 @@ if __name__ == '__main__':
             for index, item in enumerate(input):
                 if item['target_title'] not in mention_map:
                     mention_map[item['target_title']] = item['target_title']
-                # source_input = f"{item['source_title']}{tokenizer.sep_token}{item['source_lead']}"
                 source_input = [item['source_title'], item['source_lead']]
                 if args.use_current_links:
                     current_links = literal_eval(item['current_links'])
@@ -1275,8 +1261,6 @@ if __name__ == '__main__':
                     random.shuffle(titles)
                     temp = []
                     for link in titles:
-                        # temp.append(
-                        #     f"{current_links[link]['target_title']}{tokenizer.sep_token}{current_links[link]['target_lead']}")
                         temp.append([current_links[link]['target_title'],
                                      current_links[link]['target_lead']])
                         if len(temp) == args.n_links:
@@ -1289,23 +1273,18 @@ if __name__ == '__main__':
                             [0] * len(temp))
                 if args.insert_section:
                     context_input = [item['source_section']]
-                    # context_input = f"{item['source_section']}{tokenizer.sep_token}"
                 else:
                     context_input = ['']
-                    # context_input = ''
                 if args.insert_mentions == 'candidates':
+                    if context_input[0] != '':
+                        context_input[0] += f"{tokenizer.sep_token}"
                     context_input[0] += f"{mention_map[item['target_title']]}"
-                    # context_input += f"{mention_map[item['target_title']]}{tokenizer.sep_token}{item['link_context']}"
-                # else:
-                #     context_input += f"{item['link_context']}"
                 context_input.append(item['link_context'])
 
                 if args.insert_mentions == 'target':
                     target_input = [f"{item['target_title']}{tokenizer.sep_token}{mention_map[item['target_title']]}",
                                     item['target_lead']]
-                    # target_input = f"{item['target_title']}{tokenizer.sep_token}{mention_map[item['target_title']]}{tokenizer.sep_token}{item['target_lead']}"
                 else:
-                    # target_input = f"{item['target_title']}{tokenizer.sep_token}{item['target_lead']}"
                     target_input = [item['target_title'], item['target_lead']]
 
                 output['noises'].append(missing_map[item['missing_category']])
@@ -1325,8 +1304,6 @@ if __name__ == '__main__':
                         for link in titles:
                             temp.append(
                                 [current_links_neg[link]['target_title'], current_links_neg[link]['target_lead']])
-                            # temp.append(
-                            #     f"{current_links_neg[link]['target_title']}{tokenizer.sep_token}{current_links_neg[link]['target_lead']}")
                             if len(temp) == args.n_links:
                                 break
                         if temp:
@@ -1338,16 +1315,12 @@ if __name__ == '__main__':
 
                     if args.insert_section:
                         context_input = [source_section_neg]
-                        # context_input = f"{source_section_neg}{tokenizer.sep_token}"
                     else:
                         context_input = ['']
-                        # context_input = ''
-
                     if args.insert_mentions == 'candidates':
+                        if context_input[0] != '':
+                            context_input[0] += f"{tokenizer.sep_token}"
                         context_input[0] += f"{mention_map[item['target_title']]}"
-                        # context_input += f"{mention_map[item['target_title']]}{tokenizer.sep_token}{link_context_neg}"
-                    # else:
-                    #     context_input += f"{link_context_neg}"
                     context_input.append(link_context_neg)
                     output['contexts'].append(context_input)
         else:
@@ -1355,7 +1328,6 @@ if __name__ == '__main__':
                 if item['target_title'] not in mention_map:
                     mention_map[item['target_title']] = item['target_title']
                 source_input = [item['source_title'], item['source_lead']]
-                # source_input = f"{item['source_title']}{tokenizer.sep_token}{item['source_lead']}"
                 if args.use_current_links:
                     current_links = literal_eval(item['current_links'])
                     titles = list(current_links.keys())
@@ -1364,8 +1336,6 @@ if __name__ == '__main__':
                     for link in titles:
                         temp.append([current_links[link]['target_title'],
                                      current_links[link]['target_lead']])
-                        # temp.append(
-                        #     f"{current_links[link]['target_title']}{tokenizer.sep_token}{current_links[link]['target_lead']}")
                         if len(temp) == args.n_links:
                             break
                     if temp:
@@ -1377,24 +1347,19 @@ if __name__ == '__main__':
 
                 if args.insert_section:
                     context_input = [item['source_section']]
-                    # context_input = f"{item['source_section']}{tokenizer.sep_token}"
                 else:
                     context_input = ['']
-                    # context_input = ''
                 if args.insert_mentions == 'candidates':
+                    if context_input[0] != '':
+                        context_input[0] += f"{tokenizer.sep_token}"
                     context_input[0] += f"{mention_map[item['target_title']]}"
-                    # context_input += f"{mention_map[item['target_title']]}{tokenizer.sep_token}{item['link_context']}"
-                # else:
-                #     context_input += f"{item['link_context']}"
                 context_input.append(item['link_context'])
 
                 if args.insert_mentions == 'target':
                     target_input = [f"{item['target_title']}{tokenizer.sep_token}{mention_map[item['target_title']]}",
                                     item['target_lead']]
-                    # target_input = f"{item['target_title']}{tokenizer.sep_token}{mention_map[item['target_title']]}{tokenizer.sep_token}{item['target_lead']}"
                 else:
                     target_input = [item['target_title'], item['target_lead']]
-                    # target_input = f"{item['target_title']}{tokenizer.sep_token}{item['target_lead']}"
 
                 output['noises'].append(missing_map[item['missing_category']])
                 output['sources'].append(source_input)
@@ -1412,8 +1377,6 @@ if __name__ == '__main__':
                         for link in titles:
                             temp.append(
                                 [current_links_neg[link]['target_title'], current_links_neg[link]['target_lead']])
-                            # temp.append(
-                            #     f"{current_links_neg[link]['target_title']}{tokenizer.sep_token}{current_links_neg[link]['target_lead']}")
                             if len(temp) == args.n_links:
                                 break
                         if temp:
@@ -1425,16 +1388,13 @@ if __name__ == '__main__':
 
                     if args.insert_section:
                         context_input = [source_section_neg]
-                        # context_input = f"{source_section_neg}{tokenizer.sep_token}"
                     else:
                         context_input = ['']
-                        # context_input = ''
-
+          
                     if args.insert_mentions == 'candidates':
+                        if context_input[0] != '':
+                            context_input[0] += f"{tokenizer.sep_token}"
                         context_input[0] += f"{mention_map[item['target_title']]}"
-                        # context_input += f"{mention_map[item['target_title']]}{tokenizer.sep_token}{link_context_neg}"
-                    # else:
-                    #     context_input += f"{link_context_neg}"
                     context_input.append(link_context_neg)
                     output['contexts'].append(context_input)
 
@@ -1567,9 +1527,13 @@ if __name__ == '__main__':
                                 joint_embeddings.append(torch.cat(
                                     [output_context_text[triplet_index + candidate_index].unsqueeze(0), current_links_subset_pooled], dim=1))
                 joint_embeddings = torch.cat(joint_embeddings, dim=0)
-                output_context = link_fuser(joint_embeddings)
+                if args.current_links_use_mlp:
+                    output_context = link_fuser(joint_embeddings)
+                else:
+                    output_context = joint_embeddings
                 if args.current_links_residuals:
-                    output_context = output_context + output_context_text
+                    if not args.use_only_links:
+                        output_context = output_context_text + output_context * args.current_links_residuals_weight
                 if args.normalize_current_links:
                     output_context = output_context * \
                         torch.norm(output_context_text, dim=1).view(-1, 1) / \
@@ -1749,9 +1713,13 @@ if __name__ == '__main__':
                                                 [output_context_text[triplet_index + candidate_index].unsqueeze(0), current_links_subset_pooled], dim=1))
                             joint_embeddings = torch.cat(
                                 joint_embeddings, dim=0)
-                            output_context = link_fuser(joint_embeddings)
+                            if args.current_links_use_mlp:
+                                output_context = link_fuser(joint_embeddings)
+                            else:
+                                output_context = joint_embeddings
                             if args.current_links_residuals:
-                                output_context = output_context + output_context_text
+                                if not args.use_only_links:
+                                    output_context = output_context_text + output_context * args.current_links_residuals_weight
                             if args.normalize_current_links:
                                 output_context = output_context * \
                                     torch.norm(output_context_text, dim=1).view(-1, 1) / \
