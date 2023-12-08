@@ -2,7 +2,7 @@ import argparse
 import logging
 import os
 import sys
-import time
+from datetime import datetime
 import random
 import re
 
@@ -88,12 +88,52 @@ def mask_negative_contexts(context, probs, backlog):
         start_index = random.randint(0, len(sentences) - mask_length)
         return " ".join(sentences[:start_index]) + " " + " ".join(sentences[start_index + mask_length:])
 
+def freeze_model(model, architecture, freeze_layers):
+    if freeze_layers == 0:
+        return model
+    if architecture == 'BERT':
+        for param in model.base_model.embeddings.parameters():
+            param.requires_grad = False
+        for param in model.base_model.encoder.layer[:freeze_layers].parameters():
+            param.requires_grad = False
+    elif architecture == 'RoBERTa':
+        for param in model.base_model.embeddings.parameters():
+            param.requires_grad = False
+        for param in model.base_model.encoder.layer[:freeze_layers].parameters():
+            param.requires_grad = False
+    elif architecture == 'T5':
+        for param in model.embed_tokens.parameters():
+            param.requires_grad = False
+        for param in model.block[:freeze_layers].parameters():
+            param.requires_grad = False
+    return model
+
+def unfreeze_model(model, architecture):
+    if architecture == 'BERT':
+        for param in model.base_model.embeddings.parameters():
+            param.requires_grad = True
+        for param in model.base_model.encoder.layer.parameters():
+            param.requires_grad = True
+    elif architecture == 'RoBERTa':
+        for param in model.base_model.embeddings.parameters():
+            param.requires_grad = True
+        for param in model.base_model.encoder.layer.parameters():
+            param.requires_grad = True
+    elif architecture == 'T5':
+        for param in model.embed_tokens.parameters():
+            param.requires_grad = True
+        for param in model.block.parameters():
+            param.requires_grad = True
+    return model
+                
+
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(
         formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument('--model_name', type=str,
-                        default='bert-base-uncased', help='Model name or path to model')
+                        default='bert-base-cased', help='Model name or path to model')
+    parser.add_argument('--model_architecture', type=str, choices=['BERT', 'RoBERTa', 'T5'], default='BERT', help='Model architecture')
     parser.add_argument('--data_dir', type=str,
                         required=True, help='Data directory')
     parser.add_argument('--data_dir_2', type=str, default='',
@@ -217,7 +257,8 @@ if __name__ == '__main__':
     # set-up tensorboard
     if not os.path.exists('runs'):
         os.makedirs('runs', exist_ok=True)
-    date_time = time.strftime("%Y-%m-%d_%H-%M-%S")
+    # take date time down to milliseconds
+    date_time = datetime.utcnow().strftime("%Y-%m-%d_%H-%M-%S-%f")[:-3]
     tb_dir = os.path.join('runs', date_time)
     if not os.path.exists(tb_dir):
         os.makedirs(tb_dir, exist_ok=True)
@@ -339,11 +380,13 @@ if __name__ == '__main__':
                                         nn.ReLU(),
                                         nn.Linear(model_contexts_size, model_contexts_size, bias=False))
     
-    if args.split_models:
-        model_articles = model_articles.encoder
-        model_contexts = model_contexts.encoder
-    else:
-        model = model.encoder
+    # Remove decoder layers if present
+    if args.model_architecture == 'T5':
+        if args.split_models:
+            model_articles = model_articles.encoder
+            model_contexts = model_contexts.encoder
+        else:
+            model = model.encoder
 
     tokenizer = AutoTokenizer.from_pretrained(args.model_name)
     tokenizer.save_pretrained(os.path.join(output_dir, 'tokenizer'))
@@ -665,19 +708,10 @@ if __name__ == '__main__':
     else:
         logger.info(f"Freezing first {args.freeze_layers} layers")
         if args.split_models:
-            for param in model_articles.base_model.embeddings.parameters():
-                param.requires_grad = False
-            for param in model_articles.base_model.encoder.layer[:args.freeze_layers].parameters():
-                param.requires_grad = False
-            for param in model_contexts.base_model.embeddings.parameters():
-                param.requires_grad = False
-            for param in model_contexts.base_model.encoder.layer[:args.freeze_layers].parameters():
-                param.requires_grad = False
+            model_articles = freeze_model(model_articles, args.model_architecture, args.freeze_layers)
+            model_contexts = freeze_model(model_contexts, args.model_architecture, args.freeze_layers)
         else:
-            for param in model.base_model.embeddings.parameters():
-                param.requires_grad = False
-            for param in model.base_model.encoder.layer[:args.freeze_layers].parameters():
-                param.requires_grad = False
+            model = freeze_model(model, args.model_architecture, args.freeze_layers)
 
     # prepare all objects with accelerator
     classification_head, optimizer, train_loader, val_loader, scheduler = accelerator.prepare(
@@ -840,28 +874,13 @@ if __name__ == '__main__':
                 if args.split_models:
                     model_articles = accelerator.unwrap_model(model_articles)
                     model_contexts = accelerator.unwrap_model(model_contexts)
-                    for param in model_articles.parameters():
-                        param.requires_grad = True
-                    for param in model_contexts.parameters():
-                        param.requires_grad = True
-                    for param in model_articles.base_model.embeddings.parameters():
-                        param.requires_grad = False
-                    for param in model_articles.base_model.encoder.layer[:args.freeze_layers].parameters():
-                        param.requires_grad = False
-                    for param in model_contexts.base_model.embeddings.parameters():
-                        param.requires_grad = False
-                    for param in model_contexts.base_model.encoder.layer[:args.freeze_layers].parameters():
-                        param.requires_grad = False
+                    model_contexts = unfreeze_model(model_contexts, args.model_architecture, args.freeze_layers)
+                    model_articles = unfreeze_model(model_articles, args.model_architecture, args.freeze_layers)
                     model_articles = accelerator.prepare(model_articles)
                     model_contexts = accelerator.prepare(model_contexts)
                 else:
                     model = accelerator.unwrap_model(model)
-                    for param in model.parameters():
-                        param.requires_grad = True
-                    for param in model.base_model.embeddings.parameters():
-                        param.requires_grad = False
-                    for param in model.base_model.encoder.layer[:args.freeze_layers].parameters():
-                        param.requires_grad = False
+                    model = unfreeze_model(model, args.model_architecture, args.freeze_layers)
                     model = accelerator.prepare(model)
 
             # print loss
@@ -912,7 +931,8 @@ if __name__ == '__main__':
                     model_contexts.eval()
                 else:
                     model.eval()
-                link_fuser.eval()
+                if args.use_current_links:
+                    link_fuser.eval()
                 with torch.no_grad():
                     true_pos = 0
                     true_neg = 0
@@ -1206,7 +1226,8 @@ if __name__ == '__main__':
                     model_contexts.train()
                 else:
                     model.train()
-                link_fuser.train()
+                if args.use_current_links:
+                    link_fuser.train()
                 torch.cuda.empty_cache()
                 gc.collect()
 
@@ -1612,7 +1633,8 @@ if __name__ == '__main__':
                     model_contexts.eval()
                 else:
                     model.eval()
-                link_fuser.eval()
+                if args.use_current_links:
+                    link_fuser.eval()
                 with torch.no_grad():
                     true_pos = 0
                     true_neg = 0
@@ -1906,7 +1928,8 @@ if __name__ == '__main__':
                     model_contexts.train()
                 else:
                     model.train()
-                link_fuser.train()
+                if args.use_current_links:
+                    link_fuser.train()
                 torch.cuda.empty_cache()
                 gc.collect()
 

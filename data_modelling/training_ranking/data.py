@@ -14,12 +14,12 @@ class WikiDataset(data.Dataset):
 
     def get_data(self, data_dir, split, neg_samples):
         data_dir = os.path.join(data_dir, split)
-        files = glob(os.path.join(data_dir, '*.parquet'))
-        dfs = []
-        for file in files:
-            df = pd.read_parquet(file)
-            dfs.append(df)
-        df = pd.concat(dfs)
+        # files = glob(os.path.join(data_dir, '*.parquet'))
+        # dfs = []
+        # for file in files:
+        #     df = pd.read_parquet(file)
+        #     dfs.append(df)
+        df = pd.read_parquet(data_dir)
         # negative columns have "_neg_{i}" suffix
         # remove all columns with i >= neg_samples
         remove_cols = []
