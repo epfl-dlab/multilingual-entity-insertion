@@ -128,6 +128,10 @@ if __name__ == '__main__':
             mention_map[title].append(row['mention'])
         else:
             mention_map[title] = [row['mention']]
+    
+    for title in mention_map:
+        if len(mention_map[title]) > 10:
+            mention_map[title] = random.sample(mention_map[title], 10)
 
     print(f'Calculating model rankings. Model type: {model_name}')
     rank = []
