@@ -244,7 +244,6 @@ if __name__ == '__main__':
     if os.path.exists(os.path.join(args.raw_data_dir, f'{args.lang}wiki-{args.second_date}-pages-meta-history.xml.bz2')):
         files = [os.path.join(args.raw_data_dir, f'{args.lang}wiki-{args.second_date}-pages-meta-history.xml.bz2')]
     else:
-        print(f"Revision history is not downloaded. Using the backup json file to find the necessary revision history files.")
         json_file = os.path.join(args.raw_data_dir, 'dumpstatus.json')
         with open(json_file, 'r') as f:
             data = json.load(f)
@@ -267,14 +266,7 @@ if __name__ == '__main__':
                 if range['min_id'] <= id <= range['max_id']:
                     files[range['file_name']] = range['url']
                     break
-        print(f"Downloading {len(files)} revision history files")
-        print(files)
-        # download in parallel
-        # with Pool(min(args.download_processes, cpu_count())) as p:
-        #     p.starmap(download_url, [(files[file], file) for file in files])
-        for file in files:
-            download_url(files[file], file)            
-        
+
     print("Finding links in revision history file(s)")
     # read the revision history
     output = []

@@ -38,18 +38,15 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
 
-    page_files = glob(os.path.join(args.input_dir, "pages*.parquet"))
-    link_files = glob(os.path.join(args.input_dir, "links*.parquet"))
+    if not os.path.exists(args.output_dir):
+        os.makedirs(args.output_dir)
+    if not os.path.exists(os.path.join(args.output_dir, 'good_pages')):
+        os.makedirs(os.path.join(args.output_dir, 'good_pages'))
+    if not os.path.exists(os.path.join(args.output_dir, 'good_links')):
+        os.makedirs(os.path.join(args.output_dir, 'good_links'))
 
-    # print('Loading data')
-    # dfs = []
-    # for file in tqdm(page_files):
-    #     temp_df = pd.read_parquet(file)
-    #     temp_df['HTML'] = temp_df['HTML'].apply(
-    #         lambda x: simplify_html(x))  # simpify html so it is not too big
-    #     dfs.append(temp_df)
-    # df_pages = pd.concat(dfs).reset_index(drop=True)
-
+    page_files = glob(os.path.join(args.input_dir, "pages/pages*.parquet"))
+    link_files = glob(os.path.join(args.input_dir, "links/links*.parquet"))
 
     no_html = set([])
     no_lead = set([])
@@ -68,16 +65,9 @@ if __name__ == '__main__':
         df = df.reset_index(drop=True)
         df = df.drop(columns=['HTML'])
         basename = os.path.basename(file)
-        df.to_parquet(os.path.join(args.output_dir,
-                      basename.replace('pages', 'good_pages')))
-
-    # print('Building auxiliary data structures')
-    # no_html = set(df_pages[(df_pages['HTML'].isna()) | (
-    #     df_pages['HTML'] == '')]['title'].tolist())
-    # no_lead = set(df_pages[(df_pages['lead_paragraph'].isna()) | (
-    #     df_pages['lead_paragraph'] == '')]['title'].tolist())
-    # short_lead = set(df_pages[(df_pages['lead_paragraph'].apply(
-    #     lambda x: split_text(x) < 6))]['title'].tolist())
+        new_name = os.path.join(args.output_dir, 'good_pages',
+                                basename.replace('pages', 'good_pages'))
+        df.to_parquet(new_name)
 
     print('Saving good links')
     for file in tqdm(link_files):
@@ -87,5 +77,6 @@ if __name__ == '__main__':
         df['context'] = df['context'].apply(fix_context)
         df = df.reset_index(drop=True)
         basename = os.path.basename(file)
-        df.to_parquet(os.path.join(args.output_dir,
-                      basename.replace('links', 'good_links')))
+        new_name = os.path.join(args.output_dir, 'good_links',
+                                basename.replace('links', 'good_links'))
+        df.to_parquet(new_name)

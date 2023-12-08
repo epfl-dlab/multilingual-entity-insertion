@@ -618,23 +618,10 @@ def process_version(input):
                         'second_version': second_version,
                         'direct_match': direct_match,
                         'missing_category': missing_category,
-                        # 'negative_contexts': json.dumps(negative_contexts),
-                        # 'current_links': json.dumps(current_links)
                         'negative_contexts': str(negative_contexts),
                         'current_links': str(current_links)
                     })
                     found_links.append(output[-1])
-        # if len(found_links) != len(input['versions'][second_version]):
-        #     print('Details')
-        #     print(input['source_title'], input['source_ID'], input['first_version'], second_version)
-        #     print('Expected Links')
-        #     print(input['versions'][second_version])
-        #     print('Found Links')
-        #     print(found_links)
-        #     print(html_1_clean)
-        #     print('SEP')
-        #     print(html_2_clean)
-        #     print('#############################################')
     return output
 
 

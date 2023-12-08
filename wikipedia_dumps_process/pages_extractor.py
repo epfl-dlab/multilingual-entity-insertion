@@ -229,7 +229,7 @@ if __name__ == '__main__':
                     if len(full_pages) >= 10_000:
                         full_pages = pd.DataFrame(full_pages)
                         full_pages.to_parquet(
-                            f"{args.output_dir}/pages_{counter}.parquet")
+                            f"{args.output_dir}/pages/pages_{counter}.parquet")
                         del full_pages
                         gc.collect()
                         full_pages = []
@@ -243,4 +243,4 @@ if __name__ == '__main__':
         full_pages[-1]['lead_paragraph'] = None
         full_pages[-1]['version'] = None
     full_pages = pd.DataFrame(full_pages)
-    full_pages.to_parquet(f"{args.output_dir}/pages_{counter}.parquet")
+    full_pages.to_parquet(f"{args.output_dir}/pages/pages_{counter}.parquet")

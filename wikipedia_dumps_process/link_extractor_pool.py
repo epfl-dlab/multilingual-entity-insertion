@@ -798,13 +798,13 @@ if __name__ == '__main__':
             if len(links) > 250_000:
                 df_links = pd.DataFrame(links)
                 df_links.to_parquet(
-                    f"{args.output_dir}/links_{counter}.parquet")
+                    f"{args.output_dir}/links/links_{counter}.parquet")
                 del df_links
                 del links
 
                 df_sections = pd.DataFrame(sections)
                 df_sections.to_parquet(
-                    f"{args.output_dir}/sections_{counter}.parquet")
+                    f"{args.output_dir}/sections/sections_{counter}.parquet")
                 del df_sections
                 del sections
                 counter += 1
@@ -819,12 +819,12 @@ if __name__ == '__main__':
 
     if links:
         df_links = pd.DataFrame(links)
-        df_links.to_parquet(f"{args.output_dir}/links_{counter}.parquet")
+        df_links.to_parquet(f"{args.output_dir}/links/links_{counter}.parquet")
         del df_links
         del links
     if sections:
         df_sections = pd.DataFrame(sections)
-        df_sections.to_parquet(f"{args.output_dir}/sections_{counter}.parquet")
+        df_sections.to_parquet(f"{args.output_dir}/sections/sections_{counter}.parquet")
         del df_sections
         del sections
 
