@@ -18,8 +18,6 @@ class DownloadProgressBar(tqdm):
 
 
 def download_url(url, output_path):
-    print('URL:', url)
-    print('Output path:', output_path)
     with DownloadProgressBar(unit='B', unit_scale=True,
                              miniters=1, desc=url.split('/')[-1]) as t:
         urllib.request.urlretrieve(url, filename=output_path, reporthook=t.update_to)
@@ -111,8 +109,9 @@ if __name__ == '__main__':
             with open(output_backup_path, 'r') as f:
                 backup_json = json.load(f)
             data = backup_json['jobs']['metahistorybz2dump']['files']
+            print(f"Downloading {len(data)} files")
             urls = [f"https://dumps.wikimedia.org{data[f]['url']}" for f in data]
-            paths = [f"{args.output_dir}/{f}" for f in data]
+            paths = [f"{args.output_dir}/{f}" for f in data if args.overwrite or not os.path.exists(f"{args.output_dir}/{f}")]
             with Pool(3) as p:
                 p.starmap(download_url, zip(urls, paths))
             

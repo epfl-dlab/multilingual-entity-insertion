@@ -54,8 +54,8 @@ if __name__ == '__main__':
         raise Exception(f'Links file {args.links_file} does not exist')
 
     print('Loading pages')
-    page_files = glob(os.path.join(args.input_month1_dir, 'good_pages*')) + \
-        glob(os.path.join(args.input_month2_dir, 'good_pages*'))
+    page_files = glob(os.path.join(args.input_month1_dir, 'good_pages')) + \
+        glob(os.path.join(args.input_month2_dir, 'good_pages'))
     page_files.sort()
     dfs = []
     for file in tqdm(page_files):

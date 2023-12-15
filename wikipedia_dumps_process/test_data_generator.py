@@ -90,103 +90,154 @@ def simplify_html(html):
 
 
 def fix_sentence_tokenizer(sentences):
-    # for each sentence, if it is less than 10 characters, merge it with the next and previous sentences
-    i = 0
-    if len(sentences) > 1:
-        while i < len(sentences):
-            if len(sentences[i]) < 10:
-                if i > 0 and i < len(sentences) - 1:
-                    sentences[i-1] = sentences[i-1] + ' ' + \
-                        sentences[i] + ' ' + sentences[i+1]
-                    del sentences[i]
-                    del sentences[i]
-                elif i == 0:
-                    sentences[i] = sentences[i] + ' ' + sentences[i+1]
-                    del sentences[i+1]
-                else:
-                    sentences[i-1] = sentences[i-1] + ' ' + sentences[i]
-                    del sentences[i]
-            else:
-                i += 1
-
-    # dont allow for links to be separated across sentences
+    if not sentences:
+        return sentences
+    
+    # dont allow sentences with less than 10 characters
+    new_sentences = []
+    join_prev = 0
     i = 0
     while i < len(sentences):
-        while sentences[i].count('<a ') > sentences[i].count('</a>'):
-            sentences[i] = sentences[i] + ' ' + sentences[i+1]
-            del sentences[i+1]
+        if len(sentences[i]) < 10:
+            if new_sentences == []:
+                new_sentences.append(sentences[i])
+                join_prev = 1
+            else:
+                new_sentences[-1] += ' ' + sentences[i]
+                join_prev = 1
+        elif join_prev > 0:
+            new_sentences[-1] += ' ' + sentences[i]
+            join_prev -= 1
+        else:
+            new_sentences.append(sentences[i])
         i += 1
-
-    # dont allow parenthesis to be separated across sentences
+        
+    # dont allow links to be separated across sentences
+    final_sentences = new_sentences
+    new_sentences = []
     i = 0
-    while i < len(sentences) - 1:
-        # find right-most occurrence of ')' and '(' in sentences[i]
-        right_paren_before = sentences[i].rfind(')')
-        left_paren_before = sentences[i].rfind('(')
+    start_count = 0
+    end_count = 0
+    while i < len(final_sentences):
+        start_count += final_sentences[i].count('<a ')
+        end_count += final_sentences[i].count('</a>')
+        if start_count > end_count:
+            if new_sentences == []:
+                new_sentences.append(final_sentences[i])
+            else:
+                new_sentences[-1] += ' ' + final_sentences[i]
+        else:
+            new_sentences.append(final_sentences[i])
+            start_count = 0
+            end_count = 0
+        i += 1
+    
+    # dont allow parentheses to be separated across sentences
+    final_sentences = new_sentences
+    new_sentences = [final_sentences[0]]
+    i = 1
+    while i < len(final_sentences):
+        # find right-most occurrence of ')' and '(' in sentences[i-1]
+        right_paren_before = final_sentences[i-1].rfind(')')
+        left_paren_before = final_sentences[i-1].rfind('(')
         right_paren_before = right_paren_before if right_paren_before != -1 else 0
         left_paren_before = left_paren_before if left_paren_before != -1 else 0
-        # find left-most occurrence of ')' and '(' in sentences[i+1]
-        right_paren_after = sentences[i+1].find(')')
-        left_paren_after = sentences[i+1].find('(')
+        # find left-most occurrence of ')' and '(' in sentences[i]
+        right_paren_after = final_sentences[i].find(')')
+        left_paren_after = final_sentences[i].find('(')
         right_parent_after = right_paren_after if right_paren_after != - \
-            1 else len(sentences[i+1])
+            1 else len(final_sentences[i])
         left_paren_after = left_paren_after if left_paren_after != - \
-            1 else len(sentences[i+1])
-
+            1 else len(final_sentences[i])
+        
         if right_paren_before < left_paren_before and right_parent_after < left_paren_after:
-            sentences[i] = sentences[i] + ' ' + sentences[i+1]
-            del sentences[i+1]
+            new_sentences[-1] += ' ' + final_sentences[i]
         else:
-            i += 1
-
-    # dont allow list items to be separated across sentences
-    i = 0
-    while i < len(sentences) - 1:
-        while sentences[i].count('<li>') > sentences[i].count('</li>'):
-            sentences[i] = sentences[i] + ' ' + sentences[i+1]
-            del sentences[i+1]
+            new_sentences.append(final_sentences[i])
         i += 1
-
-    # force </li> to act as a separator
+        
+    # dont allow list items to be separated across sentences
+    final_sentences = new_sentences
+    new_sentences = []
     i = 0
-    while i < len(sentences):
-        if '</li>' in sentences[i]:
+    start_count = 0
+    end_count = 0
+    while i < len(final_sentences):
+        start_count += final_sentences[i].count('<li>')
+        end_count += final_sentences[i].count('</li>')
+        if start_count > end_count:
+            if new_sentences == []:
+                new_sentences.append(final_sentences[i])
+            else:
+                new_sentences[-1] += ' ' + final_sentences[i]
+        else:
+            new_sentences.append(final_sentences[i])
+            start_count = 0
+            end_count = 0
+        i += 1
+                
+    # force </li> to act as a separator
+    final_sentences = new_sentences
+    new_sentences = []
+    i = 0
+    while i < len(final_sentences):
+        if '</li>' in final_sentences[i]:
             extra_sentences = [
-                s.strip() for s in sentences[i].split('</li>')]
+                s.strip() for s in final_sentences[i].split('</li>')]
             extra_sentences[:-1] = [s for s in extra_sentences[:-1] if s != '']
             extra_sentences[:-1] = [s + '</li>' for s in extra_sentences[:-1]]
             if extra_sentences[-1] == '':
                 extra_sentences.pop()
-            del sentences[i]
-            sentences = sentences[:i] + extra_sentences + sentences[i:]
+            new_sentences.extend(extra_sentences)
+        else:
+            new_sentences.append(final_sentences[i])
         i += 1
-
+    
     # add a new line to all lists
-    for i in range(len(sentences)):
-        sentences[i] = sentences[i].replace('\n</li>', '</li>')
-        sentences[i] = sentences[i].replace('</li>', '\n</li>')
+    i = 0
+    while i < len(new_sentences):
+        new_sentences[i] = new_sentences[i].replace('\n</li>', '</li>')
+        new_sentences[i] = new_sentences[i].replace('</li>', '\n</li>')
+        i += 1
 
     # dont allow h2 tags to be separated across sentences
+    final_sentences = new_sentences
+    new_sentences = []
+    start_count = 0
+    end_count = 0
     i = 0
-    while i < len(sentences):
-        while sentences[i].count('<h2>') != sentences[i].count('</h2>'):
-            sentences[i] = sentences[i] + ' ' + sentences[i+1]
-            del sentences[i+1]
+    while i < len(final_sentences):
+        start_count += final_sentences[i].count('<h2>')
+        end_count += final_sentences[i].count('</h2>')
+        if start_count > end_count:
+            if new_sentences == []:
+                new_sentences.append(final_sentences[i])
+            else:
+                new_sentences[-1] += ' ' + final_sentences[i]
+        else:
+            new_sentences.append(final_sentences[i])
+            start_count = 0
+            end_count = 0
+        i += 1
+        
+    # force </h2> to act as a separator
+    final_sentences = new_sentences
+    new_sentences = []
+    i = 0
+    while i < len(final_sentences):
+        if '</h2>' in final_sentences[i]:
+            extra_sentences = [
+                s.strip() for s in final_sentences[i].split('</h2>')]
+            extra_sentences[:-1] = [s for s in extra_sentences[:-1] if s != '']
+            extra_sentences[:-1] = [s + '</h2>' for s in extra_sentences[:-1]]
+            if extra_sentences[-1] == '':
+                extra_sentences.pop()
+            new_sentences.extend(extra_sentences)
+        else:
+            new_sentences.append(final_sentences[i])
         i += 1
 
-    # force <h2> to act as a separator
-    i = 0
-    while i < len(sentences):
-        if '<h2>' in sentences[i]:
-            extra_sentences = [s.strip() for s in sentences[i].split('<h2>')]
-            extra_sentences[1:] = ['<h2>' + s for s in extra_sentences[1:]]
-            extra_sentences = [s for s in extra_sentences if s != '']
-            del sentences[i]
-            sentences = sentences[:i] + extra_sentences + sentences[i:]
-        i += 1
-
-    return sentences
-
+    return new_sentences
 
 def fix_text(text):
     text = text.strip()

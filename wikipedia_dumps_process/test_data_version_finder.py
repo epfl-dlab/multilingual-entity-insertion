@@ -5,6 +5,7 @@ import argparse
 import os
 import bz2
 from xml.etree.ElementTree import iterparse
+import xml.etree.ElementTree as ET
 from html import unescape
 import re
 import urllib.request
@@ -12,6 +13,8 @@ from collections import Counter
 import json
 from multiprocessing import Pool, cpu_count
 import gc
+import math
+import traceback
 tqdm.pandas()
 
 class DownloadProgressBar(tqdm):
@@ -60,229 +63,19 @@ def process_title(title):
     return urllib.parse.unquote(title).replace('_', ' ')
 
 
-if __name__ == '__main__':
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--raw_data_dir', type=str, required=True,
-                        help='Directory containing the raw data')
-    parser.add_argument('--first_month_dir', '-i1', type=str,
-                        required=True, help='Input directory for first month')
-    parser.add_argument('--second_month_dir', '-i2', type=str,
-                        required=True, help='Input directory for second month')
-    parser.add_argument('--output_dir', type=str,
-                        required=True, help='Output directory')
-    parser.add_argument('--lang', type=str, required=True,
-                        help='language of the wikipedia dump')
-    parser.add_argument('--first_date', type=str, required=True,
-                        help='date of the first wikipedia dump in the format YYYYMMDD')
-    parser.add_argument('--second_date', type=str, required=True,
-                        help='date of the second wikipedia dump in the format YYYYMMDD')
-    parser.add_argument('--download_processes', type=int, default=1, help='Number of processes to use for downloading the revision history files if they are not already downloaded.')
-
-    args = parser.parse_args()
-    # check if input directories exist
-    if not os.path.exists(args.first_month_dir):
-        raise Exception('First month directory does not exist')
-    if not os.path.exists(args.second_month_dir):
-        raise Exception('Second month directory does not exist')
-
-    # check if output directory exists
-    if not os.path.exists(args.output_dir):
-        os.makedirs(args.output_dir)
-
-    # get all the link files in the month directories
-    first_month_link_files = glob(os.path.join(args.first_month_dir, "links*"))
-    second_month_link_files = glob(
-        os.path.join(args.second_month_dir, "links*"))
-
-    # get the page files for the second month
-    first_month_page_files = glob(os.path.join(args.first_month_dir, "pages*"))
-    second_month_page_files = glob(
-        os.path.join(args.second_month_dir, "pages*"))
-
-    print('Loading data')
-    dfs = []
-    for file in tqdm(first_month_link_files):
-        dfs.append(pd.read_parquet(file, columns=['source_title', 'target_title', 'source_ID', 'target_ID', 'source_version']))
-    df_1 = pd.concat(dfs)
-
-    dfs = []
-    for file in tqdm(second_month_link_files):
-        dfs.append(pd.read_parquet(file, columns=['source_title', 'target_title', 'source_ID', 'target_ID', 'source_version']))
-    df_2 = pd.concat(dfs)
-    del dfs
-    gc.collect()
-
-    # dfs = []
-    # for file in tqdm(first_month_page_files):
-    #     dfs.append(pd.read_parquet(file))
-    # df_pages_1 = pd.concat(dfs)
-
-    redirect_map = pd.concat([pd.read_parquet(os.path.join(args.first_month_dir, 'redirect_map.parquet')), pd.read_parquet(
-        os.path.join(args.second_month_dir, 'redirect_map.parquet'))]).drop_duplicates(ignore_index=False)
-    redirect_map = redirect_map['redirect'].to_dict()
-    redirect_map_clean = {process_title(k).lower(): process_title(
-        v).lower() for k, v in redirect_map.items()}
-
-    df_1['target_title'] = df_1['target_title'].progress_apply(
-        lambda x: update_targets(x, redirect_map))
-    df_2['target_title'] = df_2['target_title'].progress_apply(
-        lambda x: update_targets(x, redirect_map))
-
-    df_1 = df_1[['source_title', 'target_title',
-                 'source_ID', 'target_ID', 'source_version']]
-    df_2 = df_2[['source_title', 'target_title',
-                 'source_ID', 'target_ID', 'source_version']]
-
-    # group the links by source and target and count the number of links
-    df_1 = df_1.groupby(['source_title', 'target_title', 'source_ID',
-                        'target_ID', 'source_version']).size().reset_index(name='count')
-    df_2 = df_2.groupby(['source_title', 'target_title', 'source_ID',
-                        'target_ID', 'source_version']).size().reset_index(name='count')
-
-    # find all new links added in df_2. Consider two cases
-    # 1. The row is not present in df_1
-    # 2. The row is present in df_1 but the count is smaller in df_1
-    df_2 = df_2.merge(df_1, how='left', on=[
-                      'source_title', 'target_title', 'source_ID', 'target_ID'], suffixes=('_2', '_1'))
-    del df_1
-    gc.collect()
-    df_2 = df_2[(df_2['count_1'].isna()) | (df_2['count_2'] > df_2['count_1'])]
-    df_2['count_1'] = df_2['count_1'].fillna(0)
-    df_2['source_version_1'] = df_2['source_version_1'].fillna('&oldid=0')
-    df_2['count'] = df_2['count_2'] - df_2['count_1']
-    df_2 = df_2[['source_title', 'target_title', 'source_ID',
-                 'target_ID', 'source_version_1', 'source_version_2', 'count']]
-
-    # no_html = set(df_pages_1[(df_pages_1['HTML'].isna()) | (
-    #     df_pages_1['HTML'] == '')]['title'].tolist())
-    # no_qid = set(df_pages_1[df_pages_1['QID'].isna()]['title'].tolist())
-    # no_lead = set(df_pages_1[(df_pages_1['lead_paragraph'].isna()) | (
-    #     df_pages_1['lead_paragraph'] == '')]['title'].tolist())
-    # short_lead = set(df_pages_1[df_pages_1['lead_paragraph'].apply(
-    #     lambda x: x is not None and len(x.split()) < 6)]['title'].tolist())
-    # old_pages = set(df_pages_1['title'].tolist())
-    # create a dictionary with page title as key and version as value
-    # old_versions = df_pages_1[['title', 'version']].set_index(
-    #     'title').to_dict()['version']
-
-    # df_2['source_version_1'] = df_2['source_title'].apply(
-    #     lambda x: fill_version(x, old_versions))
-
-    initial_size = df_2['count'].sum()
-    print(f'Initially, there are {df_2["count"].sum()} new candidate links, from {len(df_2)} src-tgt pairs.')
-
-    # df_2_removed = df_2[~df_2['source_title'].isin(old_pages)]
-    # df_2 = df_2[df_2['source_title'].isin(old_pages)]
-    # print(
-    #     f'Out of these, {df_2_removed["count"].sum()} were removed because the source page was not present in the old data.')
-
-    # df_2_removed = df_2[~df_2['target_title'].isin(old_pages)]
-    # df_2 = df_2[df_2['target_title'].isin(old_pages)]
-    # print(
-    #     f'Out of these, {df_2_removed["count"].sum()} were removed because the target page was not present in the old data.')
-
-    # df_2_removed = df_2[df_2['source_title'].isin(no_html)]
-    # df_2 = df_2[~df_2['source_title'].isin(no_html)]
-    # print(
-    #     f'Out of these, {df_2_removed["count"].sum()} were removed because the source page did not have HTML.')
-
-    # df_2_removed = df_2[df_2['target_title'].isin(no_html)]
-    # df_2 = df_2[~df_2['target_title'].isin(no_html)]
-    # print(
-    #     f'Out of these, {df_2_removed["count"].sum()} were removed because the target page did not have HTML.')
-
-    # df_2_removed = df_2[df_2['source_title'].isin(no_qid)]
-    # df_2 = df_2[~df_2['source_title'].isin(no_qid)]
-    # print(
-    #     f'Out of these, {df_2_removed["count"].sum()} were removed because the source page did not have a QID.')
-
-    # df_2_removed = df_2[df_2['target_title'].isin(no_qid)]
-    # df_2 = df_2[~df_2['target_title'].isin(no_qid)]
-    # print(
-    #     f'Out of these, {df_2_removed["count"].sum()} were removed because the target page did not have a QID.')
-
-    # df_2_removed = df_2[df_2['source_title'].isin(no_lead)]
-    # df_2 = df_2[~df_2['source_title'].isin(no_lead)]
-    # print(
-    #     f'Out of these, {df_2_removed["count"].sum()} were removed because the source page did not have a lead paragraph.')
-
-    # df_2_removed = df_2[df_2['target_title'].isin(no_lead)]
-    # df_2 = df_2[~df_2['target_title'].isin(no_lead)]
-    # print(
-    #     f'Out of these, {df_2_removed["count"].sum()} were removed because the target page did not have a lead paragraph.')
-
-    # df_2_removed = df_2[df_2['source_title'].isin(short_lead)]
-    # df_2 = df_2[~df_2['source_title'].isin(short_lead)]
-    # print(
-    #     f'Out of these, {df_2_removed["count"].sum()} were removed because the source page had a short lead paragraph.')
-
-    # df_2_removed = df_2[df_2['target_title'].isin(short_lead)]
-    # df_2 = df_2[~df_2['target_title'].isin(short_lead)]
-    # print(
-    #     f'Out of these, {df_2_removed["count"].sum()} were removed because the target page had a short lead paragraph.')
-
-    # print(
-    #     f'In the end, we were left with {df_2["count"].sum()} new candidate links, with {initial_size - df_2["count"].sum()} ({(initial_size - df_2["count"].sum()) / initial_size * 100:.2f}%) removed.')
-
-    source_pages = len(df_2['source_title'].unique())
-
-    df_2 = df_2.to_dict('records')
-
-    link_struc = {}
-    for link in tqdm(df_2):
-        if int(link['source_ID']) in link_struc:
-            link_struc[int(link['source_ID'])]['links'].append(link)
-        else:
-            link_struc[int(link['source_ID'])] = {'links': [link],
-                                                  #   'old_version': int(link['source_version_1'].split('&oldid=')[-1]),
-                                                  #   'new_version': int(link['source_version_2'].split('&oldid=')[-1]),
-                                                  'page_title': link['source_title']}
-    del df_2
-    gc.collect()
-
-    # check if the revision history file exists
-    if os.path.exists(os.path.join(args.raw_data_dir, f'{args.lang}wiki-{args.second_date}-pages-meta-history.xml.bz2')):
-        files = [os.path.join(args.raw_data_dir, f'{args.lang}wiki-{args.second_date}-pages-meta-history.xml.bz2')]
-    else:
-        json_file = os.path.join(args.raw_data_dir, 'dumpstatus.json')
-        with open(json_file, 'r') as f:
-            data = json.load(f)
-        data = data['jobs']['metahistorybz2dump']['files']
-        ranges = []
-        for key in data:
-            file_name = key
-            url = f"https://dumps.wikimedia.org{data[key]['url']}"
-            # filename is structure as {lang}wiki-{date}-pages-meta-history{num}.xml-p{min_id}p{max_id}.bz2
-            # use regex to extract min_id and max_id
-            min_id = int(re.findall(r'p(\d+)p', file_name)[0])
-            max_id = int(re.findall(r'p\d+p(\d+)', file_name)[0])
-            ranges.append({'min_id': min_id, 
-                           'max_id': max_id, 
-                           'file_name': os.path.join(args.raw_data_dir, file_name),
-                           'url': url})
-        files = {}
-        for id in link_struc:
-            for range in ranges:
-                if range['min_id'] <= id <= range['max_id']:
-                    files[range['file_name']] = range['url']
-                    break
-
-    print("Finding links in revision history file(s)")
-    # read the revision history
-    output = []
-    for source_file in files:
-        processed_pages = 0
-        prev_text = ''
-        with bz2.open(source_file, 'rb') as f:
+def process_revision_history(input):
+    file = input['file']
+    link_struc = input['link_struc']
+    prev_text = ''
+    links = []
+    processed_pages = 0
+    try:
+        with bz2.open(file, 'rb') as f:
             pbar = tqdm(iterparse(f._buffer, events=('end',)))
-            output_len = 0
             for i, (_, elem) in enumerate(pbar):
-                if i % 100_000 == 0:
-                    pbar.set_description(
-                        f"{len(output)} candidate links found ({processed_pages}/{source_pages} pages processed)")
+                pbar.set_description(f"{len(link_struc)} pages left to process ({len(output)} candidate links found ({processed_pages}/{source_pages} pages processed))")
                 if elem.tag.endswith('page'):
                     pages = []
-                    older_pages = []
                     current_id = None
                     skip = False
                     for child in elem:
@@ -301,7 +94,6 @@ if __name__ == '__main__':
                         elem.clear()
                         continue
                     # go through all the children of elem in reverse order
-                    old = False
                     leave = False
                     for child in reversed(elem):
                         if child.tag.endswith('revision'):
@@ -316,37 +108,22 @@ if __name__ == '__main__':
                                     second_date = pd.to_datetime(args.second_date)
                                     if timestamp > second_date:
                                         break
-                                    elif timestamp < first_date:
-                                        old = True
-
                                     # if timestamp is more than 7 days before the first date, set leave to True
                                     if timestamp < first_date - pd.Timedelta(days=7):
                                         leave = True
                                 if revision_data.tag.endswith('id') and not revision_data.tag.endswith('parentid'):
-                                    # if int(revision_data.text) < link_struc[current_id]['old_version']:
-                                    #     old += 1
-                                    #     version_id = int(revision_data.text)
-                                    # elif int(revision_data.text) > link_struc[current_id]['new_version']:
-                                    #     break
-                                    # else:
                                     version_id = int(revision_data.text)
                                 if revision_data.tag.endswith('text') and revision_data.text is not None:
                                     clean_text = unescape(revision_data.text)
                                     clean_text = clean_xml(clean_text)
-                                    if old == 0:
-                                        pages.append(
-                                            {'version': version_id, 'text': clean_text})
-                                    else:
-                                        older_pages.append(
-                                            {'version': version_id, 'text': clean_text})
+                                    pages.append(
+                                        {'version': version_id, 'text': clean_text})
                             if leave:
                                 break
                     if not pages:
                         elem.clear()
                         continue
-                    pages = pages + older_pages
                     pages = sorted(pages, key=lambda x: x['version'], reverse=True)
-                    versions = [page['version'] for page in pages]
 
                     counts = [{'count': None, 'found': 0, 'expected': link['count'], 'title': process_title(
                         link['target_title']).lower()} for link in link_struc[current_id]['links']]
@@ -390,7 +167,7 @@ if __name__ == '__main__':
                                     counts[k]['count'] = new_count
                                 if new_count < count['count']:
                                     for _ in range(count['count'] - new_count):
-                                        output.append({'source_title': link_struc[current_id]['page_title'],
+                                        links.append({'source_title': link_struc[current_id]['page_title'],
                                                     'target_title': link_struc[current_id]['links'][k]['target_title'],
                                                     'source_ID': current_id,
                                                     'target_ID': link_struc[current_id]['links'][k]['target_ID'],
@@ -402,7 +179,179 @@ if __name__ == '__main__':
                         prev_text = page['text']
                     processed_pages += 1
                     elem.clear()
-                    output_len = len(output)
+                    del link_struc[current_id]
+                    if len(link_struc) == 0:
+                        break
+    except Exception as e:
+        # print the exception and any relevant information
+        # print traceback
+        print(e)
+        
+        print(f'Failed to process file {file}')
+    return {'links': links, 'processed_pages': processed_pages}
+
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--raw_data_dir', type=str, required=True,
+                        help='Directory containing the raw data')
+    parser.add_argument('--first_month_dir', '-i1', type=str,
+                        required=True, help='Input directory for first month')
+    parser.add_argument('--second_month_dir', '-i2', type=str,
+                        required=True, help='Input directory for second month')
+    parser.add_argument('--output_dir', type=str,
+                        required=True, help='Output directory')
+    parser.add_argument('--lang', type=str, required=True,
+                        help='language of the wikipedia dump')
+    parser.add_argument('--first_date', type=str, required=True,
+                        help='date of the first wikipedia dump in the format YYYYMMDD')
+    parser.add_argument('--second_date', type=str, required=True,
+                        help='date of the second wikipedia dump in the format YYYYMMDD')
+    parser.add_argument('--download_processes', type=int, default=1, help='Number of processes to use for downloading the revision history files if they are not already downloaded.')
+    parser.add_argument('--max_links', type=int, help='Maximum number of links to use')
+
+    args = parser.parse_args()
+    # check if input directories exist
+    if not os.path.exists(args.first_month_dir):
+        raise Exception('First month directory does not exist')
+    if not os.path.exists(args.second_month_dir):
+        raise Exception('Second month directory does not exist')
+
+    # check if output directory exists
+    if not os.path.exists(args.output_dir):
+        os.makedirs(args.output_dir)
+
+    # get all the link files in the month directories
+    first_month_link_files = glob(os.path.join(args.first_month_dir, "links*"))
+    second_month_link_files = glob(
+        os.path.join(args.second_month_dir, "links*"))
+
+    # get the page files for the second month
+    first_month_page_files = glob(os.path.join(args.first_month_dir, "pages*"))
+    second_month_page_files = glob(
+        os.path.join(args.second_month_dir, "pages*"))
+
+    print('Loading data')
+    dfs = []
+    for file in tqdm(first_month_link_files):
+        dfs.append(pd.read_parquet(file, columns=['source_title', 'target_title', 'source_ID', 'target_ID', 'source_version']))
+    df_1 = pd.concat(dfs)
+
+    dfs = []
+    for file in tqdm(second_month_link_files):
+        dfs.append(pd.read_parquet(file, columns=['source_title', 'target_title', 'source_ID', 'target_ID', 'source_version']))
+    df_2 = pd.concat(dfs)
+    del dfs
+    gc.collect()
+
+    redirect_map = pd.concat([pd.read_parquet(os.path.join(args.first_month_dir, 'redirect_map.parquet')), pd.read_parquet(
+        os.path.join(args.second_month_dir, 'redirect_map.parquet'))]).drop_duplicates(ignore_index=False)
+    redirect_map = redirect_map['redirect'].to_dict()
+    redirect_map_clean = {process_title(k).lower(): process_title(
+        v).lower() for k, v in redirect_map.items()}
+
+    df_1['target_title'] = df_1['target_title'].progress_apply(
+        lambda x: update_targets(x, redirect_map))
+    df_2['target_title'] = df_2['target_title'].progress_apply(
+        lambda x: update_targets(x, redirect_map))
+
+    df_1 = df_1[['source_title', 'target_title',
+                 'source_ID', 'target_ID', 'source_version']]
+    df_2 = df_2[['source_title', 'target_title',
+                 'source_ID', 'target_ID', 'source_version']]
+
+    # group the links by source and target and count the number of links
+    df_1 = df_1.groupby(['source_title', 'target_title', 'source_ID',
+                        'target_ID', 'source_version']).size().reset_index(name='count')
+    df_2 = df_2.groupby(['source_title', 'target_title', 'source_ID',
+                        'target_ID', 'source_version']).size().reset_index(name='count')
+
+    # find all new links added in df_2. Consider two cases
+    # 1. The row is not present in df_1
+    # 2. The row is present in df_1 but the count is smaller in df_1
+    df_2 = df_2.merge(df_1, how='left', on=[
+                      'source_title', 'target_title', 'source_ID', 'target_ID'], suffixes=('_2', '_1'))
+    del df_1
+    gc.collect()
+    print('DataFrames merged')
+
+    df_2 = df_2[(df_2['count_1'].isna()) | (df_2['count_2'] > df_2['count_1'])]
+    df_2['count_1'] = df_2['count_1'].fillna(0)
+    df_2['source_version_1'] = df_2['source_version_1'].fillna('&oldid=0')
+    df_2['count'] = df_2['count_2'] - df_2['count_1']
+    df_2 = df_2[['source_title', 'target_title', 'source_ID',
+                 'target_ID', 'source_version_1', 'source_version_2', 'count']]
+    print('Final DataFrame created')
+
+    initial_size = df_2['count'].sum()
+    print(f'Initially, there are {df_2["count"].sum()} new candidate links, from {len(df_2)} src-tgt pairs.')
+
+    source_pages = len(df_2['source_title'].unique())
+
+    df_2 = df_2.to_dict('records')
+
+    link_struc = {}
+    for link in tqdm(df_2):
+        if int(link['source_ID']) in link_struc:
+            link_struc[int(link['source_ID'])]['links'].append(link)
+        else:
+            link_struc[int(link['source_ID'])] = {'links': [link],
+                                                  #   'old_version': int(link['source_version_1'].split('&oldid=')[-1]),
+                                                  #   'new_version': int(link['source_version_2'].split('&oldid=')[-1]),
+                                                  'page_title': link['source_title']}
+    del df_2
+    gc.collect()
+    print("Additional structure created")
+
+    # check if the revision history file exists
+    if os.path.exists(os.path.join(args.raw_data_dir, f'{args.lang}wiki-{args.second_date}-pages-meta-history.xml.bz2')):
+        files = {f'{os.path.join(args.raw_data_dir, f"{args.lang}wiki-{args.second_date}-pages-meta-history.xml.bz2")}': link_struc}
+    else:
+        json_file = os.path.join(args.raw_data_dir, 'dumpstatus.json')
+        with open(json_file, 'r') as f:
+            data = json.load(f)
+        data = data['jobs']['metahistorybz2dump']['files']
+        ranges = []
+        for key in data:
+            file_name = key
+            url = f"https://dumps.wikimedia.org{data[key]['url']}"
+            # filename is structure as {lang}wiki-{date}-pages-meta-history{num}.xml-p{min_id}p{max_id}.bz2
+            # use regex to extract min_id and max_id
+            min_id = int(re.findall(r'p(\d+)p', file_name)[0])
+            max_id = int(re.findall(r'p\d+p(\d+)', file_name)[0])
+            ranges.append({'min_id': min_id, 
+                           'max_id': max_id, 
+                           'file_name': os.path.join(args.raw_data_dir, file_name),
+                           'url': url})
+        files = {}
+        for id in link_struc:
+            for range_ in ranges:
+                if range_['min_id'] <= id <= range_['max_id']:
+                    if range_['file_name'] not in files:
+                        files[range_['file_name']] = {}
+                    files[range_['file_name']][id] = link_struc[id]
+                    break
+    
+    input = [{'file': file, 'link_struc': link_struc} for file, link_struc in files.items()]
+    # sort input by length of link_struc
+    input = sorted(input, key=lambda x: len(x['link_struc']), reverse=True)
+    if args.max_links is None:
+        max_links = float('inf')
+    else:
+        max_links = args.max_links
+    print(f"Finding links in {len(files)} revision history file(s)")
+    # read the revision history
+    output = []
+    processed_pages = 0
+    with Pool(5) as p:
+        for result in (pbar := tqdm(p.imap_unordered(process_revision_history, input), total=len(files))):
+            output.extend(result['links'])
+            processed_pages += result['processed_pages']
+            pbar.set_description(
+                f"{len(output)} candidate links found ({processed_pages}/{source_pages} pages processed)")  
+            print(len(output))
+            if len(output) >= max_links:
+                break          
 
     print("Saving versions")
     output_df = pd.DataFrame(output)

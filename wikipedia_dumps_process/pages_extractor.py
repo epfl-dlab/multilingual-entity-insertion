@@ -122,6 +122,7 @@ def process_tar_html(data):
     page_info['HTML'] = data['article_body']['html']
     page_info['page_length'] = len(data['article_body']['html'])
     page_info['language'] = data['language']
+    page_info['date_modified'] = data['date_modified']
     if 'abstract' in data:
         page_info['lead_paragraph'] = data['abstract']
     else:
@@ -171,6 +172,8 @@ if __name__ == '__main__':
     # if it doesn't exist, create it
     if not os.path.exists(args.output_dir):
         os.makedirs(args.output_dir)
+    if not os.path.exists(os.path.join(args.output_dir, 'pages')):
+        os.makedirs(os.path.join(args.output_dir, 'pages'))
 
     print(f"Processing SQL pages information")
     pages, redirects = process_sql_page(sql_pages, args.language)

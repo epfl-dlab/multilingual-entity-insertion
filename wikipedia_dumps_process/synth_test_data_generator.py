@@ -66,6 +66,8 @@ if __name__ == '__main__':
                         required=True, help='Path to the first month directory')
     parser.add_argument('--second_month_dir', '-i2', type=str,
                         required=True, help='Path to the second month directory')
+    parser.add_argument('--first_month', type=str, required=True,
+                        help='First month in the format YYYYMMDD')
     parser.add_argument('--output_dir', '-o', type=str,
                         required=True, help='Path to the output directory')
     parser.add_argument('--no_mask_perc', type=float, default=0.4,
@@ -76,6 +78,7 @@ if __name__ == '__main__':
                         help='Percentage of links where sentence masking is applied')
     parser.add_argument('--mask_paragraph_perc', type=float, default=0.1,
                         help='Percentage of links where paragraph masking is applied')
+    parser.add_argument('--max_num_links', type=int, default=50000, help='Maximum number of links to process')
 
     args = parser.parse_args()
 
@@ -102,15 +105,15 @@ if __name__ == '__main__':
         os.makedirs(args.output_dir)
 
     # get all the link files in the month directories
-    first_month_link_files = glob(os.path.join(args.first_month_dir, "links_*"))
+    first_month_link_files = glob(os.path.join(args.first_month_dir, "links", "links_*"))
     second_month_link_files = glob(
-        os.path.join(args.second_month_dir, "links_*"))
-    first_month_link_files.sort()
-    second_month_link_files.sort()
+        os.path.join(args.second_month_dir, "links", "links_*"))
+    random.shuffle(first_month_link_files)
+    random.shuffle(second_month_link_files)
 
     # get the page files for the second month
     second_month_page_files = glob(
-        os.path.join(args.second_month_dir, "pages_*"))
+        os.path.join(args.second_month_dir, "good_pages", "good_pages_*"))
     
     redirect_map = pd.read_parquet(os.path.join(args.second_month_dir, 'redirect_map.parquet'))
     redirect_map = redirect_map.to_dict()['redirect']
@@ -118,159 +121,240 @@ if __name__ == '__main__':
     old_data = {}
     new_data = {}
     new_pages = 0
-    new_page_links = 0
+    new_page_liks = 0
     new_links = []
     no_id_found = 0
     no_id_not_found = 0
-    quit_counter = 0
-    needed_columns = ['source_title', 'source_version', 'source_section', 'target_title', 'mention', 'context', 'context_span_start_index', 'context_span_end_index', 'context_sentence_start_index', 'context_sentence_end_index', 'context_mention_start_index', 'context_mention_end_index']
-    for i in (pbar := tqdm(range(0, max(len(first_month_link_files), len(second_month_link_files)), 25))):
-        new_1 = False
-        new_2 = False
-        if i < len(first_month_link_files):
-            pbar.set_description(f"Processing first month files ({i}/{len(first_month_link_files)})")
-            df_1 = pd.concat([pd.read_parquet(file, columns=needed_columns) for file in first_month_link_files[i:i+25]])
-            df_1['target_title'] = df_1['target_title'].apply(lambda x: update_targets(x, redirect_map))
-            for column in df_1.columns:
-                if 'index' in column:
-                    df_1[column] = df_1[column].apply(lambda x: int(x) if x == x else x)
-            df_1 = df_1.to_dict(orient='records')
-            new_1 = True 
-        if i < len(second_month_link_files):
-            pbar.set_description(f"Processing second month files ({i}/{len(second_month_link_files)})")
-            df_2 = pd.concat([pd.read_parquet(file, columns=needed_columns) for file in second_month_link_files[i:i+25]])
-            df_2['target_title'] = df_2['target_title'].apply(lambda x: update_targets(x, redirect_map))
-            for column in df_2.columns:
-                if 'index' in column:
-                    df_2[column] = df_2[column].apply(lambda x: int(x) if x == x else x)
-            df_2 = df_2.to_dict(orient='records')
-            new_2 = True
-        
-        if new_1:
-            pbar.set_description(f"Updating old data ({len(old_data)} pages)")
-            for row in df_1:
-                if row['source_title'] not in old_data:
-                    old_data[row['source_title']] = {}
-                if row['target_title'] not in old_data[row['source_title']]:
-                    old_data[row['source_title']][row['target_title']] = []
-                old_data[row['source_title']][row['target_title']].append(row)
-            del df_1
-            gc.collect()
-        if new_2:
-            pbar.set_description(f"Updating new data ({len(new_data)} pages))")
-            for row in df_2:
-                if row['source_title'] not in new_data:
-                    new_data[row['source_title']] = {}
-                if row['target_title'] not in new_data[row['source_title']]:
-                    new_data[row['source_title']][row['target_title']] = []
-                new_data[row['source_title']][row['target_title']].append(row)
-            del df_2
-            gc.collect()
-        
-        pool_input = []
-        pages = []
-        new_pages = list(new_data.keys())
-        for page in new_pages:
-            if page not in old_data:
+    for i in (pbar := tqdm(range(len(second_month_link_files)))):
+        df = pd.read_parquet(second_month_link_files[i])
+        if 'date_modified' in df.columns:
+            df = df[pd.to_datetime(df['date_modified'], format='%Y-%m-%dT%H:%M:%SZ') >= pd.to_datetime(args.first_month, format='%Y%m%d')]
+        df['target_title'] = df['target_title'].apply(lambda x: update_targets(x, redirect_map))
+        for column in df.columns:
+            if 'index' in column:
+                df[column] = df[column].apply(lambda x: int(x) if x == x else x)
+        df = df.to_dict(orient='records')
+        for row in df:
+            if row['source_title'] not in new_data:
+                new_data[row['source_title']] = {}
+            if row['target_title'] not in new_data[row['source_title']]:
+                new_data[row['source_title']][row['target_title']] = []
+            new_data[row['source_title']][row['target_title']].append(row)
+        del df
+        pbar.set_description(f"{len(new_data)} source pages currently saved in new_data")
+        gc.collect()
+    
+    new_page_titles = set(new_data.keys())
+    for i in (pbar := tqdm(range(len(first_month_link_files)))):
+        df = pd.read_parquet(first_month_link_files[i])
+        df = df[df['source_title'].isin(new_page_titles)]
+        df['target_title'] = df['target_title'].apply(lambda x: update_targets(x, redirect_map))
+        for column in df.columns:
+            if 'index' in column:
+                df[column] = df[column].apply(lambda x: int(x) if x == x else x)
+        df = df.to_dict(orient='records')
+        for row in df:
+            if row['target_title'] not in new_data[row['source_title']]:
                 continue
-            # check if the versions are the same
-            if old_data[page][list(old_data[page].keys())[0]][0]['source_version'] == new_data[page][list(new_data[page].keys())[0]][0]['source_version']:
-                print('VERSION MATCH', page)
-                del old_data[page]
-                del new_data[page]
-                continue
-            pages.append({'old_page': old_data[page], 'new_page': new_data[page], 'page_title': page})
-            if len(pages) == 1000:
-                pool_input.append(pages)
-                pages = []
-        if len(pages) > 0:
+            if row['source_title'] not in old_data:
+                old_data[row['source_title']] = {}
+            if row['target_title'] not in old_data[row['source_title']]:
+                old_data[row['source_title']][row['target_title']] = []
+            old_data[row['source_title']][row['target_title']].append(row)
+        del df
+        pbar.set_description(f"{len(old_data)} source pages currently saved in old_data")
+        gc.collect()
+        
+    pool_input = []
+    pages = []
+    new_pages_titles = list(new_data.keys())
+    for page in tqdm(new_pages_titles):
+        if page not in old_data:
+            continue
+        pages.append({'old_page': old_data[page], 'new_page': new_data[page], 'page_title': page})
+        if len(pages) == 1000:
             pool_input.append(pages)
-        del pages
-        gc.collect()
-        
-        if len(pool_input) == 0:
-            continue
-        
-        pbar.set_description(f"Processing data ({len(old_data)} pages in old_data, {len(new_data)} pages in new_data)")
-        counter = 0
-        with Pool(5) as p:
-            for output in p.imap_unordered(compare_pages, pool_input):
-                counter += 1
-                pbar.set_description(f"Processing data: {counter}/{len(pool_input)} ({len(old_data)} pages in old_data, {len(new_data)} pages in new_data, {len(new_links)} new links)")
-                for page in output:
-                    new_links.extend(output[page]['links'])
-                    no_id_found += output[page]['found']
-                    no_id_not_found += output[page]['not_found']
-                    del new_data[page]
-                    del old_data[page]
-                gc.collect()
-        del pool_input
-        gc.collect()
-        
-    new_data_keys = list(new_data.keys())
-    for source_page in new_data_keys:
-        if source_page not in old_data:
-            new_pages += 1
-            new_page_links += len(new_data[source_page])
-            del new_data[source_page]
+            pages = []
+    if len(pages) > 0:
+        pool_input.append(pages)
+    del pages
+    gc.collect()
+    
+    with Pool(5) as p:
+        for output in tqdm(p.imap_unordered(compare_pages, pool_input), total=len(pool_input)):
+            for page in output:
+                new_links.extend(output[page]['links'])
+                no_id_found += output[page]['found']
+                no_id_not_found += output[page]['not_found']
+                del new_data[page]
+                del old_data[page]
             gc.collect()
-            continue
-        old_version = old_data[source_page][list(old_data[source_page].keys())[0]][0]['source_version']
-        if new_data[source_page][list(new_data[source_page].keys())[0]][0]['source_version'] == old_version:
-            del new_data[source_page]
-            del old_data[source_page]
-            gc.collect()
-            continue
-        for target_page in new_data[source_page]:
-            if target_page not in old_data[source_page]:
-                for mod_link in new_data[source_page][target_page]:
-                    new_links.append(mod_link)
-                    new_links[-1]['old_version'] = old_version
-            else:
-                used = set([])
-                for mod_link in new_data[source_page][target_page]:
-                    found = False
-                    for i, old_link in enumerate(old_data[source_page][target_page]):
-                        if old_link['mention'] == mod_link['mention'] and old_link['source_section'] == mod_link['source_section'] and i not in used:
-                            used.add(i)
-                            found = True
-                            no_id_found += 1
-                            break
-                    if not found:
-                        no_id_not_found += 1
-                        new_links.append(mod_link)
-                        new_links[-1]['old_version'] = old_version
-        del new_data[source_page]
-        del old_data[source_page]
-        gc.collect()
+            if len(new_links) > args.max_num_links:
+                break
+    del pool_input
+    gc.collect()
+    
+    # old_data = {}
+    # new_data = {}
+    # new_pages = 0
+    # new_page_links = 0
+    # new_links = []
+    # no_id_found = 0
+    # no_id_not_found = 0
+    # quit_counter = 0
+    # deleted_new_pages = set([])
+    # for i in (pbar := tqdm(range(0, max(len(first_month_link_files), len(second_month_link_files)), 1))):
+    #     new_1 = False
+    #     new_2 = False
+    #     if i < len(first_month_link_files):
+    #         pbar.set_description(f"Processing first month files ({i}/{len(first_month_link_files)})")
+    #         df_1 = pd.concat([pd.read_parquet(file) for file in first_month_link_files[i:i+1]])
+    #         if 'current_links' in df_1.columns:
+    #             df_1 = df_1.drop(columns=['current_links'])
+    #         df_1['target_title'] = df_1['target_title'].apply(lambda x: update_targets(x, redirect_map))
+    #         for column in df_1.columns:
+    #             if 'index' in column:
+    #                 df_1[column] = df_1[column].apply(lambda x: int(x) if x == x else x)
+    #         df_1 = df_1.to_dict(orient='records')
+    #         new_1 = True 
+    #     if i < len(second_month_link_files):
+    #         pbar.set_description(f"Processing second month files ({i}/{len(second_month_link_files)})")
+    #         df_2 = pd.concat([pd.read_parquet(file) for file in second_month_link_files[i:i+1]])
+    #         if 'current_links' in df_2.columns:
+    #             df_2 = df_2.drop(columns=['current_links'])
+    #         df_2['target_title'] = df_2['target_title'].apply(lambda x: update_targets(x, redirect_map))
+    #         for column in df_2.columns:
+    #             if 'index' in column:
+    #                 df_2[column] = df_2[column].apply(lambda x: int(x) if x == x else x)
+    #         df_2 = df_2.to_dict(orient='records')
+    #         new_2 = True
+        
+    #     if new_1:
+    #         pbar.set_description(f"Updating old data ({len(old_data)} pages)")
+    #         for row in df_1:
+    #             if row['source_title'] in deleted_new_pages:
+    #                 deleted_new_pages.remove(row['source_title'])
+    #                 continue
+    #             if row['source_title'] not in old_data:
+    #                 old_data[row['source_title']] = {}
+    #             if row['target_title'] not in old_data[row['source_title']]:
+    #                 old_data[row['source_title']][row['target_title']] = []
+    #             old_data[row['source_title']][row['target_title']].append(row)
+    #         del df_1
+    #         gc.collect()
+    #     if new_2:
+    #         pbar.set_description(f"Updating new data ({len(new_data)} pages)")
+    #         for row in df_2:
+    #             if row['source_title'] not in new_data:
+    #                 new_data[row['source_title']] = {}
+    #             if row['target_title'] not in new_data[row['source_title']]:
+    #                 new_data[row['source_title']][row['target_title']] = []
+    #             new_data[row['source_title']][row['target_title']].append(row)
+    #         del df_2
+    #         gc.collect()
+        
+    #     pool_input = []
+    #     pages = []
+    #     new_pages_titles = list(new_data.keys())
+    #     for page in new_pages_titles:
+    #         # column date_modified is in format YYYY-MM-DDTHH:MM:SSZ
+    #         # the match date is in format YYYYMMDD
+    #         # we can use pandas to compare the two
+    #         if 'date_modified' in new_data[page][list(new_data[page].keys())[0]][0]:
+    #             if pd.to_datetime(new_data[page][list(new_data[page].keys())[0]][0]['date_modified'], format='%Y-%m-%dT%H:%M:%SZ') < pd.to_datetime(args.first_month, format='%Y%m%d'):
+    #                 del new_data[page]
+    #                 if page in old_data:
+    #                     del old_data[page]
+    #                 else:
+    #                     deleted_new_pages.add(page)
+    #                 continue
+    #         if page not in old_data:
+    #             continue
+    #         # check if the versions are the same
+    #         if old_data[page][list(old_data[page].keys())[0]][0]['source_version'] == new_data[page][list(new_data[page].keys())[0]][0]['source_version']:
+    #             del old_data[page]
+    #             del new_data[page]
+    #             continue
+    #         pages.append({'old_page': old_data[page], 'new_page': new_data[page], 'page_title': page})
+    #         if len(pages) == 1000:
+    #             pool_input.append(pages)
+    #             pages = []
+    #     if len(pages) > 0:
+    #         pool_input.append(pages)
+    #     del pages
+    #     gc.collect()
+        
+    #     if len(pool_input) == 0:
+    #         continue
+        
+    #     pbar.set_description(f"Processing data ({len(old_data)} pages in old_data, {len(new_data)} pages in new_data)")
+    #     counter = 0
+    #     with Pool(5) as p:
+    #         for output in p.imap_unordered(compare_pages, pool_input):
+    #             counter += 1
+    #             pbar.set_description(f"Processing data: {counter}/{len(pool_input)} ({len(old_data)} pages in old_data, {len(new_data)} pages in new_data, {len(new_links)} new links)")
+    #             for page in output:
+    #                 new_links.extend(output[page]['links'])
+    #                 no_id_found += output[page]['found']
+    #                 no_id_not_found += output[page]['not_found']
+    #                 del new_data[page]
+    #                 del old_data[page]
+    #             gc.collect()
+    #             if len(new_links) > args.max_num_links:
+    #                 break
+    #     del pool_input
+    #     gc.collect()
+        
+    # new_data_keys = list(new_data.keys())
+    # for source_page in new_data_keys:
+    #     if source_page not in old_data:
+    #         new_pages += 1
+    #         new_page_links += len(new_data[source_page])
+    #         del new_data[source_page]
+    #         gc.collect()
+    #         continue
+    #     old_version = old_data[source_page][list(old_data[source_page].keys())[0]][0]['source_version']
+    #     if new_data[source_page][list(new_data[source_page].keys())[0]][0]['source_version'] == old_version:
+    #         del new_data[source_page]
+    #         del old_data[source_page]
+    #         gc.collect()
+    #         continue
+    #     for target_page in new_data[source_page]:
+    #         if target_page not in old_data[source_page]:
+    #             for mod_link in new_data[source_page][target_page]:
+    #                 new_links.append(mod_link)
+    #                 new_links[-1]['old_version'] = old_version
+    #         else:
+    #             used = set([])
+    #             for mod_link in new_data[source_page][target_page]:
+    #                 found = False
+    #                 for i, old_link in enumerate(old_data[source_page][target_page]):
+    #                     if old_link['mention'] == mod_link['mention'] and old_link['source_section'] == mod_link['source_section'] and i not in used:
+    #                         used.add(i)
+    #                         found = True
+    #                         no_id_found += 1
+    #                         break
+    #                 if not found:
+    #                     no_id_not_found += 1
+    #                     new_links.append(mod_link)
+    #                     new_links[-1]['old_version'] = old_version
+    #     del new_data[source_page]
+    #     del old_data[source_page]
+    #     gc.collect()
     del new_data
     del old_data
     gc.collect()
 
-    print(
-        f"The new data has {new_pages} new pages and {new_page_links} links in these new pages")
+    # print(
+    #     f"The new data has {new_pages} new pages and {new_page_links} links in these new pages")
     print(f"There are {len(new_links)} new links in the new data")
     print(f"From the links without ID, {no_id_found} ({no_id_found / (no_id_found + no_id_not_found) * 100:.2f}%) were matched to old links.")
 
     print('Loading pages')
-    dfs = []
+    good_page = set([])
     for file in tqdm(second_month_page_files):
-        temp = pd.read_parquet(file, columns=['title', 'HTML', 'lead_paragraph'])
-        temp['HTML'] = temp['HTML'].apply(simplify_html)
-        dfs.append(temp)
-        del temp
-    df_pages = pd.concat(dfs)
-    del dfs
-
-    no_html = set(df_pages[(df_pages['HTML'].isna()) | (
-        df_pages['HTML'] == '')]['title'].tolist())
-    no_lead = set(df_pages[(df_pages['lead_paragraph'].isna()) | (
-        df_pages['lead_paragraph'] == '')]['title'].tolist())
-    short_lead = set(df_pages[df_pages['lead_paragraph'].apply(
-        lambda x: x is not None and len(x.split()) < 6)]['title'].tolist())
-
-    del df_pages
-    gc.collect()
+        temp = pd.read_parquet(file, columns=['title'])
+        good_page = good_page.union(set(temp['title'].tolist()))
 
     print('Cleaning the links')
     clean_links = []
@@ -279,24 +363,21 @@ if __name__ == '__main__':
             continue
         if link['source_QID'] is None:
             continue
-        if link['source_title'] in no_lead:
-            continue
-        if link['source_title'] in short_lead:
+        if link['source_title'] not in good_page:
             continue
         if link['target_QID'] is None:
             continue
-        if link['target_title'] in no_html:
+        if link['target_title'] not in good_page:
             continue
-        if link['target_title'] in no_lead:
-            continue
-        if link['target_title'] in short_lead:
-            continue
-        if link['target_title'] == mod_link['source_title']:
+        if link['target_title'] == link['source_title']:
             continue
         if link['context'] is None:
             continue
         link['context'] = "\n".join(
             line for line in link['context'].split("\n") if line.strip() != '')
+        for key in link:
+            if 'index' in key:
+                link[key] = int(link[key])
         clean_links.append(link)
 
     print(

@@ -444,6 +444,7 @@ def extract_links(source_page):
                 link_data['source_ID'] = source_page['ID']
                 link_data['source_QID'] = source_page['QID']
                 link_data['source_version'] = source_page['version']
+                link_data['date_modified'] = source_page['date_modified']
 
                 # get the text of the link
                 link_data['mention'] = link.text
@@ -762,7 +763,7 @@ if __name__ == '__main__':
         page_ids = page_ids.to_dict(orient='index')
 
     # Read all input pages
-    files = glob(f"{args.input_dir}/pages*.parquet")
+    files = glob(os.path.join(args.input_dir, 'pages', 'pages*.parquet'))
     # remove the page_ids and redirect_map files if they are present
     files = [
         file for file in files if args.page_ids not in file and args.redirect_map not in file]
