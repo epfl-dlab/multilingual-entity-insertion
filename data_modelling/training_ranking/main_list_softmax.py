@@ -213,6 +213,7 @@ if __name__ == '__main__':
     parser.add_argument('--no_link_strategy', type=str, choices=['zero_vector', 'empty_embedding'], default='zero_vector', help='What to do when there are no current links')
     parser.add_argument('--use_only_links', action='store_true',
                         help='If set, only use current links as input to compute the candidate embeddings')
+    parser.add_argument('--min_steps', nargs='+', type=int, default=[0], help='Minimum number of steps to train for')
     parser.set_defaults(resume=False, insert_section=False, mask_negatives=False, split_models=False, two_stage=False,
                         use_current_links=False, current_links_residuals=False, normalize_current_links=False, current_links_use_mlp=False, use_only_links=False)
 
@@ -727,7 +728,9 @@ if __name__ == '__main__':
     logger.info("Starting training")
     step = 0
     running_loss = 0
-    for epoch in range(args.num_epochs[0]):
+    epoch = 0
+    while epoch < args.num_epochs[0] or step < args.min_steps[0]:
+        epoch += 1
         for index, data in enumerate(train_loader):
             step += 1
             # multiple forward passes accumulate gradients
@@ -1465,7 +1468,10 @@ if __name__ == '__main__':
 
     logger.info("Starting training")
     running_loss = 0
-    for epoch in range(args.num_epochs[1]):
+    new_steps = step
+    epoch = 0
+    while epoch < args.num_epochs[1] or (step - new_steps) < args.min_steps[1]:
+        epoch += 1
         for index, data in enumerate(train_loader):
             step += 1
             # multiple forward passes accumulate gradients
