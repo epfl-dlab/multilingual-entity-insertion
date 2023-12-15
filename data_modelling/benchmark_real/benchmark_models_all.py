@@ -41,8 +41,8 @@ if __name__ == '__main__':
     parser.add_argument('--use_mentions', action='store_true',
                         help='Use mentions in input')
     parser.add_argument('--mask_negatives', help='Mask negative examples', action='store_true')
-    parser.set_defaults(use_corruption=False, use_section_title=False,
-                        use_section_title_random=False, use_mentions=False, mask_negatives=False)
+    parser.add_argument('--split_models', action='store_true', help='Use split models')
+    parser.set_defaults(use_corruption=False, use_section_title=False, use_section_title_random=False, use_mentions=False, mask_negatives=False, split_models=False)
 
     args = parser.parse_args()
 
@@ -72,26 +72,38 @@ if __name__ == '__main__':
 
     # load model
     dir = os.path.join(args.models_dir, model_name)
-    model_path = glob(os.path.join(dir, 'model*'))[0]
+    if args.split_models:
+        model_articles_path = glob(os.path.join(dir, 'model_articles*'))[0]
+        model_contexts_path = glob(os.path.join(dir, 'model_contexts*'))[0]
+    else:
+        model_articles_path = glob(os.path.join(dir, 'model*'))[0]
+        model_contexts_path = model_articles_path
     classification_head_path = glob(
         os.path.join(dir, 'classification_head*'))[0]
     tokenizer_path = os.path.join(dir, 'tokenizer')
+    model_articles = AutoModel.from_pretrained(model_articles_path)
+    model_contexts = AutoModel.from_pretrained(model_contexts_path)
+    model_articles.eval()
+    model_contexts.eval()
+    articles_size = model_articles.config.hidden_size
+    contexts_size = model_contexts.config.hidden_size
 
-    model = AutoModel.from_pretrained(model_path)
-    model.eval()
     if args.loss_function == 'ranking':
-        classification_head = nn.Sequential(nn.Linear(model.config.hidden_size * 3, model.config.hidden_size),
+        classification_head = nn.Sequential(nn.Linear(2 * articles_size + contexts_size, contexts_size),
                                             nn.ReLU(),
-                                            nn.Linear(model.config.hidden_size, 1))
+                                            nn.Linear(contexts_size, 1))
     else:
-        classification_head = nn.Sequential(nn.Linear(model.config.hidden_size * 3, model.config.hidden_size),
+        classification_head = nn.Sequential(nn.Linear(2 * articles_size + contexts_size, contexts_size),
                                             nn.ReLU(),
-                                            nn.Linear(model.config.hidden_size, 2))
+                                            nn.Linear(contexts_size, 2))
     classification_head.load_state_dict(torch.load(
         classification_head_path, map_location=torch.device('cpu')))
     tokenizer = AutoTokenizer.from_pretrained(tokenizer_path)
 
-    model = model.to('cuda' if torch.cuda.is_available() else 'cpu')
+    model_articles = model_articles.to(
+        'cuda' if torch.cuda.is_available() else 'cpu')
+    model_contexts = model_contexts.to(
+        'cuda' if torch.cuda.is_available() else 'cpu')
     classification_head = classification_head.to(
         'cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -139,32 +151,34 @@ if __name__ == '__main__':
         for context, source_section, source_title, source_lead, target_title, target_lead in tqdm(zip(contexts, source_sections, source_titles, source_leads, target_titles, target_leads), total=len(target_titles)):
             if target_title not in mention_map:
                 mention_map[target_title] = [target_title]
-            source = tokenizer([f"{source_title}{tokenizer.sep_token}{source_lead}"], return_tensors='pt',
+            source = tokenizer([[source_title,source_lead]], return_tensors='pt',
                                  padding=True, truncation=True, max_length=256).to('cuda' if torch.cuda.is_available() else 'cpu')
-            target = tokenizer([f"{target_title}{tokenizer.sep_token}{target_lead}"], return_tensors='pt',
-                                    padding=True, truncation=True, max_length=256).to('cuda' if torch.cuda.is_available() else 'cpu')
-            source_embeddings = model(
+            target = tokenizer([[target_title,target_lead]], return_tensors='pt', 
+                                 padding=True, truncation=True, max_length=256).to('cuda' if torch.cuda.is_available() else 'cpu')
+            source_embeddings = model_articles(
                 **source)['last_hidden_state'][:, 0, :]
-            target_embeddings = model(
+            target_embeddings = model_articles(
                 **target)['last_hidden_state'][:, 0, :]
             source_embeddings = source_embeddings.expand(args.batch_size, -1)
             target_embeddings = target_embeddings.expand(args.batch_size, -1)
             scores = []
             inputs = []
             for c, s in zip(context, source_section):
-                input = ''
+                input = ["", ""]
                 if args.use_section_title or args.use_section_title_random:
                     if args.use_section_title_random:
                         s = random.choice(all_sections)
-                    input += f"{s}{tokenizer.sep_token}"
+                    input[0] += f"{s}"
                 if args.use_mentions:
-                    input += f"{' '.join(mention_map[target_title])}{tokenizer.sep_token}"
-                input += f"{c}"
+                    if input[0] != "":
+                        input[0] += f"{tokenizer.sep_token}"
+                    input[0] += f"{' '.join(mention_map[target_title])}{tokenizer.sep_token}"
+                input[1] += f"{c}"
                 inputs.append(input)
                 if len(inputs) == args.batch_size:
                     inputs = tokenizer(inputs, return_tensors='pt', padding=True,
                                         truncation=True, max_length=256).to('cuda' if torch.cuda.is_available() else 'cpu')
-                    input_embeddings = model(
+                    input_embeddings = model_contexts(
                         **inputs)['last_hidden_state'][:, 0, :]
                     input = torch.cat(
                         (source_embeddings, input_embeddings, target_embeddings), dim=1)
@@ -186,7 +200,7 @@ if __name__ == '__main__':
             if len(inputs) > 0:
                 inputs = tokenizer(inputs, return_tensors='pt', padding=True,
                                     truncation=True, max_length=256).to('cuda' if torch.cuda.is_available() else 'cpu')
-                input_embeddings = model(
+                input_embeddings = model_contexts(
                     **inputs)['last_hidden_state'][:, 0, :]
                 source_embeddings = source_embeddings[:input_embeddings.shape[0], :]
                 target_embeddings = target_embeddings[:input_embeddings.shape[0], :]
@@ -213,7 +227,6 @@ if __name__ == '__main__':
                     position += 1
                     if score > best_score['score']:
                         best_score = {'section': source_section[i+1], 'score': score, 'context': context[i+1], 'index': i+1}
-
             rank.append(position)
         
     df[args.column_name] = rank
