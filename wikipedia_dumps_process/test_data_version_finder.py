@@ -345,6 +345,7 @@ if __name__ == '__main__':
     processed_pages = 0
     with Pool(5) as p:
         for result in (pbar := tqdm(p.imap_unordered(process_revision_history, input), total=len(files))):
+            print(result)
             output.extend(result['links'])
             processed_pages += result['processed_pages']
             pbar.set_description(

@@ -35,6 +35,8 @@ if __name__ == '__main__':
                         required=True, help='Input directory')
     parser.add_argument('--output_dir', type=str,
                         required=True, help='Output directory')
+    parser.add_argument('--lang', type=str, required=True,
+                        help='Language of the Wikipedia dump')
 
     args = parser.parse_args()
 
@@ -54,16 +56,21 @@ if __name__ == '__main__':
     print('Saving good pages')
     for file in tqdm(page_files):
         df = pd.read_parquet(file)
-        no_html = no_html.union(set(df[(df['HTML'].isna()) | (
-            df['HTML'] == '')]['title'].tolist()))
+        no_html = no_html.union(set(df[df['page_length'].isna()]['title'].tolist()))
         no_lead = no_lead.union(set(df[(df['lead_paragraph'].isna()) | (
             df['lead_paragraph'] == '')]['title'].tolist()))
-        short_lead = short_lead.union(set(df[(df['lead_paragraph'].apply(
-            lambda x: split_text(x) < 6))]['title'].tolist()))
-        df = df[(~df['QID'].isna()) & (~df['HTML'].isna()) & (~df['lead_paragraph'].isna()) & (df['HTML'] != '') & (
-            df['lead_paragraph'] != '') & (df['lead_paragraph'].apply(lambda x: split_text(x) >= 6))]
+        if args.lang not in ['ja']: # hard-coded languages where the words are not necessarily separated by spaces
+            short_lead = short_lead.union(set(df[(df['lead_paragraph'].apply(
+                lambda x: split_text(x) < 6))]['title'].tolist()))
+        if args.lang not in ['ja']:
+            df = df[(~df['QID'].isna()) & (~df['page_length'].isna()) & (~df['lead_paragraph'].isna()) & (
+                df['lead_paragraph'] != '') & (df['lead_paragraph'].apply(lambda x: split_text(x) >= 6))]
+        else:
+            df = df[(~df['QID'].isna()) & (~df['page_length'].isna()) & (~df['lead_paragraph'].isna()) & (
+                df['lead_paragraph'] != '')]
         df = df.reset_index(drop=True)
-        df = df.drop(columns=['HTML'])
+        if 'HTML' in df.columns:        
+            df = df.drop(columns=['HTML'])
         basename = os.path.basename(file)
         new_name = os.path.join(args.output_dir, 'good_pages',
                                 basename.replace('pages', 'good_pages'))

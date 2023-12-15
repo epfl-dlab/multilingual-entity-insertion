@@ -104,21 +104,22 @@ echo "Max Val Samples: $max_val_samples"
 #     echo "Running the post-processing script to clean-up the data for $MONTH..."
 #     python post_processing.py \
 #         --input_dir ${data_dir}/${lang}wiki-NS0-${MONTH}/processed_data \
-#         --output_dir ${data_dir}/${lang}wiki-NS0-${MONTH}/processed_data
+#         --output_dir ${data_dir}/${lang}wiki-NS0-${MONTH}/processed_data \
+#         --lang $lang
 # done
 
-echo "Generating the synthetic test data..."
-python synth_test_data_generator.py \
-    --first_month_dir ${data_dir}/${lang}wiki-NS0-${second_month}/processed_data \
-    --second_month_dir ${data_dir}/${lang}wiki-NS0-${third_month}/processed_data \
-    --output_dir ${data_dir}/${lang}wiki-NS0-${second_month}/eval_synth \
-    --first_month $second_month \
-    --no_mask_perc $no_mask_perc \
-    --mask_mention_perc $mask_mention_perc \
-    --mask_sentence_perc $mask_sentence_perc \
-    --mask_paragraph_perc $mask_paragraph_perc
+# echo "Generating the synthetic test data..."
+# python synth_test_data_generator.py \
+#     --first_month_dir ${data_dir}/${lang}wiki-NS0-${second_month}/processed_data \
+#     --second_month_dir ${data_dir}/${lang}wiki-NS0-${third_month}/processed_data \
+#     --output_dir ${data_dir}/${lang}wiki-NS0-${second_month}/eval_synth \
+#     --first_month $second_month \
+#     --no_mask_perc $no_mask_perc \
+#     --mask_mention_perc $mask_mention_perc \
+#     --mask_sentence_perc $mask_sentence_perc \
+#     --mask_paragraph_perc $mask_paragraph_perc
 
-# echo "Running the real test data versions finder..."
+echo "Running the real test data versions finder..."
 # echo "Running it for the time span between $first_month and $second_month..."
 # python test_data_version_finder.py \
 #     --raw_data_dir ${data_dir}/${lang}wiki-NS0-${third_month}/raw_data \
@@ -129,16 +130,16 @@ python synth_test_data_generator.py \
 #     --first_date $first_month \
 #     --second_date $second_month \
 #     --max_links 250000
-# echo "Running it for the time span between $second_month and $third_month..."
-# python test_data_version_finder.py \
-#     --raw_data_dir ${data_dir}/${lang}wiki-NS0-${third_month}/raw_data \
-#     --first_month_dir ${data_dir}/${lang}wiki-NS0-${second_month}/processed_data \
-#     --second_month_dir ${data_dir}/${lang}wiki-NS0-${third_month}/processed_data \
-#     --output_dir ${data_dir}/${lang}wiki-NS0-${second_month}/eval \
-#     --lang $lang \
-#     --first_date $second_month \
-#     --second_date $third_month \
-#     --max_links 250000
+echo "Running it for the time span between $second_month and $third_month..."
+python test_data_version_finder.py \
+    --raw_data_dir ${data_dir}/${lang}wiki-NS0-${third_month}/raw_data \
+    --first_month_dir ${data_dir}/${lang}wiki-NS0-${second_month}/processed_data \
+    --second_month_dir ${data_dir}/${lang}wiki-NS0-${third_month}/processed_data \
+    --output_dir ${data_dir}/${lang}wiki-NS0-${second_month}/eval \
+    --lang $lang \
+    --first_date $second_month \
+    --second_date $third_month \
+    --max_links 250000
 
 # echo "Running HTML download prep script..."
 # echo "Running it for the time span between $first_month and $second_month..."
