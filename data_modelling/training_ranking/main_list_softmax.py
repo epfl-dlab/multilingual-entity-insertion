@@ -88,6 +88,7 @@ def mask_negative_contexts(context, probs, backlog):
         start_index = random.randint(0, len(sentences) - mask_length)
         return " ".join(sentences[:start_index]) + " " + " ".join(sentences[start_index + mask_length:])
 
+
 def freeze_model(model, architecture, freeze_layers):
     if freeze_layers == 0:
         return model
@@ -108,6 +109,7 @@ def freeze_model(model, architecture, freeze_layers):
             param.requires_grad = False
     return model
 
+
 def unfreeze_model(model, architecture):
     if architecture == 'BERT':
         for param in model.base_model.embeddings.parameters():
@@ -125,7 +127,6 @@ def unfreeze_model(model, architecture):
         for param in model.block.parameters():
             param.requires_grad = True
     return model
-                
 
 
 if __name__ == '__main__':
@@ -133,7 +134,8 @@ if __name__ == '__main__':
         formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument('--model_name', type=str,
                         default='bert-base-cased', help='Model name or path to model')
-    parser.add_argument('--model_architecture', type=str, choices=['BERT', 'RoBERTa', 'T5'], default='BERT', help='Model architecture')
+    parser.add_argument('--model_architecture', type=str, choices=[
+                        'BERT', 'RoBERTa', 'T5'], default='BERT', help='Model architecture')
     parser.add_argument('--data_dir', type=str,
                         required=True, help='Data directory')
     parser.add_argument('--data_dir_2', type=str, default='',
@@ -197,25 +199,17 @@ if __name__ == '__main__':
     parser.add_argument('--use_current_links', action='store_true',
                         help='If set, use the links already in the context as an additional signal')
     parser.add_argument('--current_links_mode', type=str, choices=[
-                        'sum', 'average', 'weighted_sum', 'weighted_average', 'max_similarity'], default='weighted_sum', help='How to aggregate the current links')
-    parser.add_argument('--current_links_residuals', action='store_true',
-                        help='If set, use the current links as residuals')
-    parser.add_argument('--current_links_residuals_weight', type=float, default=1,
-                        help='Weight for the current links residuals')
-    parser.add_argument('--current_links_use_mlp', action='store_true',
-                        help='If set, use an MLP to fuse the current links with the context text embeddings')
-    parser.add_argument('--normalize_current_links', action='store_true',
-                        help='If set, normalize the fuser output to have the same norm as the context text embeddings')
+                        'sum', 'average', 'weighted_sum', 'weighted_average', 'max_similarity'], default='weighted_average', help='How to aggregate the current links')
     parser.add_argument('--n_links', type=int, default=10,
                         help='Number of current links to use')
     parser.add_argument('--delay_fuser_steps', type=int, default=0,
                         help='Number of steps without using the knowledge fuser (anf thus not using current link knowledge)')
-    parser.add_argument('--no_link_strategy', type=str, choices=['zero_vector', 'empty_embedding'], default='zero_vector', help='What to do when there are no current links')
     parser.add_argument('--use_only_links', action='store_true',
                         help='If set, only use current links as input to compute the candidate embeddings')
-    parser.add_argument('--min_steps', nargs='+', type=int, default=[0], help='Minimum number of steps to train for')
-    parser.set_defaults(resume=False, insert_section=False, mask_negatives=False, split_models=False, two_stage=False,
-                        use_current_links=False, current_links_residuals=False, normalize_current_links=False, current_links_use_mlp=False, use_only_links=False)
+    parser.add_argument('--min_steps', nargs='+', type=int,
+                        default=[0], help='Minimum number of steps to train for')
+    parser.set_defaults(resume=False, insert_section=False, mask_negatives=False,
+                        split_models=False, two_stage=False, use_current_links=False, use_only_links=False)
 
     args = parser.parse_args()
 
@@ -333,14 +327,9 @@ if __name__ == '__main__':
                                              nn.Linear(model_articles_size, 1))
         if args.use_current_links:
             try:
-                if args.current_links_residuals:
-                    link_fuser = Sequential(nn.Linear(model_articles_size, model_contexts_size, bias=False),
-                                            nn.ReLU(),
-                                            nn.Linear(model_contexts_size, model_contexts_size, bias=False))
-                else:
-                    link_fuser = Sequential(nn.Linear(model_articles_size + model_contexts_size, model_contexts_size, bias=False),
-                                            nn.ReLU(),
-                                            nn.Linear(model_contexts_size, model_contexts_size, bias=False))
+                link_fuser = Sequential(nn.LayerNorm(model_contexts_size),
+                                        nn.Linear(model_contexts_size, model_contexts_size),
+                                        nn.LayerNorm(model_contexts_size),)
                 link_fuser.load_state_dict(torch.load(os.path.join(
                     args.checkpoint_dir, 'link_fuser.pth'), map_location='cpu'))
                 logger.info("Link fuser loaded from checkpoint directory")
@@ -348,14 +337,9 @@ if __name__ == '__main__':
                 logger.info(
                     "Could not load link fuser from checkpoint directory")
                 logger.info("Initializing link fuser with random weights")
-                if args.current_links_residuals:
-                    link_fuser = Sequential(nn.Linear(model_articles_size, model_contexts_size, bias=False),
-                                            nn.ReLU(),
-                                            nn.Linear(model_contexts_size, model_contexts_size, bias=False))
-                else:
-                    link_fuser = Sequential(nn.Linear(model_articles_size + model_contexts_size, model_contexts_size, bias=False),
-                                            nn.ReLU(),
-                                            nn.Linear(model_contexts_size, model_contexts_size, bias=False))
+                link_fuser = Sequential(nn.LayerNorm(model_contexts_size),
+                                        nn.Linear(model_contexts_size, model_contexts_size),
+                                        nn.LayerNorm(model_contexts_size),)
     else:
         logger.info("Initializing model")
         if args.split_models:
@@ -372,15 +356,10 @@ if __name__ == '__main__':
                                          nn.ReLU(),
                                          nn.Linear(model_articles_size, 1))
         if args.use_current_links:
-            if args.current_links_residuals:
-                link_fuser = Sequential(nn.Linear(model_articles_size, model_contexts_size, bias=False),
-                                        nn.ReLU(),
-                                        nn.Linear(model_contexts_size, model_contexts_size, bias=False))
-            else:
-                link_fuser = Sequential(nn.Linear(model_articles_size + model_contexts_size, model_contexts_size, bias=False),
-                                        nn.ReLU(),
-                                        nn.Linear(model_contexts_size, model_contexts_size, bias=False))
-    
+            link_fuser = Sequential(nn.LayerNorm(model_contexts_size),
+                                    nn.Linear(model_contexts_size, model_contexts_size),
+                                    nn.LayerNorm(model_contexts_size),)
+
     # Remove decoder layers if present
     if args.model_architecture == 'T5':
         if args.split_models:
@@ -520,7 +499,7 @@ if __name__ == '__main__':
                 else:
                     target_input = [
                         f"{item['target_title']}", item['target_lead']]
-                
+
                 output['noises'].append(noise_map[noise_type])
                 output['sources'].append(source_input)
                 output['contexts'].append(context_input)
@@ -556,7 +535,7 @@ if __name__ == '__main__':
                         context_input = [source_section_neg]
                     else:
                         context_input = ['']
-                    
+
                     if args.insert_mentions == 'candidates':
                         if context_input[0] != '':
                             context_input[0] += f'{tokenizer.sep_token}'
@@ -584,7 +563,7 @@ if __name__ == '__main__':
                 else:
                     target_input = [
                         f"{item['target_title']}", item['target_lead']]
-           
+
                 if args.use_current_links:
                     current_links = literal_eval(item['current_links'])
                     temp = []
@@ -667,7 +646,7 @@ if __name__ == '__main__':
                               collate_fn=collator,
                               pin_memory=True)
     val_loader = DataLoader(val_set,
-                            batch_size=args.batch_size,
+                            batch_size=args.batch_size if not args.use_current_links else args.batch_size // 2,
                             shuffle=False,
                             num_workers=args.num_workers,
                             drop_last=True,
@@ -709,10 +688,13 @@ if __name__ == '__main__':
     else:
         logger.info(f"Freezing first {args.freeze_layers} layers")
         if args.split_models:
-            model_articles = freeze_model(model_articles, args.model_architecture, args.freeze_layers)
-            model_contexts = freeze_model(model_contexts, args.model_architecture, args.freeze_layers)
+            model_articles = freeze_model(
+                model_articles, args.model_architecture, args.freeze_layers)
+            model_contexts = freeze_model(
+                model_contexts, args.model_architecture, args.freeze_layers)
         else:
-            model = freeze_model(model, args.model_architecture, args.freeze_layers)
+            model = freeze_model(
+                model, args.model_architecture, args.freeze_layers)
 
     # prepare all objects with accelerator
     classification_head, optimizer, train_loader, val_loader, scheduler = accelerator.prepare(
@@ -752,17 +734,11 @@ if __name__ == '__main__':
                         **data['contexts'])['last_hidden_state'][:, 0, :]
                     output_current_links = model_articles(
                         **data['current_links'])['last_hidden_state'][:, 0, :]
-                    empty_token_sequence = tokenizer([['','']], padding='max_length', truncation=True,
-                                     return_tensors='pt', max_length=args.max_tokens).to(device)
-                    empty_embedding = model_articles(**empty_token_sequence)['last_hidden_state'][:, 0, :]
                 else:
                     output_context_text = model(
                         **data['contexts'])['last_hidden_state'][:, 0, :]
                     output_current_links = model(
                         **data['current_links'])['last_hidden_state'][:, 0, :]
-                    empty_token_sequence = tokenizer([['','']], padding='max_length', truncation=True,
-                                     return_tensors='pt', max_length=args.max_tokens).to(device)
-                    empty_embedding = model(**empty_token_sequence)['last_hidden_state'][:, 0, :]
                 joint_embeddings = []
                 joint_sources = []
                 joint_targets = []
@@ -772,19 +748,9 @@ if __name__ == '__main__':
                             data['current_links_subindex'] == candidate_index)]
                         # check if there are now current links
                         if len(current_link_subset) == 0:
-                            if args.no_link_strategy == 'zero_vector':
-                                # represent the lack of lists as a zero tensor
-                                if args.current_links_residuals:
-                                    joint_embeddings.append(torch.zeros((1, model_contexts_size), device=device))
-                                else:
-                                    joint_embeddings.append(torch.cat([output_context_text[triplet_index + candidate_index].unsqueeze(
-                                        0), torch.zeros((1, model_contexts_size), device=device)], dim=1))
-                            elif args.no_link_strategy == 'empty_embedding':
-                                if args.current_links_residuals:
-                                    joint_embeddings.append(empty_embedding)
-                                else:
-                                    joint_embeddings.append(torch.cat([output_context_text[triplet_index + candidate_index].unsqueeze(
-                                        0), empty_embedding], dim=1))
+                            # represent the lack of lists as a zero tensor
+                            joint_embeddings.append(torch.zeros(
+                                (1, model_contexts_size), device=device))
                         else:
                             if args.current_links_mode == 'sum':
                                 current_links_subset_pooled = torch.sum(
@@ -816,23 +782,11 @@ if __name__ == '__main__':
                                 max_index = torch.argmax(similarities)
                                 current_links_subset_pooled = current_link_subset[max_index].unsqueeze(
                                     0)
-                            if args.current_links_residuals:
-                                joint_embeddings.append(current_links_subset_pooled)
-                            else:
-                                joint_embeddings.append(torch.cat(
-                                    [output_context_text[triplet_index + candidate_index].unsqueeze(0), current_links_subset_pooled], dim=1))
+                            joint_embeddings.append(
+                                current_links_subset_pooled)
                 joint_embeddings = torch.cat(joint_embeddings, dim=0)
-                if args.current_links_use_mlp:
-                    output_context = link_fuser(joint_embeddings)
-                else:
-                    output_context = joint_embeddings
-                if args.current_links_residuals:
-                    if not args.use_only_links:
-                        output_context = output_context_text + output_context * args.current_links_residuals_weight
-                if args.normalize_current_links:
-                    output_context = output_context * \
-                        torch.norm(output_context_text, dim=1).view(-1, 1) / \
-                        torch.norm(output_context, dim=1).view(-1, 1)
+                full_embedding = output_context_text + joint_embeddings
+                output_context = link_fuser(full_embedding)
             else:
                 if args.split_models:
                     output_context = model_contexts(
@@ -877,13 +831,16 @@ if __name__ == '__main__':
                 if args.split_models:
                     model_articles = accelerator.unwrap_model(model_articles)
                     model_contexts = accelerator.unwrap_model(model_contexts)
-                    model_contexts = unfreeze_model(model_contexts, args.model_architecture, args.freeze_layers)
-                    model_articles = unfreeze_model(model_articles, args.model_architecture, args.freeze_layers)
+                    model_contexts = unfreeze_model(
+                        model_contexts, args.model_architecture, args.freeze_layers)
+                    model_articles = unfreeze_model(
+                        model_articles, args.model_architecture, args.freeze_layers)
                     model_articles = accelerator.prepare(model_articles)
                     model_contexts = accelerator.prepare(model_contexts)
                 else:
                     model = accelerator.unwrap_model(model)
-                    model = unfreeze_model(model, args.model_architecture, args.freeze_layers)
+                    model = unfreeze_model(
+                        model, args.model_architecture, args.freeze_layers)
                     model = accelerator.prepare(model)
 
             # print loss
@@ -973,17 +930,11 @@ if __name__ == '__main__':
                                     **val_data['contexts'])['last_hidden_state'][:, 0, :]
                                 output_current_links = model_articles(
                                     **val_data['current_links'])['last_hidden_state'][:, 0, :]
-                                empty_token_sequence = tokenizer([['','']], padding='max_length', truncation=True,
-                                     return_tensors='pt', max_length=args.max_tokens).to(device)
-                                empty_embedding = model_articles(**empty_token_sequence)['last_hidden_state'][:, 0, :]
                             else:
                                 output_context_text = model(
                                     **val_data['contexts'])['last_hidden_state'][:, 0, :]
                                 output_current_links = model(
                                     **val_data['current_links'])['last_hidden_state'][:, 0, :]
-                                empty_token_sequence = tokenizer([['','']], padding='max_length', truncation=True,
-                                     return_tensors='pt', max_length=args.max_tokens).to(device)
-                                empty_embedding = model(**empty_token_sequence)['last_hidden_state'][:, 0, :]
                             joint_embeddings = []
                             for triplet_index in range(len(val_data['sources']['input_ids'])):
                                 for candidate_index in range(args.neg_samples_eval[0] + 1):
@@ -991,19 +942,9 @@ if __name__ == '__main__':
                                         val_data['current_links_subindex'] == candidate_index)]
                                     # check if there are now current links
                                     if len(current_link_subset) == 0:
-                                        if args.no_link_strategy == 'zero_vector':
-                                            # represent the lack of lists as a zero tensor
-                                            if args.current_links_residuals:
-                                                joint_embeddings.append(torch.zeros((1, model_contexts_size), device=device))
-                                            else:
-                                                joint_embeddings.append(torch.cat([output_context_text[triplet_index + candidate_index].unsqueeze(
-                                                    0), torch.zeros((1, model_contexts_size), device=device)], dim=1))
-                                        elif args.no_link_strategy == 'empty_embedding':
-                                            if args.current_links_residuals:
-                                                joint_embeddings.append(empty_embedding)
-                                            else:
-                                                joint_embeddings.append(torch.cat([output_context_text[triplet_index + candidate_index].unsqueeze(
-                                                    0), empty_embedding], dim=1))
+                                        # represent the lack of lists as a zero tensor
+                                        joint_embeddings.append(torch.zeros(
+                                            (1, model_contexts_size), device=device))
                                     else:
                                         if args.current_links_mode == 'sum':
                                             current_links_subset_pooled = torch.sum(
@@ -1028,26 +969,12 @@ if __name__ == '__main__':
                                                 similarities, dim=0)
                                             current_links_subset_pooled = torch.sum(
                                                 current_link_subset * weights, dim=0, keepdim=True)
-                                        if args.current_links_residuals:
-                                            joint_embeddings.append(
-                                                current_links_subset_pooled)
-                                        else:
-                                            joint_embeddings.append(torch.cat(
-                                                [output_context_text[triplet_index + candidate_index].unsqueeze(0), current_links_subset_pooled], dim=1))
+                                        joint_embeddings.append(
+                                            current_links_subset_pooled)
                             joint_embeddings = torch.cat(
                                 joint_embeddings, dim=0)
-                            if args.current_links_use_mlp:
-                                output_context = link_fuser(joint_embeddings)
-                            else:
-                                output_context = joint_embeddings
-                            if args.current_links_residuals:
-                                if not args.use_only_links:
-                                    output_context = output_context_text + output_context * args.current_links_residuals_weight
-                            if args.normalize_current_links:
-                                output_context = output_context * \
-                                    torch.norm(output_context_text, dim=1).view(-1, 1) / \
-                                    torch.norm(output_context,
-                                               dim=1).view(-1, 1)
+                            full_embedding = output_context_text + joint_embeddings
+                            output_context = link_fuser(full_embedding)
                         else:
                             if args.split_models:
                                 output_context = model_contexts(
@@ -1414,7 +1341,7 @@ if __name__ == '__main__':
                         context_input = [source_section_neg]
                     else:
                         context_input = ['']
-          
+
                     if args.insert_mentions == 'candidates':
                         if context_input[0] != '':
                             context_input[0] += f"{tokenizer.sep_token}"
@@ -1446,7 +1373,7 @@ if __name__ == '__main__':
                               collate_fn=simple_collator,
                               pin_memory=True)
     val_loader = DataLoader(val_set,
-                            batch_size=args.batch_size,
+                            batch_size=args.batch_size if not args.use_current_links else args.batch_size // 2,
                             shuffle=False,
                             num_workers=args.num_workers,
                             drop_last=True,
@@ -1493,17 +1420,11 @@ if __name__ == '__main__':
                         **data['contexts'])['last_hidden_state'][:, 0, :]
                     output_current_links = model_articles(
                         **data['current_links'])['last_hidden_state'][:, 0, :]
-                    empty_token_sequence = tokenizer([['','']], padding='max_length', truncation=True,
-                                     return_tensors='pt', max_length=args.max_tokens).to(device)
-                    empty_embedding = model_articles(**empty_token_sequence)['last_hidden_state'][:, 0, :]
                 else:
                     output_context_text = model(
                         **data['contexts'])['last_hidden_state'][:, 0, :]
                     output_current_links = model(
                         **data['current_links'])['last_hidden_state'][:, 0, :]
-                    empty_token_sequence = tokenizer([['','']], padding='max_length', truncation=True,
-                                     return_tensors='pt', max_length=args.max_tokens).to(device)
-                    empty_embedding = model(**empty_token_sequence)['last_hidden_state'][:, 0, :]
                 joint_embeddings = []
                 for triplet_index in range(len(data['sources']['input_ids'])):
                     for candidate_index in range(args.neg_samples_train[1] + 1):
@@ -1511,19 +1432,9 @@ if __name__ == '__main__':
                             data['current_links_subindex'] == candidate_index)]
                         # check if there are now current links
                         if len(current_link_subset) == 0:
-                            if args.no_link_strategy == 'zero_vector':
-                                # represent the lack of lists as a zero tensor
-                                if args.current_links_residuals:
-                                    joint_embeddings.append(torch.zeros((1, model_contexts_size), device=device))
-                                else:
-                                    joint_embeddings.append(torch.cat([output_context_text[triplet_index + candidate_index].unsqueeze(
-                                        0), torch.zeros((1, model_contexts_size), device=device)], dim=1))
-                            elif args.no_link_strategy == 'empty_embedding':
-                                if args.current_links_residuals:
-                                    joint_embeddings.append(empty_embedding)
-                                else:
-                                    joint_embeddings.append(torch.cat([output_context_text[triplet_index + candidate_index].unsqueeze(
-                                        0), empty_embedding], dim=1))
+                            # represent the lack of lists as a zero tensor
+                            joint_embeddings.append(torch.zeros(
+                                (1, model_contexts_size), device=device))
                         else:
                             if args.current_links_mode == 'sum':
                                 current_links_subset_pooled = torch.sum(
@@ -1547,24 +1458,11 @@ if __name__ == '__main__':
                                 weights = torch.softmax(similarities, dim=0)
                                 current_links_subset_pooled = torch.sum(
                                     current_link_subset * weights, dim=0, keepdim=True)
-                            if args.current_links_residuals:
-                                joint_embeddings.append(
-                                    current_links_subset_pooled)
-                            else:
-                                joint_embeddings.append(torch.cat(
-                                    [output_context_text[triplet_index + candidate_index].unsqueeze(0), current_links_subset_pooled], dim=1))
+                            joint_embeddings.append(
+                                current_links_subset_pooled)
                 joint_embeddings = torch.cat(joint_embeddings, dim=0)
-                if args.current_links_use_mlp:
-                    output_context = link_fuser(joint_embeddings)
-                else:
-                    output_context = joint_embeddings
-                if args.current_links_residuals:
-                    if not args.use_only_links:
-                        output_context = output_context_text + output_context * args.current_links_residuals_weight
-                if args.normalize_current_links:
-                    output_context = output_context * \
-                        torch.norm(output_context_text, dim=1).view(-1, 1) / \
-                        torch.norm(output_context, dim=1).view(-1, 1)
+                full_embedding = output_context_text + joint_embeddings
+                output_context = link_fuser(full_embedding)
             else:
                 if args.split_models:
                     output_context = model_contexts(
@@ -1678,17 +1576,11 @@ if __name__ == '__main__':
                                     **val_data['contexts'])['last_hidden_state'][:, 0, :]
                                 output_current_links = model_articles(
                                     **val_data['current_links'])['last_hidden_state'][:, 0, :]
-                                empty_token_sequence = tokenizer([['','']], padding='max_length', truncation=True,
-                                     return_tensors='pt', max_length=args.max_tokens).to(device)
-                                empty_embedding = model_articles(**empty_token_sequence)['last_hidden_state'][:, 0, :]
                             else:
                                 output_context_text = model(
                                     **val_data['contexts'])['last_hidden_state'][:, 0, :]
                                 output_current_links = model(
                                     **val_data['current_links'])['last_hidden_state'][:, 0, :]
-                                empty_token_sequence = tokenizer([['','']], padding='max_length', truncation=True,
-                                     return_tensors='pt', max_length=args.max_tokens).to(device)
-                                empty_embedding = model(**empty_token_sequence)['last_hidden_state'][:, 0, :]
                             joint_embeddings = []
                             for triplet_index in range(len(val_data['sources']['input_ids'])):
                                 for candidate_index in range(args.neg_samples_eval[1] + 1):
@@ -1696,19 +1588,9 @@ if __name__ == '__main__':
                                         val_data['current_links_subindex'] == candidate_index)]
                                     # check if there are now current links
                                     if len(current_link_subset) == 0:
-                                        if args.no_link_strategy == 'zero_vector':
-                                            # represent the lack of lists as a zero tensor
-                                            if args.current_links_residuals:
-                                                joint_embeddings.append(torch.zeros((1, model_contexts_size), device=device))
-                                            else:
-                                                joint_embeddings.append(torch.cat([output_context_text[triplet_index + candidate_index].unsqueeze(
-                                                    0), torch.zeros((1, model_contexts_size), device=device)], dim=1))
-                                        elif args.no_link_strategy == 'empty_embedding':
-                                            if args.current_links_residuals:
-                                                joint_embeddings.append(empty_embedding)
-                                            else:
-                                                joint_embeddings.append(torch.cat([output_context_text[triplet_index + candidate_index].unsqueeze(
-                                                    0), empty_embedding], dim=1))
+                                        # represent the lack of lists as a zero tensor
+                                        joint_embeddings.append(torch.zeros(
+                                            (1, model_contexts_size), device=device))
                                     else:
                                         if args.current_links_mode == 'sum':
                                             current_links_subset_pooled = torch.sum(
@@ -1733,26 +1615,12 @@ if __name__ == '__main__':
                                                 similarities, dim=0)
                                             current_links_subset_pooled = torch.sum(
                                                 current_link_subset * weights, dim=0, keepdim=True)
-                                        if args.current_links_residuals:
-                                            joint_embeddings.append(
-                                                current_links_subset_pooled)
-                                        else:
-                                            joint_embeddings.append(torch.cat(
-                                                [output_context_text[triplet_index + candidate_index].unsqueeze(0), current_links_subset_pooled], dim=1))
+                                        joint_embeddings.append(
+                                            current_links_subset_pooled)
                             joint_embeddings = torch.cat(
                                 joint_embeddings, dim=0)
-                            if args.current_links_use_mlp:
-                                output_context = link_fuser(joint_embeddings)
-                            else:
-                                output_context = joint_embeddings
-                            if args.current_links_residuals:
-                                if not args.use_only_links:
-                                    output_context = output_context_text + output_context * args.current_links_residuals_weight
-                            if args.normalize_current_links:
-                                output_context = output_context * \
-                                    torch.norm(output_context_text, dim=1).view(-1, 1) / \
-                                    torch.norm(output_context,
-                                               dim=1).view(-1, 1)
+                            full_embedding = output_context_text + joint_embeddings
+                            output_context = link_fuser(full_embedding)
                         else:
                             if args.split_models:
                                 output_context = model_contexts(
