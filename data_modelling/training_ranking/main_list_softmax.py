@@ -187,7 +187,7 @@ if __name__ == '__main__':
     parser.add_argument('--temperature', nargs='+', type=float, default=[1],
                         help='Temperature for softmax')
     parser.add_argument('--insert_mentions', type=str, choices=[
-                        'none', 'target', 'candidates'], default='none', help='Where to insert mention knowledge')
+                        'none', 'partial', 'full'], default='none', help='Whether to insert mentions in the context (partial: randomly insert or not, full: always insert)')
     parser.add_argument('--insert_section', action='store_true',
                         help='Whether to insert section title')
     parser.add_argument('--mask_negatives', action='store_true',
@@ -208,6 +208,8 @@ if __name__ == '__main__':
                         help='If set, only use current links as input to compute the candidate embeddings')
     parser.add_argument('--min_steps', nargs='+', type=int,
                         default=[0], help='Minimum number of steps to train for')
+    parser.add_argument('--triplet_fuser_mode', type=str, choices=['stack', 'add'], default='stack',
+                        help='How to combine the source, context and target embeddings')
     parser.set_defaults(resume=False, insert_section=False, mask_negatives=False,
                         split_models=False, two_stage=False, use_current_links=False, use_only_links=False)
 
@@ -311,10 +313,14 @@ if __name__ == '__main__':
         else:
             model_contexts_size = model.config.hidden_size
             model_articles_size = model.config.hidden_size
+        if args.triplet_fuser_mode == 'stack':
+            class_head_in_dim = model_articles_size * 2 + model_contexts_size
+        elif args.triplet_fuser_mode == 'add':
+            class_head_in_dim = model_articles_size
         try:
-            classification_head = Sequential(nn.Linear(model_articles_size * 2 + model_contexts_size, model_articles_size),
-                                             nn.ReLU(),
-                                             nn.Linear(model_articles_size, 1))
+            classification_head = Sequential(nn.Linear(class_head_in_dim, model_articles_size),
+                                            nn.ReLU(),
+                                            nn.Linear(model_articles_size, 1))
             classification_head.load_state_dict(torch.load(os.path.join(
                 args.checkpoint_dir, 'classification_head.pth'), map_location='cpu'))
             logger.info("Classification head loaded from checkpoint directory")
@@ -322,9 +328,9 @@ if __name__ == '__main__':
             logger.info(
                 "Could not load classification head from checkpoint directory")
             logger.info("Initializing classification head with random weights")
-            classification_head = Sequential(nn.Linear(model_articles_size * 2 + model_contexts_size, model_articles_size),
-                                             nn.ReLU(),
-                                             nn.Linear(model_articles_size, 1))
+            classification_head = Sequential(nn.Linear(class_head_in_dim, model_articles_size),
+                                            nn.ReLU(),
+                                            nn.Linear(model_articles_size, 1))
         if args.use_current_links:
             try:
                 link_fuser = Sequential(nn.LayerNorm(model_contexts_size),
@@ -352,9 +358,14 @@ if __name__ == '__main__':
             model_articles_size = model.config.hidden_size
             model_contexts_size = model.config.hidden_size
 
-        classification_head = Sequential(nn.Linear(model_articles_size * 2 + model_contexts_size, model_articles_size),
-                                         nn.ReLU(),
-                                         nn.Linear(model_articles_size, 1))
+        if args.triplet_fuser_mode == 'stack':
+            class_head_in_dim = model_articles_size * 2 + model_contexts_size
+        elif args.triplet_fuser_mode == 'add':
+            class_head_in_dim = model_articles_size
+
+        classification_head = Sequential(nn.Linear(class_head_in_dim, model_articles_size),
+                                        nn.ReLU(),
+                                        nn.Linear(model_articles_size, 1))
         if args.use_current_links:
             link_fuser = Sequential(nn.LayerNorm(model_contexts_size),
                                     nn.Linear(model_contexts_size, model_contexts_size),
@@ -483,22 +494,17 @@ if __name__ == '__main__':
                 item['link_context'] = item['link_context'].strip()
 
                 source_input = [item['source_title'], item['source_lead']]
+                target_input = [item['target_title'], item['target_lead']]
                 if args.insert_section:
                     context_input = [item['source_section']]
                 else:
                     context_input = ['']
-                if args.insert_mentions == 'candidates':
+                if args.insert_mentions == 'full' or args.insert_mentions == 'partial':
                     if context_input[0] != '':
                         context_input[0] += f'{tokenizer.sep_token}'
-                    context_input[0] += f"{mention_map[item['target_title']]}"
+                    if random.random() < 0.5 or args.insert_mentions == 'full':
+                        context_input[0] += f"{mention_map[item['target_title']]}"
                 context_input.append(item['link_context'])
-
-                if args.insert_mentions == 'target':
-                    target_input = [
-                        f"{item['target_title']}{tokenizer.sep_token}{mention_map[item['target_title']]}", item['target_lead']]
-                else:
-                    target_input = [
-                        f"{item['target_title']}", item['target_lead']]
 
                 output['noises'].append(noise_map[noise_type])
                 output['sources'].append(source_input)
@@ -536,10 +542,11 @@ if __name__ == '__main__':
                     else:
                         context_input = ['']
 
-                    if args.insert_mentions == 'candidates':
+                    if args.insert_mentions == 'full' or args.insert_mentions == 'partial':
                         if context_input[0] != '':
                             context_input[0] += f'{tokenizer.sep_token}'
-                        context_input[0] += f"{mention_map[item['target_title']]}"
+                        if random.random() < 0.5 or args.insert_mentions == 'full':
+                            context_input[0] += f"{mention_map[item['target_title']]}"
                     context_input.append(link_context_neg)
                     output['contexts'].append(context_input)
         else:
@@ -547,22 +554,17 @@ if __name__ == '__main__':
                 if item['target_title'] not in mention_map:
                     mention_map[item['target_title']] = item['target_title']
                 source_input = [item['source_title'], item['source_lead']]
+                target_input = [item['target_title'], item['target_lead']]
                 if args.insert_section:
                     context_input = [item['source_section']]
                 else:
                     context_input = ['']
-                if args.insert_mentions == 'candidates':
+                if args.insert_mentions == 'full' or args.insert_mentions == 'partial':
                     if context_input[0] != '':
                         context_input[0] += f'{tokenizer.sep_token}'
-                    context_input[0] += f"{mention_map[item['target_title']]}"
+                    if random.random() < 0.5 or args.insert_mentions == 'full':
+                        context_input[0] += f"{mention_map[item['target_title']]}"
                 context_input.append(item['link_context'])
-
-                if args.insert_mentions == 'target':
-                    target_input = [
-                        f"{item['target_title']}{tokenizer.sep_token}{mention_map[item['target_title']]}", item['target_lead']]
-                else:
-                    target_input = [
-                        f"{item['target_title']}", item['target_lead']]
 
                 if args.use_current_links:
                     current_links = literal_eval(item['current_links'])
@@ -616,10 +618,11 @@ if __name__ == '__main__':
                     else:
                         context_input = ['']
 
-                    if args.insert_mentions == 'candidates':
+                    if args.insert_mentions == 'full' or args.insert_mentions == 'partial':
                         if context_input[0] != '':
                             context_input[0] += f'{tokenizer.sep_token}'
-                        context_input[0] += f"{mention_map[item['target_title']]}"
+                        if random.random() < 0.5 or args.insert_mentions == 'full':
+                            context_input[0] += f"{mention_map[item['target_title']]}"
                     context_input.append(link_context_neg)
                     output['contexts'].append(context_input)
 
@@ -803,9 +806,12 @@ if __name__ == '__main__':
                 args.neg_samples_train[0] + 1, dim=0)
             output_target = output_target.repeat_interleave(
                 args.neg_samples_train[0] + 1, dim=0)
-            embeddings = torch.cat([output_source,
-                                    output_context,
-                                    output_target], dim=1)
+            if args.triplet_fuser_mode == 'stack':
+                embeddings = torch.cat([output_source,
+                                        output_context,
+                                        output_target], dim=1)
+            elif args.triplet_fuser_mode == 'add':
+                embeddings = output_source + output_context + output_target
             logits = classification_head(embeddings)
             # logits has shape (batch_size * (neg_samples + 1), 1)
             # we need to reshape it to (batch_size, neg_samples + 1)
@@ -986,9 +992,13 @@ if __name__ == '__main__':
                             args.neg_samples_eval[0] + 1, dim=0)
                         output_target = output_target.repeat_interleave(
                             args.neg_samples_eval[0] + 1, dim=0)
-                        embeddings = torch.cat([output_source,
-                                                output_context,
-                                                output_target], dim=1)
+                        if args.triplet_fuser_mode == 'stack':
+                            embeddings = torch.cat([output_source,
+                                                    output_context,
+                                                    output_target], dim=1)
+                        elif args.triplet_fuser_mode == 'add':
+                            embeddings = output_source + \
+                                output_context + output_target
                         val_logits = classification_head(embeddings)
                         val_logits = val_logits.view(-1,
                                                      args.neg_samples_eval[0] + 1)
@@ -1206,6 +1216,7 @@ if __name__ == '__main__':
                 if item['target_title'] not in mention_map:
                     mention_map[item['target_title']] = item['target_title']
                 source_input = [item['source_title'], item['source_lead']]
+                target_input = [item['target_title'], item['target_lead']]
                 if args.use_current_links:
                     current_links = literal_eval(item['current_links'])
                     titles = list(current_links.keys())
@@ -1226,17 +1237,12 @@ if __name__ == '__main__':
                     context_input = [item['source_section']]
                 else:
                     context_input = ['']
-                if args.insert_mentions == 'candidates':
+                if args.insert_mentions == 'full' or args.insert_mentions == 'partial':
                     if context_input[0] != '':
                         context_input[0] += f"{tokenizer.sep_token}"
-                    context_input[0] += f"{mention_map[item['target_title']]}"
+                    if random.random() < 0.5 or args.insert_mentions == 'full':
+                        context_input[0] += f"{mention_map[item['target_title']]}"
                 context_input.append(item['link_context'])
-
-                if args.insert_mentions == 'target':
-                    target_input = [f"{item['target_title']}{tokenizer.sep_token}{mention_map[item['target_title']]}",
-                                    item['target_lead']]
-                else:
-                    target_input = [item['target_title'], item['target_lead']]
 
                 output['noises'].append(missing_map[item['missing_category']])
                 output['sources'].append(source_input)
@@ -1268,10 +1274,11 @@ if __name__ == '__main__':
                         context_input = [source_section_neg]
                     else:
                         context_input = ['']
-                    if args.insert_mentions == 'candidates':
+                    if args.insert_mentions == 'full' or args.insert_mentions == 'partial':
                         if context_input[0] != '':
                             context_input[0] += f"{tokenizer.sep_token}"
-                        context_input[0] += f"{mention_map[item['target_title']]}"
+                        if random.random() < 0.5 or args.insert_mentions == 'full':
+                            context_input[0] += f"{mention_map[item['target_title']]}"
                     context_input.append(link_context_neg)
                     output['contexts'].append(context_input)
         else:
@@ -1279,6 +1286,7 @@ if __name__ == '__main__':
                 if item['target_title'] not in mention_map:
                     mention_map[item['target_title']] = item['target_title']
                 source_input = [item['source_title'], item['source_lead']]
+                target_input = [item['target_title'], item['target_lead']]
                 if args.use_current_links:
                     current_links = literal_eval(item['current_links'])
                     titles = list(current_links.keys())
@@ -1300,17 +1308,12 @@ if __name__ == '__main__':
                     context_input = [item['source_section']]
                 else:
                     context_input = ['']
-                if args.insert_mentions == 'candidates':
+                if args.insert_mentions == 'full' or args.insert_mentions == 'partial':
                     if context_input[0] != '':
                         context_input[0] += f"{tokenizer.sep_token}"
-                    context_input[0] += f"{mention_map[item['target_title']]}"
+                    if random.random() < 0.5 or args.insert_mentions == 'full':
+                        context_input[0] += f"{mention_map[item['target_title']]}"
                 context_input.append(item['link_context'])
-
-                if args.insert_mentions == 'target':
-                    target_input = [f"{item['target_title']}{tokenizer.sep_token}{mention_map[item['target_title']]}",
-                                    item['target_lead']]
-                else:
-                    target_input = [item['target_title'], item['target_lead']]
 
                 output['noises'].append(missing_map[item['missing_category']])
                 output['sources'].append(source_input)
@@ -1342,10 +1345,11 @@ if __name__ == '__main__':
                     else:
                         context_input = ['']
 
-                    if args.insert_mentions == 'candidates':
+                    if args.insert_mentions == 'full' or args.insert_mentions == 'partial':
                         if context_input[0] != '':
                             context_input[0] += f"{tokenizer.sep_token}"
-                        context_input[0] += f"{mention_map[item['target_title']]}"
+                        if random.random() < 0.5 or args.insert_mentions == 'full':
+                            context_input[0] += f"{mention_map[item['target_title']]}"
                     context_input.append(link_context_neg)
                     output['contexts'].append(context_input)
 
@@ -1474,9 +1478,12 @@ if __name__ == '__main__':
                 args.neg_samples_train[1] + 1, dim=0)
             output_target = output_target.repeat_interleave(
                 args.neg_samples_train[1] + 1, dim=0)
-            embeddings = torch.cat([output_source,
-                                    output_context,
-                                    output_target], dim=1)
+            if args.triplet_fuser_mode == 'stack':
+                embeddings = torch.cat([output_source,
+                                        output_context,
+                                        output_target], dim=1)
+            elif args.triplet_fuser_mode == 'add':
+                embeddings = output_source + output_context + output_target
             logits = classification_head(embeddings)
             logits = logits.view(-1, args.neg_samples_train[1] + 1)
             labels = torch.zeros_like(logits)
@@ -1632,9 +1639,13 @@ if __name__ == '__main__':
                             args.neg_samples_eval[1] + 1, dim=0)
                         output_target = output_target.repeat_interleave(
                             args.neg_samples_eval[1] + 1, dim=0)
-                        embeddings = torch.cat([output_source,
-                                                output_context,
-                                                output_target], dim=1)
+                        if args.triplet_fuser_mode == 'stack':
+                            embeddings = torch.cat([output_source,
+                                                    output_context,
+                                                    output_target], dim=1)
+                        elif args.triplet_fuser_mode == 'add':
+                            embeddings = output_source + \
+                                output_context + output_target
                         val_logits = classification_head(embeddings)
                         val_logits = val_logits.view(
                             -1, args.neg_samples_eval[1] + 1)
