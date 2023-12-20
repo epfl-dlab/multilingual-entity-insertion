@@ -78,7 +78,6 @@ echo "Negative Samples Val: $neg_samples_val"
 echo "Max Train Samples: $max_train_samples"
 echo "Max Val Samples: $max_val_samples"
 
-
 # echo "Extracting information about all the pages for the three months..."
 # for MONTH in $first_month $second_month $third_month; do
 #     python pages_extractor.py \
@@ -119,7 +118,7 @@ echo "Max Val Samples: $max_val_samples"
 #     --mask_sentence_perc $mask_sentence_perc \
 #     --mask_paragraph_perc $mask_paragraph_perc
 
-echo "Running the real test data versions finder..."
+# echo "Running the real test data versions finder..."
 # echo "Running it for the time span between $first_month and $second_month..."
 # python test_data_version_finder.py \
 #     --raw_data_dir ${data_dir}/${lang}wiki-NS0-${third_month}/raw_data \
@@ -130,34 +129,34 @@ echo "Running the real test data versions finder..."
 #     --first_date $first_month \
 #     --second_date $second_month \
 #     --max_links 250000
-echo "Running it for the time span between $second_month and $third_month..."
-python test_data_version_finder.py \
-    --raw_data_dir ${data_dir}/${lang}wiki-NS0-${third_month}/raw_data \
-    --first_month_dir ${data_dir}/${lang}wiki-NS0-${second_month}/processed_data \
-    --second_month_dir ${data_dir}/${lang}wiki-NS0-${third_month}/processed_data \
-    --output_dir ${data_dir}/${lang}wiki-NS0-${second_month}/eval \
-    --lang $lang \
-    --first_date $second_month \
-    --second_date $third_month \
-    --max_links 250000
+# echo "Running it for the time span between $second_month and $third_month..."
+# python test_data_version_finder.py \
+#     --raw_data_dir ${data_dir}/${lang}wiki-NS0-${third_month}/raw_data \
+#     --first_month_dir ${data_dir}/${lang}wiki-NS0-${second_month}/processed_data \
+#     --second_month_dir ${data_dir}/${lang}wiki-NS0-${third_month}/processed_data \
+#     --output_dir ${data_dir}/${lang}wiki-NS0-${second_month}/eval \
+#     --lang $lang \
+#     --first_date $second_month \
+#     --second_date $third_month \
+#     --max_links 250000
 
-# echo "Running HTML download prep script..."
-# echo "Running it for the time span between $first_month and $second_month..."
-# python test_html_downloader_prep.py \
-#     --input_file ${data_dir}/${lang}wiki-NS0-${first_month}/eval/link_versions.parquet \
-#     --output_directory ${data_dir}/${lang}wiki-NS0-${first_month}/eval/pages
+echo "Running HTML download prep script..."
+echo "Running it for the time span between $first_month and $second_month..."
+python test_html_downloader_prep.py \
+    --input_file ${data_dir}/${lang}wiki-NS0-${first_month}/eval/link_versions.parquet \
+    --output_directory ${data_dir}/${lang}wiki-NS0-${first_month}/eval/pages
 # echo "Running it for the time span between $second_month and $third_month..."
 # python test_html_downloader_prep.py \
 #     --input_file ${data_dir}/${lang}wiki-NS0-${second_month}/eval/link_versions.parquet \
 #     --output_directory ${data_dir}/${lang}wiki-NS0-${second_month}/eval/pages
 
-# echo "Downloading the HTML pages..."
-# echo "Downloading it for the time span between $first_month and $second_month..."
-# node crawler/crawl_wiki.js \
-#     --articles ${data_dir}/${lang}wiki-NS0-${first_month}/eval/pages/pages.txt \
-#     --concurrence $download_processes \
-#     --destinationDirectory ${data_dir}/${lang}wiki-NS0-${first_month}/eval/pages/ \
-#     --language $lang
+echo "Downloading the HTML pages..."
+echo "Downloading it for the time span between $first_month and $second_month..."
+node crawler/crawl_wiki.js \
+    --articles ${data_dir}/${lang}wiki-NS0-${first_month}/eval/pages/pages.txt \
+    --concurrence $download_processes \
+    --destinationDirectory ${data_dir}/${lang}wiki-NS0-${first_month}/eval/pages/ \
+    --language $lang
 # echo "Downloading it for the time span between $second_month and $third_month..."
 # node crawler/crawl_wiki.js \
 #     --articles ${data_dir}/${lang}wiki-NS0-${second_month}/eval/pages/pages.txt \

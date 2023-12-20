@@ -14,6 +14,7 @@ from ast import literal_eval
 import json
 import gc
 
+
 def unencode_title(title):
     clean_title = urllib.parse.unquote(title).replace('_', ' ')
     return clean_title
@@ -176,7 +177,7 @@ def replace_context(source_title, target_title, source_depth, page_sections, ava
                     candidate_current_links.append({})
                     prev_fail = False
                 candidate_current_links[-1][link['target_title']] = {'target_title': link['target_title'],
-                                                                    'target_lead': link['target_lead']}
+                                                                     'target_lead': link['target_lead']}
             candidate_current_links.sort(key=lambda x: len(x), reverse=True)
             current_links = candidate_current_links[0]
             if len(current_links) > 10:
@@ -270,6 +271,7 @@ if __name__ == '__main__':
                         help='Add current links to the samples')
     parser.add_argument('--join_samples', action='store_true',
                         help='Join positive and its negative samples into one row')
+    parser.add_argument('--page_limit', type=int, help='Limit the number of pages to process')
 
     parser.set_defaults(join_samples=False, add_current_links=False)
     args = parser.parse_args()
@@ -304,16 +306,31 @@ if __name__ == '__main__':
         subset=['title']).reset_index(drop=True)
     df_pages['title'] = df_pages['title'].apply(unencode_title)
     df_pages = df_pages.to_dict(orient='records')
-    
+
     print('\tProcessing pages')
     page_leads = {row['title']: row['lead_paragraph']
                   for row in tqdm(df_pages) if row['lead_paragraph'] != '' and row['lead_paragraph'] is not None}
     del df_pages
     gc.collect()
-    
-    print('Loading training section texts')
+
+    print('Loading mention map')
+    mention_map = pd.read_parquet(os.path.join(
+        args.input_month1_dir, 'mention_map.parquet'))
+    mention_map_dict = mention_map.to_dict(orient='records')
+    entity_map = {}
+    for row in mention_map_dict:
+        title = unencode_title(row['target_title'])
+        mention = row['mention']
+        if mention == '':
+            continue
+        if title in entity_map:
+            entity_map[title].add(mention)
+        else:
+            entity_map[title] = set([mention])
+
+    print('Processing training data')
+    print('\tLoading section texts')
     section_files = glob(os.path.join(args.input_month1_dir, 'sections*'))
-    section_files.sort()
     dfs = []
     for file in tqdm(section_files):
         dfs.append(pd.read_parquet(file))
@@ -321,22 +338,11 @@ if __name__ == '__main__':
     df_sections_train['title'] = df_sections_train['title'].apply(
         unencode_title)
     df_sections_train = df_sections_train.to_dict(orient='records')
-    
-    print('Loading validation section texts')
-    section_files = glob(os.path.join(args.input_month2_dir, 'sections*'))
-    section_files.sort()
-    dfs = []
-    for file in tqdm(section_files):
-        dfs.append(pd.read_parquet(file))
-    df_sections_val = pd.concat(dfs)
-    df_sections_val['title'] = df_sections_val['title'].apply(
-        unencode_title)
-    df_sections_val = df_sections_val.to_dict(orient='records')
-    
-    print('Creating auxiliary data structures')
-    print('\tProcessing sections')
+
+    print('\tCreating auxiliary data structures')
+    print('\t\tProcessing sections')
     page_sections_train = {}
-    pool = Pool(20)
+    pool = Pool(5)
     for output in tqdm(pool.imap_unordered(extract_sections, df_sections_train), total=len(df_sections_train)):
         title = output['title']
         section = output['section']
@@ -356,142 +362,18 @@ if __name__ == '__main__':
             if link['target_title'] in page_leads:
                 link['target_lead'] = page_leads[link['target_title']]
                 page_sections_train[title][section]['links'].append(link)
+        if len(page_sections_train) > args.page_limit:
+            break
     del df_sections_train
     gc.collect()
 
-    page_sections_val = {}
-    for output in tqdm(pool.imap_unordered(extract_sections, df_sections_val), total=len(df_sections_val)):
-        title = output['title']
-        section = output['section']
-        sentences = output['sentences']
-        depth = output['depth']
-        links = output['links']
-        if title not in page_sections_val:
-            page_sections_val[title] = {}
-        if section not in page_sections_val[title]:
-            page_sections_val[title][section] = {
-                'depth': depth, 'sentences': [], 'links': []}
-        page_sections_val[title][section]['sentences'].extend(sentences)
-        for link in links:
-            link['target_title'] = unencode_title(link['target_title'])
-            if link['target_title'] in page_leads:
-                link['target_lead'] = page_leads[link['target_title']]
-                page_sections_val[title][section]['links'].append(link)
-    del df_sections_val
-    gc.collect()
-    pool.close()
-    pool.join()
-    
-    print('Loading mention map')
-    mention_map = pd.read_parquet(os.path.join(
-        args.input_month1_dir, 'mention_map.parquet'))
-    mention_map_dict = mention_map.to_dict(orient='records')
-    entity_map = {}
-    for row in mention_map_dict:
-        title = unencode_title(row['target_title'])
-        mention = row['mention']
-        if mention == '':
-            continue
-        if title in entity_map:
-            entity_map[title].add(mention)
-        else:
-            entity_map[title] = set([mention])
-            
-    print('Loading validation links')
-    df_links_val = pd.read_parquet(os.path.join(
-        args.input_dir_val, 'val_links.parquet'))
-    df_links_val['source_title'] = df_links_val['source_title'].apply(
-        unencode_title)
-    df_links_val['target_title'] = df_links_val['target_title'].apply(
-        unencode_title)
-    df_links_val = df_links_val.to_dict(orient='records')
-    random.shuffle(df_links_val)
-    
-    print('Generating validation samples')
-    positive_samples_val = []
-    for row in tqdm(df_links_val):
-        if row['source_title'] not in page_sections_val:
-            continue
-        if row['source_title'] not in page_leads or row['target_title'] not in page_leads:
-            continue
-        if args.add_current_links:
-            current_links = literal_eval(row['current_links'])
-            processed_current_links = {}
-            for target in current_links:
-                if target in page_leads:
-                    processed_current_links[target] = {'target_title': target,
-                                                    'target_lead': page_leads[target]}
-            if len(processed_current_links) > 10:
-                processed_current_links = dict(random.sample(
-                    processed_current_links.items(), 10))
-        positive_samples_val.append({
-            'source_title': row['source_title'],
-            'source_lead': page_leads[row['source_title']],
-            'target_title': row['target_title'],
-            'target_lead': page_leads[row['target_title']],
-            'link_context': row['context'],
-            'source_section': row['source_section'].split('<sep>')[0],
-            'context_span_start_index': row['context_span_start_index'],
-            'context_span_end_index': row['context_span_end_index'],
-            'context_sentence_start_index': row['context_sentence_start_index'],
-            'context_sentence_end_index': row['context_sentence_end_index'],
-            'context_mention_start_index': row['context_mention_start_index'],
-            'context_mention_end_index': row['context_mention_end_index'],
-            'depth': row['link_section_depth'],
-            'noise_strategy': row['noise_strategy'],
-        })
-        if args.add_current_links:
-            positive_samples_val[-1]['current_links'] = str(processed_current_links)
-    random.shuffle(positive_samples_val)
-    del df_links_val
-    gc.collect()
-    
-    if not args.max_val_samples:
-        args.max_val_samples = len(
-            positive_samples_val) * (1 + args.neg_samples_val)
-    if len(positive_samples_val) * (1 + args.neg_samples_val) > args.max_val_samples:
-        positive_samples_val = random.sample(
-            positive_samples_val, math.ceil(
-                args.max_val_samples / (1 + args.neg_samples_val))
-        )
-    
-    negative_samples_val = construct_negative_samples(
-        positive_samples_val, args.neg_samples_val, page_sections_val)
-
-    print('Saving validation data')
-    if not args.join_samples:
-        df_val = pd.DataFrame(
-            positive_samples_val + negative_samples_val)
-        df_val = df_val.sample(
-            n=min(args.max_val_samples, len(df_val))).reset_index(drop=True)
-    else:
-        for i, sample in enumerate(tqdm(negative_samples_val)):
-            true_index = i // args.neg_samples_val
-            rel_index = i % args.neg_samples_val
-            keys = ['link_context', 'source_section', 'noise_strategy']
-            if args.add_current_links:
-                keys.append('current_links')
-            for key in keys:
-                if key in sample:
-                    positive_samples_val[true_index][f'{key}_neg_{rel_index}'] = sample[key]
-                else:
-                    positive_samples_val[true_index][f'{key}_neg_{rel_index}'] = None
-        df_val = pd.DataFrame(positive_samples_val)
-    
-    if not os.path.exists(os.path.join(args.output_dir, 'val')):
-        os.makedirs(os.path.join(args.output_dir, 'val'))
-    df_val.to_parquet(os.path.join(args.output_dir, 'val', 'val.parquet'))
-    del df_val
-    del positive_samples_val
-    del negative_samples_val
-    gc.collect()
-    
-    print('Processing training links')
+    print('\tProcessing training links')
     if not args.max_train_samples:
         args.max_train_samples = float('inf')
     positive_samples_counter = 0
     train_file_counter = 0
-    link_files = glob(os.path.join(args.input_month1_dir, 'good_links*'))
+    link_files = glob(os.path.join(
+        args.input_month1_dir, 'good_links', 'good_links*'))
     link_files.sort()
     for file in tqdm(link_files):
         df_links_train = pd.read_parquet(file)
@@ -501,7 +383,7 @@ if __name__ == '__main__':
             unencode_title)
         df_links_train = df_links_train.to_dict(orient='records')
         random.shuffle(df_links_train)
-        
+
         positive_samples_train = []
         for row in tqdm(df_links_train):
             if row['source_title'] not in page_sections_train:
@@ -515,8 +397,8 @@ if __name__ == '__main__':
                     clean_target = unencode_title(target)
                     if clean_target in page_leads:
                         processed_current_links[target] = {'target_title': clean_target,
-                                                        'target_lead': page_leads[clean_target],
-                                                        'region': current_links[target]['region']}
+                                                           'target_lead': page_leads[clean_target],
+                                                           'region': current_links[target]['region']}
                 if len(processed_current_links) > 10:
                     processed_current_links = dict(random.sample(
                         processed_current_links.items(), 10))
@@ -537,7 +419,8 @@ if __name__ == '__main__':
                 'noise_strategy': None,
             })
             if args.add_current_links:
-                positive_samples_train[-1]['current_links'] = str(processed_current_links)
+                positive_samples_train[-1]['current_links'] = str(
+                    processed_current_links)
             positive_samples_counter += 1
             if positive_samples_counter * (1 + args.neg_samples_train) > args.max_train_samples:
                 break
@@ -568,8 +451,145 @@ if __name__ == '__main__':
         df_train.to_parquet(os.path.join(
             args.output_dir, 'train', f'train_{train_file_counter}.parquet'))
         train_file_counter += 1
+        print(positive_samples_counter *
+              (1 + args.neg_samples_train), args.max_train_samples)
         if positive_samples_counter * (1 + args.neg_samples_train) > args.max_train_samples:
             break
+
+    del df_train
+    del positive_samples_train
+    del negative_samples_train
+    del page_sections_train
+    gc.collect()
+
+    print('Processing validation data')
+    print('\tLoading section texts')
+    section_files = glob(os.path.join(args.input_month2_dir, 'sections*'))
+    section_files.sort()
+    dfs = []
+    for file in tqdm(section_files):
+        dfs.append(pd.read_parquet(file))
+    df_sections_val = pd.concat(dfs)
+    df_sections_val['title'] = df_sections_val['title'].apply(
+        unencode_title)
+    df_sections_val = df_sections_val.to_dict(orient='records')
+
+    print('\tCreating auxiliary data structures')
+    print('\t\tProcessing sections')
+    page_sections_val = {}
+    for output in tqdm(pool.imap_unordered(extract_sections, df_sections_val), total=len(df_sections_val)):
+        title = output['title']
+        section = output['section']
+        sentences = output['sentences']
+        depth = output['depth']
+        links = output['links']
+        if title not in page_sections_val:
+            page_sections_val[title] = {}
+        if section not in page_sections_val[title]:
+            page_sections_val[title][section] = {
+                'depth': depth, 'sentences': [], 'links': []}
+        page_sections_val[title][section]['sentences'].extend(sentences)
+        for link in links:
+            link['target_title'] = unencode_title(link['target_title'])
+            if link['target_title'] in page_leads:
+                link['target_lead'] = page_leads[link['target_title']]
+                page_sections_val[title][section]['links'].append(link)
+        if len(page_sections_val) > args.page_limit:
+            break
+    del df_sections_val
+    gc.collect()
+    pool.close()
+    pool.join()
+
+    print('\tLoading validation links')
+    df_links_val = pd.read_parquet(os.path.join(
+        args.input_dir_val, 'val_links.parquet'))
+    df_links_val['source_title'] = df_links_val['source_title'].apply(
+        unencode_title)
+    df_links_val['target_title'] = df_links_val['target_title'].apply(
+        unencode_title)
+    df_links_val = df_links_val.to_dict(orient='records')
+    random.shuffle(df_links_val)
+
+    print('\tGenerating validation samples')
+    positive_samples_val = []
+    for row in tqdm(df_links_val):
+        if row['source_title'] not in page_sections_val:
+            continue
+        if row['source_title'] not in page_leads or row['target_title'] not in page_leads:
+            continue
+        if args.add_current_links:
+            current_links = literal_eval(row['current_links'])
+            processed_current_links = {}
+            for target in current_links:
+                if target in page_leads:
+                    processed_current_links[target] = {'target_title': target,
+                                                       'target_lead': page_leads[target]}
+            if len(processed_current_links) > 10:
+                processed_current_links = dict(random.sample(
+                    processed_current_links.items(), 10))
+        positive_samples_val.append({
+            'source_title': row['source_title'],
+            'source_lead': page_leads[row['source_title']],
+            'target_title': row['target_title'],
+            'target_lead': page_leads[row['target_title']],
+            'link_context': row['context'],
+            'source_section': row['source_section'].split('<sep>')[0],
+            'context_span_start_index': row['context_span_start_index'],
+            'context_span_end_index': row['context_span_end_index'],
+            'context_sentence_start_index': row['context_sentence_start_index'],
+            'context_sentence_end_index': row['context_sentence_end_index'],
+            'context_mention_start_index': row['context_mention_start_index'],
+            'context_mention_end_index': row['context_mention_end_index'],
+            'depth': row['link_section_depth'],
+            'noise_strategy': row['noise_strategy'],
+        })
+        if args.add_current_links:
+            positive_samples_val[-1]['current_links'] = str(
+                processed_current_links)
+    random.shuffle(positive_samples_val)
+    del df_links_val
+    gc.collect()
+
+    if not args.max_val_samples:
+        args.max_val_samples = len(
+            positive_samples_val) * (1 + args.neg_samples_val)
+    if len(positive_samples_val) * (1 + args.neg_samples_val) > args.max_val_samples:
+        positive_samples_val = random.sample(
+            positive_samples_val, math.ceil(
+                args.max_val_samples / (1 + args.neg_samples_val))
+        )
+
+    negative_samples_val = construct_negative_samples(
+        positive_samples_val, args.neg_samples_val, page_sections_val)
+
+    print('\tSaving validation data')
+    if not args.join_samples:
+        df_val = pd.DataFrame(
+            positive_samples_val + negative_samples_val)
+        df_val = df_val.sample(
+            n=min(args.max_val_samples, len(df_val))).reset_index(drop=True)
+    else:
+        for i, sample in enumerate(tqdm(negative_samples_val)):
+            true_index = i // args.neg_samples_val
+            rel_index = i % args.neg_samples_val
+            keys = ['link_context', 'source_section', 'noise_strategy']
+            if args.add_current_links:
+                keys.append('current_links')
+            for key in keys:
+                if key in sample:
+                    positive_samples_val[true_index][f'{key}_neg_{rel_index}'] = sample[key]
+                else:
+                    positive_samples_val[true_index][f'{key}_neg_{rel_index}'] = None
+        df_val = pd.DataFrame(positive_samples_val)
+
+    if not os.path.exists(os.path.join(args.output_dir, 'val')):
+        os.makedirs(os.path.join(args.output_dir, 'val'))
+    df_val.to_parquet(os.path.join(args.output_dir, 'val', 'val.parquet'))
+    del df_val
+    del positive_samples_val
+    del negative_samples_val
+    gc.collect()
 
     # copy mention map to output directory
     mention_map.to_parquet(os.path.join(

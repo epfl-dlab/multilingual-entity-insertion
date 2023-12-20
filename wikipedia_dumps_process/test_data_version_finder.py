@@ -73,7 +73,7 @@ def process_revision_history(input):
         with bz2.open(file, 'rb') as f:
             pbar = tqdm(iterparse(f._buffer, events=('end',)))
             for i, (_, elem) in enumerate(pbar):
-                pbar.set_description(f"{len(link_struc)} pages left to process ({len(output)} candidate links found ({processed_pages}/{source_pages} pages processed))")
+                # pbar.set_description(f"{len(link_struc)} pages left to process ({len(output)} candidate links found ({processed_pages}/{source_pages} pages processed))")
                 if elem.tag.endswith('page'):
                     pages = []
                     current_id = None
@@ -84,12 +84,10 @@ def process_revision_history(input):
                                 skip = True
                                 break
                         if child.tag.endswith('id'):
-                            if int(child.text) not in link_struc:
+                            current_id = int(child.text)
+                            if current_id not in link_struc:
                                 skip = True
-                                break
-                            else:
-                                current_id = int(child.text)
-                                break
+                            break
                     if skip:
                         elem.clear()
                         continue
@@ -186,8 +184,8 @@ def process_revision_history(input):
         # print the exception and any relevant information
         # print traceback
         print(e)
-        
         print(f'Failed to process file {file}')
+        return {'links': links, 'processed_pages': processed_pages}
     return {'links': links, 'processed_pages': processed_pages}
 
 
@@ -331,8 +329,8 @@ if __name__ == '__main__':
                         files[range_['file_name']] = {}
                     files[range_['file_name']][id] = link_struc[id]
                     break
-    
-    input = [{'file': file, 'link_struc': link_struc} for file, link_struc in files.items()]
+
+    input = [{'file': file, 'link_struc': link_struc} for file in files]
     # sort input by length of link_struc
     input = sorted(input, key=lambda x: len(x['link_struc']), reverse=True)
     if args.max_links is None:
@@ -345,7 +343,6 @@ if __name__ == '__main__':
     processed_pages = 0
     with Pool(5) as p:
         for result in (pbar := tqdm(p.imap_unordered(process_revision_history, input), total=len(files))):
-            print(result)
             output.extend(result['links'])
             processed_pages += result['processed_pages']
             pbar.set_description(

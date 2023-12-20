@@ -76,6 +76,7 @@ if __name__ == '__main__':
 
     print('Cleaning links')
     print(f'We started with {len(df_links)} links')
+    print(df_links.columns)
     no_context = df_links['context'] == ''
     print(f'There are {no_context.sum()} links with no context')
     no_neg_contexts = df_links['negative_contexts'] == '[]'
