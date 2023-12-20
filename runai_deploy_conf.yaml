@@ -31,7 +31,8 @@ spec:
         command: ["/bin/bash", "-c"]
         args:
           # - sleep $SLEEP_TIME; # the container will stay alive for 24 hours
-          - cd /dlabdata1/tsoares/linkrec-llms/data_modelling/training_ranking/; source runai_twostage.sh
+          - cd /dlabdata1/tsoares/linkrec-llms/data_modelling/training_ranking/; export MODEL_NAME=$MODEL_NAME; export MODEL_ARCHITECTURE=$MODEL_ARCHITECTURE; export BATCH_SIZE=$BATCH_SIZE; export LANGUAGE=$LANGUAGE; source $BASH_FILE;
+          # - cd /dlabdata1/tsoares/linkrec-llms/data_modelling/benchmark_real; source benchmark_models.sh;
         resources:
           limits:
             nvidia.com/gpu:  $NUM_GPUS
