@@ -1,7 +1,7 @@
 accelerate launch main_list_softmax.py \
     --model_name roberta-base \
     --model_architecture RoBERTa \
-    --data_dir /scratch/samaier/dataset \
+    --data_dir /scratch/samaier/dataset2 \
     --num_epochs 2 \
     --batch_size 1 \
     --num_workers 32 \
@@ -11,12 +11,12 @@ accelerate launch main_list_softmax.py \
     --save_steps 5000 \
     --eval_steps 1000 \
     --scheduler_steps 5000 \
-    --ga_steps 32 \
+    --ga_steps 1 \
     --full_freeze_steps 0 \
     --freeze_layers 0 \
     --head_lr_factor 20 \
     --max_tokens 256 \
-    --neg_samples_train 4 \
+    --neg_samples_train 10 \
     --neg_samples_eval 10 \
     --temperature 1 \
     --insert_mentions \

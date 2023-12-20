@@ -270,7 +270,7 @@ if __name__ == '__main__':
             if args.insert_mentions:
                 if context_input[0] != '':
                     context_input[0] += f'{tokenizer.sep_token}'
-                context_input[0] += item['source_abstract_kw_gt']
+                context_input[0] += item['target_abstract_kw_gt']
 
             context_input.append(item['sentence_proximity_target_gt'])
 
@@ -292,7 +292,7 @@ if __name__ == '__main__':
                 if args.insert_mentions:
                     if context_input[0] != '':
                         context_input[0] += f'{tokenizer.sep_token}'
-                    context_input[0] += item[f"source_abstract_kw_neg_{i}"]
+                    context_input[0] += item[f"target_abstract_kw_neg_{i}"]
 
                 context_input.append(link_context_neg)
                 output['contexts'].append(context_input)
