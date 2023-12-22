@@ -165,11 +165,11 @@ if __name__ == '__main__':
     parser.add_argument('--ga_steps', nargs='+', type=int, default=[1],
                         help='Number of steps for gradient accumulation')
     parser.add_argument('--full_freeze_steps', type=int, default=0,
-                        help='Number of steps to freeze all layers except classification head (and link fuser if use_current_links is set)')
+                        help='Number of steps to freeze all layers except classification head')
     parser.add_argument('--freeze_layers', type=int,
                         default=2, help='Number of initial layers to freeze')
     parser.add_argument('--head_lr_factor', type=float,
-                        default=1, help='Factor for learning rate of classification head (and link fuser if use_current_links is set)')
+                        default=1, help='Factor for learning rate of classification head')
     parser.add_argument('--no_mask_perc', type=float, default=0.4,
                         help='Percentage of examples to not mask')
     parser.add_argument('--mask_mention_perc', type=float, default=0.2,
@@ -186,8 +186,8 @@ if __name__ == '__main__':
                         help='Number of negative samples for evaluation')
     parser.add_argument('--temperature', nargs='+', type=float, default=[1],
                         help='Temperature for softmax')
-    parser.add_argument('--insert_mentions', type=str, choices=[
-                        'none', 'partial', 'full'], default='none', help='Whether to insert mentions in the context (partial: randomly insert or not, full: always insert)')
+    parser.add_argument('--insert_mentions', action='store_true',
+                        help='Whether to insert target mentions')
     parser.add_argument('--insert_section', action='store_true',
                         help='Whether to insert section title')
     parser.add_argument('--mask_negatives', action='store_true',
@@ -196,7 +196,10 @@ if __name__ == '__main__':
                         help='If set, use two-stage training')
     parser.add_argument('--min_steps', nargs='+', type=int,
                         default=[0], help='Minimum number of steps to train for')
-    parser.set_defaults(resume=False, insert_section=False, mask_negatives=False, two_stage=False)
+    parser.add_argument('--use_current_links', action='store_true',
+                        help='Whether to use current links')
+    parser.set_defaults(resume=False, insert_section=False, mask_negatives=False,
+                        two_stage=False, insert_mentions=False, use_current_links=False)
 
     args = parser.parse_args()
 
@@ -285,8 +288,8 @@ if __name__ == '__main__':
         model_size = model.config.hidden_size
         try:
             classification_head = Sequential(nn.Linear(model_size, model_size),
-                                            nn.ReLU(),
-                                            nn.Linear(model_size, 1))
+                                             nn.ReLU(),
+                                             nn.Linear(model_size, 1))
             classification_head.load_state_dict(torch.load(os.path.join(
                 args.checkpoint_dir, 'classification_head.pth'), map_location='cpu'))
             logger.info("Classification head loaded from checkpoint directory")
@@ -295,16 +298,16 @@ if __name__ == '__main__':
                 "Could not load classification head from checkpoint directory")
             logger.info("Initializing classification head with random weights")
             classification_head = Sequential(nn.Linear(model_size, model_size),
-                                            nn.ReLU(),
-                                            nn.Linear(model_size, 1))
+                                             nn.ReLU(),
+                                             nn.Linear(model_size, 1))
     else:
         logger.info("Initializing model")
         model = AutoModel.from_pretrained(args.model_name)
         model_size = model.config.hidden_size
 
         classification_head = Sequential(nn.Linear(model_size, model_size),
-                                        nn.ReLU(),
-                                        nn.Linear(model_size, 1))
+                                         nn.ReLU(),
+                                         nn.Linear(model_size, 1))
 
     # Remove decoder layers if present
     if args.model_architecture == 'T5':
@@ -337,7 +340,7 @@ if __name__ == '__main__':
                            'mask_mention', 'no_mask']
             for index, item in enumerate(input):
                 if item['target_title'] not in mention_map:
-                    mention_map[item['target_title']] = item['target_title']
+                    mention_map[item['target_title']] = ''
                 found = False
                 if (item['link_context'][:item['context_span_start_index']] + item['link_context'][item['context_span_end_index']:]).strip() != '':
                     if item['context_span_start_index'] <= item['context_sentence_start_index'] and item['context_span_end_index'] >= item['context_sentence_end_index']:
@@ -386,52 +389,79 @@ if __name__ == '__main__':
                     '\n+', '\n', item['link_context'])
                 item['link_context'] = item['link_context'].strip()
 
-                context_input = [f"{item['target_title']}{tokenizer.sep_token}{item['target_lead']}"]
+                if args.insert_mentions:
+                    context_input = [
+                        f"{item['target_title']} {mention_map[item['target_title']]}{tokenizer.sep_token}{item['target_lead']}"]
+                else:
+                    context_input = [
+                        f"{item['target_title']}{tokenizer.sep_token}{item['target_lead']}"]
                 if args.insert_section:
-                    context_input.append(f"{item['source_section']}{tokenizer.sep_token}{item['link_context']}")
+                    context_input.append(
+                        f"{item['source_section']}{tokenizer.sep_token}{item['link_context']}")
                 else:
                     context_input.append(item['link_context'])
 
                 output['noises'].append(noise_map[noise_type])
                 output['contexts'].append(context_input)
-           
+
                 mask_probs = {'no_mask': args.no_mask_perc, 'mask_word': args.mask_mention_perc,
                               'mask_sentence': args.mask_sentence_perc, 'mask_span': args.mask_span_perc}
                 for i in range(args.neg_samples_train[0]):
                     link_context_neg = item[f"link_context_neg_{i}"]
+                    source_section_neg = item[f"source_section_neg_{i}"]
                     if args.mask_negatives:
                         link_context_neg = mask_negative_contexts(
                             link_context_neg, mask_probs, neg_noise_backlog)
-                    
-                    context_input = [f"{item['target_title']}{tokenizer.sep_token}{item['target_lead']}"]
+
+                    if args.insert_mentions:
+                        context_input = [
+                            f"{item['target_title']} {mention_map[item['target_title']]}{tokenizer.sep_token}{item['target_lead']}"]
+                    else:
+                        context_input = [
+                            f"{item['target_title']}{tokenizer.sep_token}{item['target_lead']}"]
                     if args.insert_section:
-                        context_input.append(f"{item['source_section']}{tokenizer.sep_token}{link_context_neg}")
+                        context_input.append(
+                            f"{source_section_neg}{tokenizer.sep_token}{link_context_neg}")
                     else:
                         context_input.append(link_context_neg)
                     output['contexts'].append(context_input)
         else:
             for index, item in enumerate(input):
                 if item['target_title'] not in mention_map:
-                    mention_map[item['target_title']] = item['target_title']
-                context_input = [f"{item['target_title']}{tokenizer.sep_token}{item['target_lead']}"]
+                    mention_map[item['target_title']] = ''
+
+                if args.insert_mentions:
+                    context_input = [
+                        f"{item['target_title']} {mention_map[item['target_title']]}{tokenizer.sep_token}{item['target_lead']}"]
+                else:
+                    context_input = [
+                        f"{item['target_title']}{tokenizer.sep_token}{item['target_lead']}"]
                 if args.insert_section:
-                    context_input.append(f"{item['source_section']}{tokenizer.sep_token}{item['link_context']}")
+                    context_input.append(
+                        f"{item['source_section']}{tokenizer.sep_token}{item['link_context']}")
                 else:
                     context_input.append(item['link_context'])
-                    
+
                 output['noises'].append(noise_map[item['noise_strategy']])
                 output['contexts'].append(context_input)
                 mask_probs = {'no_mask': args.no_mask_perc, 'mask_word': args.mask_mention_perc,
                               'mask_sentence': args.mask_sentence_perc, 'mask_span': args.mask_span_perc}
                 for i in range(args.neg_samples_eval[0]):
                     link_context_neg = item[f"link_context_neg_{i}"]
+                    source_section_neg = item[f"source_section_neg_{i}"]
                     if args.mask_negatives:
                         link_context_neg = mask_negative_contexts(
                             link_context_neg, mask_probs, neg_noise_backlog)
 
-                    context_input = [f"{item['target_title']}{tokenizer.sep_token}{item['target_lead']}"]
+                    if args.insert_mentions:
+                        context_input = [
+                            f"{item['target_title']} {mention_map[item['target_title']]}{tokenizer.sep_token}{item['target_lead']}"]
+                    else:
+                        context_input = [
+                            f"{item['target_title']}{tokenizer.sep_token}{item['target_lead']}"]
                     if args.insert_section:
-                        context_input.append(f"{item['source_section']}{tokenizer.sep_token}{link_context_neg}")
+                        context_input.append(
+                            f"{source_section_neg}{tokenizer.sep_token}{link_context_neg}")
                     else:
                         context_input.append(link_context_neg)
                     output['contexts'].append(context_input)
@@ -498,7 +528,7 @@ if __name__ == '__main__':
     # prepare all objects with accelerator
     model, classification_head, optimizer, train_loader, val_loader, scheduler = accelerator.prepare(
         model, classification_head, optimizer, train_loader, val_loader, scheduler)
-    
+
     logger.info("Starting training")
     step = 0
     running_loss = 0
@@ -509,7 +539,8 @@ if __name__ == '__main__':
             step += 1
             # multiple forward passes accumulate gradients
             # source: https://discuss.pytorch.org/t/multiple-model-forward-followed-by-one-loss-backward/20868
-            embeddings = model(**data['contexts'])['last_hidden_state'][:, 0, :]
+            embeddings = model(**data['contexts']
+                               )['last_hidden_state'][:, 0, :]
             logits = classification_head(embeddings)
             # logits has shape (batch_size * (neg_samples + 1), 1)
             # we need to reshape it to (batch_size, neg_samples + 1)
@@ -588,7 +619,8 @@ if __name__ == '__main__':
                         if j % 20 == 0:
                             pbar.set_description(
                                 f"True pos: {true_pos}, True neg: {true_neg}, False pos: {false_pos}, False neg: {false_neg}, Total: {total}")
-                        embeddings = model(**val_data['contexts'])['last_hidden_state'][:, 0, :]
+                        embeddings = model(
+                            **val_data['contexts'])['last_hidden_state'][:, 0, :]
                         val_logits = classification_head(embeddings)
                         val_logits = val_logits.view(-1,
                                                      args.neg_samples_eval[0] + 1)
@@ -784,29 +816,49 @@ if __name__ == '__main__':
         if input[0]['split'] == 'train':
             for index, item in enumerate(input):
                 if item['target_title'] not in mention_map:
-                    mention_map[item['target_title']] = item['target_title']
-                context_input = [f"{item['target_title']}{tokenizer.sep_token}{item['target_lead']}"]
+                    mention_map[item['target_title']] = ''
+
+                if args.insert_mentions:
+                    context_input = [
+                        f"{item['target_title']} {mention_map[item['target_title']]}{tokenizer.sep_token}{item['target_lead']}"]
+                else:
+                    context_input = [
+                        f"{item['target_title']}{tokenizer.sep_token}{item['target_lead']}"]
                 if args.insert_section:
-                    context_input.append(f"{item['source_section']}{tokenizer.sep_token}{item['link_context']}")
+                    context_input.append(
+                        f"{item['source_section']}{tokenizer.sep_token}{item['link_context']}")
                 else:
                     context_input.append(item['link_context'])
                 output['contexts'].append(context_input)
 
                 for i in range(args.neg_samples_train[1]):
                     link_context_neg = item[f"link_context_neg_{i}"]
-                    context_input = [f"{item['target_title']}{tokenizer.sep_token}{item['target_lead']}"]
+                    source_section_neg = item[f"source_section_neg_{i}"]
+                    if args.insert_mentions:
+                        context_input = [
+                            f"{item['target_title']} {mention_map[item['target_title']]}{tokenizer.sep_token}{item['target_lead']}"]
+                    else:
+                        context_input = [
+                            f"{item['target_title']}{tokenizer.sep_token}{item['target_lead']}"]
                     if args.insert_section:
-                        context_input.append(f"{item['source_section']}{tokenizer.sep_token}{link_context_neg}")
+                        context_input.append(
+                            f"{source_section_neg}{tokenizer.sep_token}{link_context_neg}")
                     else:
                         context_input.append(link_context_neg)
                     output['contexts'].append(context_input)
         else:
             for index, item in enumerate(input):
                 if item['target_title'] not in mention_map:
-                    mention_map[item['target_title']] = item['target_title']
-                context_input = [f"{item['target_title']}{tokenizer.sep_token}{item['target_lead']}"]
+                    mention_map[item['target_title']] = ''
+                if args.insert_mentions:
+                    context_input = [
+                        f"{item['target_title']} {mention_map[item['target_title']]}{tokenizer.sep_token}{item['target_lead']}"]
+                else:
+                    context_input = [
+                        f"{item['target_title']}{tokenizer.sep_token}{item['target_lead']}"]
                 if args.insert_section:
-                    context_input.append(f"{item['source_section']}{tokenizer.sep_token}{item['link_context']}")
+                    context_input.append(
+                        f"{item['source_section']}{tokenizer.sep_token}{item['link_context']}")
                 else:
                     context_input.append(item['link_context'])
 
@@ -814,9 +866,16 @@ if __name__ == '__main__':
                 output['contexts'].append(context_input)
                 for i in range(args.neg_samples_eval[1]):
                     link_context_neg = item[f"link_context_neg_{i}"]
-                    context_input = [f"{item['target_title']}{tokenizer.sep_token}{item['target_lead']}"]
+                    source_section_neg = item[f"source_section_neg_{i}"]
+                    if args.insert_mentions:
+                        context_input = [
+                            f"{item['target_title']} {mention_map[item['target_title']]}{tokenizer.sep_token}{item['target_lead']}"]
+                    else:
+                        context_input = [
+                            f"{item['target_title']}{tokenizer.sep_token}{item['target_lead']}"]
                     if args.insert_section:
-                        context_input.append(f"{item['source_section']}{tokenizer.sep_token}{link_context_neg}")
+                        context_input.append(
+                            f"{source_section_neg}{tokenizer.sep_token}{link_context_neg}")
                     else:
                         context_input.append(link_context_neg)
                     output['contexts'].append(context_input)
@@ -861,9 +920,15 @@ if __name__ == '__main__':
     for mention in mentions:
         target_title = unquote(mention['target_title']).replace('_', ' ')
         if target_title in mention_map:
-            mention_map[target_title] += ' ' + mention['mention']
+            mention_map[target_title].append(mention['mention'])
         else:
-            mention_map[target_title] = mention['mention']
+            mention_map[target_title] = [mention['mention']]
+
+    for mention in mention_map:
+        # only keep a random subset of 10 mentions
+        if len(mention_map[mention]) > 10:
+            mention_map[mention] = random.sample(mention_map[mention], 10)
+        mention_map[mention] = ' '.join(mention_map[mention])
 
     logger.info("Starting training")
     running_loss = 0
@@ -875,7 +940,8 @@ if __name__ == '__main__':
             step += 1
             # multiple forward passes accumulate gradients
             # source: https://discuss.pytorch.org/t/multiple-model-forward-followed-by-one-loss-backward/20868
-            embeddings = model(**data['contexts'])['last_hidden_state'][:, 0, :]
+            embeddings = model(**data['contexts']
+                               )['last_hidden_state'][:, 0, :]
             logits = classification_head(embeddings)
             logits = logits.view(-1, args.neg_samples_train[1] + 1)
             labels = torch.zeros_like(logits)
@@ -939,7 +1005,8 @@ if __name__ == '__main__':
                         if j % 20 == 0:
                             pbar.set_description(
                                 f"True pos: {true_pos}, True neg: {true_neg}, False pos: {false_pos}, False neg: {false_neg}, Total: {total}")
-                        embeddings = model(**val_data['contexts'])['last_hidden_state'][:, 0, :]
+                        embeddings = model(
+                            **val_data['contexts'])['last_hidden_state'][:, 0, :]
                         val_logits = classification_head(embeddings)
                         val_logits = val_logits.view(
                             -1, args.neg_samples_eval[1] + 1)
