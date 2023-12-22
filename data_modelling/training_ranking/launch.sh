@@ -1,4 +1,4 @@
-accelerate launch main_list_softmax.py \
+accelerate launch main_list_softmax_v2.py \
     --model_name roberta-base \
     --model_architecture RoBERTa \
     --data_dir /scratch/samaier/dataset2 \
@@ -15,11 +15,9 @@ accelerate launch main_list_softmax.py \
     --full_freeze_steps 0 \
     --freeze_layers 0 \
     --head_lr_factor 20 \
-    --max_tokens 256 \
+    --max_tokens 512 \
     --neg_samples_train 10 \
     --neg_samples_eval 10 \
     --temperature 1 \
-    --insert_mentions \
-    --insert_section \
-    --split_models
+    --insert_section
 

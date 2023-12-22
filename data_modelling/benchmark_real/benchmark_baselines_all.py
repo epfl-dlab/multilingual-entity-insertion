@@ -18,7 +18,7 @@ def fix_title(title):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--data_path', type=str, required=True)
-    parser.add_argument('--mention_map', type=str, required=True)
+    #parser.add_argument('--mention_map', type=str, required=True)
     parser.add_argument('--data_limit', type=int, default=None,
                         help='Limit the number of rows to use')
     parser.add_argument('--method_name', type=str, required=True, choices=[
@@ -30,8 +30,8 @@ if __name__ == '__main__':
     if not os.path.exists(args.data_path):
         raise ValueError('Data path does not exist')
     # check if mention map 
-    if not os.path.exists(args.mention_map):
-        raise ValueError('Mention map does not exist')
+    #if not os.path.exists(args.mention_map):
+    #    raise ValueError('Mention map does not exist')
 
     # load data
     df = pd.read_parquet(args.data_path)
@@ -39,29 +39,33 @@ if __name__ == '__main__':
         df = df.sample(args.data_limit)
 
     source_titles = df['source_title'].apply(fix_title).tolist()
-    source_leads = df['source_lead'].tolist()
+    source_leads = df['source_abstract'].tolist()
     target_titles = df['target_title'].apply(fix_title).tolist()
-    target_leads = df['target_lead'].tolist()
+    target_leads = df['target_abstract'].tolist()
     contexts = [[] for _ in range(len(df))]
     source_sections = [[] for _ in range(len(df))]
-    for i, (pos_context, section) in enumerate(zip(df['context'].tolist(), df['section'].tolist())):
+    for i, (pos_context, section) in enumerate(zip(df['sentence_proximity_target_gt'].tolist(), df['target_section_title_gt'].tolist())):
         contexts[i].append(pos_context)
         source_sections[i].append(section)
-    for i, neg_contexts in enumerate(df['negative_contexts'].tolist()):
-        neg_contexts = literal_eval(neg_contexts)
-        for context in neg_contexts:
-            contexts[i].append(context['context'])
-            source_sections[i].append(context['section'])
+    #for i, neg_contexts in enumerate(df['negative_contexts'].tolist()):
+    #    neg_contexts = literal_eval(neg_contexts)
+    #    for context in neg_contexts:
+    #        contexts[i].append(context['context'])
+    #        source_sections[i].append(context['section'])
+    for i, row in df.iterrows():
+        for j in range(10): ####################very not modular so maybe change this later
+            contexts[i].append(row[f'sentence_proximity_target_neg_{j}'])
+            source_sections[i].append(row[f'target_section_title_neg_{j}'])
     
-    mention_map_pre = pd.read_parquet(args.mention_map)
-    mention_map_pre = mention_map_pre.to_dict('records')
-    mention_map = {}
-    for row in mention_map_pre:
-        title = fix_title(row['target_title'])
-        if title in mention_map:
-            mention_map[title].append(row['mention'])
-        else:
-            mention_map[title] = [row['mention']]
+    #mention_map_pre = pd.read_parquet(args.mention_map)
+    #mention_map_pre = mention_map_pre.to_dict('records')
+    #mention_map = {}
+    #for row in mention_map_pre:
+    #    title = fix_title(row['target_title'])
+    #    if title in mention_map:
+    #        mention_map[title].append(row['mention'])
+    #    else:
+    #        mention_map[title] = [row['mention']]
             
     if args.method_name == 'all':
         args.method_name = ['random', 'bm25', 'bm25_mentions', 'exact_match', 'fuzzy_match',]
@@ -91,31 +95,31 @@ if __name__ == '__main__':
                     tied += 1
             rank.append(position + random.randint(0, tied))
         df['bm25_rank'] = rank
-    if 'bm25_mentions' in args.method_name:
-        print('Calculation bm25 with mention knowledge')
-        rank = []
-        for context, title, lead in tqdm(zip(contexts, target_titles, target_leads), total=len(target_titles)):
-            if title not in mention_map:
-                mention_map[title] = [title]
-            scores = bm25.rank_contexts(context, title, lead, mention_map[title])
-            position = 1
-            tied = 0
-            if max(scores) < 0:
-                scores = [-score for score in scores]
-            for i, score in enumerate(scores[1:]):
-                if score > scores[0]:
-                    position += 1
-                elif abs(score - scores[0]) < 0.00001:
-                    tied += 1
-            rank.append(position + random.randint(0, tied))
-        df['bm25_mentions_rank'] = rank
+    #if 'bm25_mentions' in args.method_name:
+    #    print('Calculation bm25 with mention knowledge')
+    #    rank = []
+    #    for context, title, lead in tqdm(zip(contexts, target_titles, target_leads), total=len(target_titles)):
+    #        if title not in mention_map:
+    #            mention_map[title] = [title]
+    #        scores = bm25.rank_contexts(context, title, lead, mention_map[title])
+    #        position = 1
+    #        tied = 0
+    #        if max(scores) < 0:
+    #            scores = [-score for score in scores]
+    #        for i, score in enumerate(scores[1:]):
+    #            if score > scores[0]:
+    #                position += 1
+    #            elif abs(score - scores[0]) < 0.00001:
+    #                tied += 1
+    #        rank.append(position + random.randint(0, tied))
+    #    df['bm25_mentions_rank'] = rank
     if 'exact_match' in args.method_name:
         print('Calculating exact match ranks')
         rank = []
         for context, title, lead in tqdm(zip(contexts, target_titles, target_leads), total=len(target_titles)):
-            if title not in mention_map:
-                mention_map[title] = [title]
-            scores = exact_match.rank_contexts(context, mention_map[title])
+            #if title not in mention_map:
+            #    mention_map[title] = [title]
+            scores = exact_match.rank_contexts(context, title) #mention_map[title] -> title
             position = 1
             equals = 0
             for score in scores[1:]:
@@ -129,9 +133,9 @@ if __name__ == '__main__':
         print('Calculating fuzzy match ranks')
         rank = []
         for context, title, lead in tqdm(zip(contexts, target_titles, target_leads), total=len(target_titles)):
-            if title not in mention_map:
-                mention_map[title] = [title]
-            scores = fuzzy_match.rank_contexts(context, mention_map[title])
+            #if title not in mention_map:
+            #    mention_map[title] = [title]
+            scores = fuzzy_match.rank_contexts(context, title) #same
             position = 1
             equals = 0
             for score in scores[1:]:
