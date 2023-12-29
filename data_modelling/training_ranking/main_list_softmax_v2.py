@@ -103,9 +103,9 @@ def freeze_model(model, architecture, freeze_layers):
         for param in model.base_model.encoder.layer[:freeze_layers].parameters():
             param.requires_grad = False
     elif architecture == 'T5':
-        for param in model.embed_tokens.parameters():
+        for param in model.encoder.embed_tokens.parameters():
             param.requires_grad = False
-        for param in model.block[:freeze_layers].parameters():
+        for param in model.encoder.block[:freeze_layers].parameters():
             param.requires_grad = False
     return model
 
@@ -308,10 +308,11 @@ if __name__ == '__main__':
         classification_head = Sequential(nn.Linear(model_size, model_size),
                                          nn.ReLU(),
                                          nn.Linear(model_size, 1))
-
-    # Remove decoder layers if present
+        
     if args.model_architecture == 'T5':
-        model = model.encoder
+        # freeze all the decoder layers
+        for param in model.decoder.parameters():
+            param.requires_grad = False
 
     tokenizer = AutoTokenizer.from_pretrained(args.model_name)
     tokenizer.save_pretrained(os.path.join(output_dir, 'tokenizer'))
@@ -539,8 +540,12 @@ if __name__ == '__main__':
             step += 1
             # multiple forward passes accumulate gradients
             # source: https://discuss.pytorch.org/t/multiple-model-forward-followed-by-one-loss-backward/20868
-            embeddings = model(**data['contexts']
-                               )['last_hidden_state'][:, 0, :]
+            if args.model_architecture != 'T5':
+                embeddings = model(**data['contexts']
+                                )['last_hidden_state'][:, 0, :]
+            else:
+                embeddings = model.encoder(**data['contexts']
+                                        )['last_hidden_state'][:, 0, :]
             logits = classification_head(embeddings)
             # logits has shape (batch_size * (neg_samples + 1), 1)
             # we need to reshape it to (batch_size, neg_samples + 1)
@@ -619,8 +624,12 @@ if __name__ == '__main__':
                         if j % 20 == 0:
                             pbar.set_description(
                                 f"True pos: {true_pos}, True neg: {true_neg}, False pos: {false_pos}, False neg: {false_neg}, Total: {total}")
-                        embeddings = model(
-                            **val_data['contexts'])['last_hidden_state'][:, 0, :]
+                        if args.model_architecture != 'T5':
+                            embeddings = model(
+                                **val_data['contexts'])['last_hidden_state'][:, 0, :]
+                        else:
+                            embeddings = model.encoder(
+                                **val_data['contexts'])['last_hidden_state'][:, 0, :]
                         val_logits = classification_head(embeddings)
                         val_logits = val_logits.view(-1,
                                                      args.neg_samples_eval[0] + 1)
@@ -940,8 +949,12 @@ if __name__ == '__main__':
             step += 1
             # multiple forward passes accumulate gradients
             # source: https://discuss.pytorch.org/t/multiple-model-forward-followed-by-one-loss-backward/20868
-            embeddings = model(**data['contexts']
-                               )['last_hidden_state'][:, 0, :]
+            if args.model_architecture != 'T5':
+                embeddings = model(**data['contexts']
+                                )['last_hidden_state'][:, 0, :]
+            else:
+                embeddings = model.encoder(**data['contexts']
+                                        )['last_hidden_state'][:, 0, :]
             logits = classification_head(embeddings)
             logits = logits.view(-1, args.neg_samples_train[1] + 1)
             labels = torch.zeros_like(logits)
@@ -1005,8 +1018,12 @@ if __name__ == '__main__':
                         if j % 20 == 0:
                             pbar.set_description(
                                 f"True pos: {true_pos}, True neg: {true_neg}, False pos: {false_pos}, False neg: {false_neg}, Total: {total}")
-                        embeddings = model(
-                            **val_data['contexts'])['last_hidden_state'][:, 0, :]
+                        if args.model_architecture != 'T5':
+                            embeddings = model(
+                                **val_data['contexts'])['last_hidden_state'][:, 0, :]
+                        else:
+                            embeddings = model.encoder(
+                                **val_data['contexts'])['last_hidden_state'][:, 0, :]
                         val_logits = classification_head(embeddings)
                         val_logits = val_logits.view(
                             -1, args.neg_samples_eval[1] + 1)
