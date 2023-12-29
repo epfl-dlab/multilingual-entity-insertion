@@ -7,14 +7,12 @@ def get_best_candidate(candidates, source_page, target_page):
  
     # get the best candidate
     messages=[
-        {"role": "system", "content": "You are a Wikipedia editor. Your task is to find the best text of span in which to insert a given target page."},
-        {"role": "system", "content": f"The page you are currently editing is titled {source_page['source_title']} and has lead paragraph {source_page['source_lead']}."},
+        {"role": "system", "content": f"You are a Wikipedia editor. Your task is to find the best span of text in which to insert a link to a target page."},
+        {"role": "user", "content": f"The page you are currently editing is titled \"{source_page['source_title']}\". You want to insert a link to the page \"{target_page['target_title']}\" with lead paragraph \"{target_page['target_lead']}\". The text candidates are:"}
     ]
     for candidate in candidates:
         messages.append({"role": "assistant", "content": "Please write the next candidate to consider."})
         messages.append({"role": "user", "content": f"Section Title: {candidate['source_section']}, Text Span: {candidate['link_context']}"})
-    messages.append({"role": "assistant", "content": "Please describe the target page."})
-    messages.append({"role": "user": "content": f"Title: {target_page['target_title']}, Lead Paragraph: {target_page['target_lead']}"})
     messages.append({"role": "assistant", "content": "The most relevant candidate is:"})
     completion = client.chat.completions.create(
         model="gpt-3.5-instruct",
