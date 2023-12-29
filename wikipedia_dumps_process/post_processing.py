@@ -6,20 +6,6 @@ import argparse
 tqdm.pandas()
 
 
-def simplify_html(html):
-    if html is None:
-        return None
-    if html == '':
-        return ''
-    return 'a'
-
-
-def split_text(x):
-    if x is None:
-        return 0
-    return len(x.split(' ', 10))
-
-
 def fix_context(x):
     if x is None:
         return None
@@ -50,24 +36,16 @@ if __name__ == '__main__':
     page_files = glob(os.path.join(args.input_dir, "pages/pages*.parquet"))
     link_files = glob(os.path.join(args.input_dir, "links/links*.parquet"))
 
-    no_html = set([])
-    no_lead = set([])
-    short_lead = set([])
+    no_html = []
+    no_lead = []
     print('Saving good pages')
     for file in tqdm(page_files):
         df = pd.read_parquet(file)
-        no_html = no_html.union(set(df[df['page_length'].isna()]['title'].tolist()))
-        no_lead = no_lead.union(set(df[(df['lead_paragraph'].isna()) | (
-            df['lead_paragraph'] == '')]['title'].tolist()))
-        if args.lang not in ['ja']: # hard-coded languages where the words are not necessarily separated by spaces
-            short_lead = short_lead.union(set(df[(df['lead_paragraph'].apply(
-                lambda x: split_text(x) < 6))]['title'].tolist()))
-        if args.lang not in ['ja']:
-            df = df[(~df['QID'].isna()) & (~df['page_length'].isna()) & (~df['lead_paragraph'].isna()) & (
-                df['lead_paragraph'] != '') & (df['lead_paragraph'].apply(lambda x: split_text(x) >= 6))]
-        else:
-            df = df[(~df['QID'].isna()) & (~df['page_length'].isna()) & (~df['lead_paragraph'].isna()) & (
-                df['lead_paragraph'] != '')]
+        no_html.extend(df[df['page_length'].isna()]['title'].tolist())
+        no_lead.extend(df[(df['lead_paragraph'].isna()) | (
+            df['lead_paragraph'] == '')]['title'].tolist())
+        df = df[(~df['QID'].isna()) & (~df['page_length'].isna()) & (~df['lead_paragraph'].isna()) & (
+            df['lead_paragraph'] != '')]
         df = df.reset_index(drop=True)
         if 'HTML' in df.columns:        
             df = df.drop(columns=['HTML'])
@@ -75,12 +53,15 @@ if __name__ == '__main__':
         new_name = os.path.join(args.output_dir, 'good_pages',
                                 basename.replace('pages', 'good_pages'))
         df.to_parquet(new_name)
+    
+    no_html = set(no_html)
+    no_lead = set(no_lead)
 
     print('Saving good links')
     for file in tqdm(link_files):
         df = pd.read_parquet(file)
         df = df[(~df['target_ID'].isna()) & (~df['source_QID'].isna()) & (~df['target_QID'].isna()) & (~df['target_title'].isin(no_html)) & (~df['target_title'].isin(no_lead)) & (~df['source_title'].isin(
-            no_lead)) & (~df['context'].isna()) & (df['context'] != '') & (~df['source_title'].isin(short_lead)) & (~df['target_title'].isin(short_lead)) & (df['source_title'] != df['target_title'])]
+            no_lead)) & (~df['context'].isna()) & (df['context'] != '') & (df['source_title'] != df['target_title'])]
         df['context'] = df['context'].apply(fix_context)
         df = df.reset_index(drop=True)
         basename = os.path.basename(file)

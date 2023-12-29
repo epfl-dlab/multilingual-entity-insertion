@@ -16,9 +16,12 @@ if __name__ == '__main__':
     
     files = glob(os.path.join(args.input_dir, '*.parquet'))
     for file in tqdm(files):
+        removed = False
         df = pd.read_parquet(file)
-        if 'HTML' in df.columns:
-            df = df.drop(columns=['HTML'])
-        else:
+        for column in df.columns:
+            if 'current_links' in column:
+                df = df.drop(columns=[column])
+                removed = True
+        if not removed:
             break
         df.to_parquet(file)

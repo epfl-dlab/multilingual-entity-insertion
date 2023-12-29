@@ -92,7 +92,7 @@ def simplify_html(html):
 def fix_sentence_tokenizer(sentences):
     if not sentences:
         return sentences
-    
+
     # dont allow sentences with less than 10 characters
     new_sentences = []
     join_prev = 0
@@ -338,9 +338,11 @@ def process_version(input):
     d = difflib.Differ()
     file_1 = os.path.join(
         args.html_dir, f"{input['source_ID']}_{input['first_version']}.html")
+    # read the first version
     with open(file_1, 'r') as f:
         text_1 = f.read()
     html_1 = BeautifulSoup(text_1, 'html.parser')
+    # the article is in the last div with class 'mw-parser-output'
     html_1 = html_1.find_all('div', {'class': 'mw-parser-output'})
     if len(html_1) == 0:
         print('No HTML found')
@@ -711,6 +713,7 @@ if __name__ == '__main__':
     if not os.path.exists(args.output_dir):
         os.makedirs(args.output_dir)
 
+    # load the data
     df_versions = pd.read_parquet(args.versions_file)
     redirect_1 = pd.read_parquet(args.redirect_1)
     redirect_2 = pd.read_parquet(args.redirect_2)

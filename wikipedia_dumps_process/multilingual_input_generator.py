@@ -17,6 +17,7 @@ if __name__ == '__main__':
     parser.add_argument('--max_val_samples', type=int, help='Maximum number of validation samples to use')
     parser.add_argument('--max_test_samples', type=int, help='Maximum number of test samples to use')
     parser.add_argument('--sampling_strategy', choices=['uniform', 'weighted'], default='uniform', help='Sampling strategy to use')
+    parser.add_argument('--del_current_links', action='store_true', help='Delete the current links from the data')
     
     args = parser.parse_args()
     
@@ -55,6 +56,10 @@ if __name__ == '__main__':
             df = pd.read_parquet(os.path.join(args.input_dir, lang, category))
             df['lang'] = lang
             lengths[lang] = len(df)
+            if args.del_current_links:
+                for column in df:
+                    if 'current_links' in column:
+                        df = df.drop(column, axis=1)
             dfs.append(df)
         df = pd.concat(dfs).reset_index(drop=True)
         
@@ -64,15 +69,21 @@ if __name__ == '__main__':
             else:
                 freqs = {}
                 total = categories[category]
+                n_langs = len(args.langs)
                 new_total = total
                 divide_langs = len(args.langs)
-                for lang in args.langs:
-                    if lengths[lang] < total // len(args.langs):
-                        print(f'Not enough samples for language {lang}, using {lengths[lang]} samples instead of {total // len(args.langs)}')
-                        freqs[lang] = lengths[lang]
-                        new_total -= lengths[lang]
-                        divide_langs -= 1
-                total = new_total
+                changed = True
+                while changed:
+                    changed = False
+                    for lang in args.langs:
+                        if lang not in freqs and lengths[lang] < total // n_langs:
+                            print(f'Not enough samples for language {lang}, using {lengths[lang]} samples instead of {total // n_langs}')
+                            freqs[lang] = lengths[lang]
+                            new_total -= lengths[lang]
+                            divide_langs -= 1
+                            changed = True
+                    total = new_total
+                    n_langs = divide_langs
                 for lang in args.langs:
                     if lang not in freqs:
                         freqs[lang] = total // divide_langs
@@ -82,6 +93,9 @@ if __name__ == '__main__':
                 df = df.groupby('lang', as_index=False).apply(lambda x: x.sample(freqs[x.name])).sample(frac=1).reset_index(drop=True)
                 print(df)
                 
-        df.to_parquet(os.path.join(args.output_dir, category, category + '.parquet'))
+        # save the data in batches
+        for i in tqdm(range(0, len(df), 100000)):
+            df_batch = df[i:i+100000].reset_index(drop=True)
+            df_batch.to_parquet(os.path.join(args.output_dir, category, category + f'_{i}.parquet'))
         
     print('Done')

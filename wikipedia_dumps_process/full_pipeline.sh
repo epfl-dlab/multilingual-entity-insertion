@@ -84,7 +84,7 @@ echo "Max Val Samples: $max_val_samples"
 #         --input_dir ${data_dir}/${lang}wiki-NS0-${MONTH}/raw_data \
 #         --language $lang \
 #         --date $MONTH \
-#         --output_dir ${data_dir}/${lang}wiki-NS0-${MONTH}/processed_data &
+#         --output_dir ${data_dir}/${lang}wiki-NS0-${MONTH}/processed_data
 # done
 
 # echo "Extracting information about all the links for the three months..."
@@ -98,25 +98,26 @@ echo "Max Val Samples: $max_val_samples"
 #         --processes $processes
 # done
 
-# echo "Running the post-processing script to clean-up the data for the three months..."
+echo "Running the post-processing script to clean-up the data for the three months..."
 # for MONTH in $first_month $second_month $third_month; do
-#     echo "Running the post-processing script to clean-up the data for $MONTH..."
-#     python post_processing.py \
-#         --input_dir ${data_dir}/${lang}wiki-NS0-${MONTH}/processed_data \
-#         --output_dir ${data_dir}/${lang}wiki-NS0-${MONTH}/processed_data \
-#         --lang $lang
-# done
+for MONTH in $second_month $third_month; do
+    echo "Running the post-processing script to clean-up the data for $MONTH..."
+    python post_processing.py \
+        --input_dir ${data_dir}/${lang}wiki-NS0-${MONTH}/processed_data \
+        --output_dir ${data_dir}/${lang}wiki-NS0-${MONTH}/processed_data \
+        --lang $lang
+done
 
-# echo "Generating the synthetic test data..."
-# python synth_test_data_generator.py \
-#     --first_month_dir ${data_dir}/${lang}wiki-NS0-${second_month}/processed_data \
-#     --second_month_dir ${data_dir}/${lang}wiki-NS0-${third_month}/processed_data \
-#     --output_dir ${data_dir}/${lang}wiki-NS0-${second_month}/eval_synth \
-#     --first_month $second_month \
-#     --no_mask_perc $no_mask_perc \
-#     --mask_mention_perc $mask_mention_perc \
-#     --mask_sentence_perc $mask_sentence_perc \
-#     --mask_paragraph_perc $mask_paragraph_perc
+echo "Generating the synthetic test data..."
+python synth_test_data_generator.py \
+    --first_month_dir ${data_dir}/${lang}wiki-NS0-${second_month}/processed_data \
+    --second_month_dir ${data_dir}/${lang}wiki-NS0-${third_month}/processed_data \
+    --output_dir ${data_dir}/${lang}wiki-NS0-${second_month}/eval_synth \
+    --first_month $second_month \
+    --no_mask_perc $no_mask_perc \
+    --mask_mention_perc $mask_mention_perc \
+    --mask_sentence_perc $mask_sentence_perc \
+    --mask_paragraph_perc $mask_paragraph_perc
 
 # echo "Running the real test data versions finder..."
 # echo "Running it for the time span between $first_month and $second_month..."
@@ -140,23 +141,23 @@ echo "Max Val Samples: $max_val_samples"
 #     --second_date $third_month \
 #     --max_links 250000
 
-echo "Running HTML download prep script..."
-echo "Running it for the time span between $first_month and $second_month..."
-python test_html_downloader_prep.py \
-    --input_file ${data_dir}/${lang}wiki-NS0-${first_month}/eval/link_versions.parquet \
-    --output_directory ${data_dir}/${lang}wiki-NS0-${first_month}/eval/pages
+# echo "Running HTML download prep script..."
+# echo "Running it for the time span between $first_month and $second_month..."
+# python test_html_downloader_prep.py \
+#     --input_file ${data_dir}/${lang}wiki-NS0-${first_month}/eval/link_versions.parquet \
+#     --output_directory ${data_dir}/${lang}wiki-NS0-${first_month}/eval/pages
 # echo "Running it for the time span between $second_month and $third_month..."
 # python test_html_downloader_prep.py \
 #     --input_file ${data_dir}/${lang}wiki-NS0-${second_month}/eval/link_versions.parquet \
 #     --output_directory ${data_dir}/${lang}wiki-NS0-${second_month}/eval/pages
 
-echo "Downloading the HTML pages..."
-echo "Downloading it for the time span between $first_month and $second_month..."
-node crawler/crawl_wiki.js \
-    --articles ${data_dir}/${lang}wiki-NS0-${first_month}/eval/pages/pages.txt \
-    --concurrence $download_processes \
-    --destinationDirectory ${data_dir}/${lang}wiki-NS0-${first_month}/eval/pages/ \
-    --language $lang
+# echo "Downloading the HTML pages..."
+# echo "Downloading it for the time span between $first_month and $second_month..."
+# node crawler/crawl_wiki.js \
+#     --articles ${data_dir}/${lang}wiki-NS0-${first_month}/eval/pages/pages.txt \
+#     --concurrence $download_processes \
+#     --destinationDirectory ${data_dir}/${lang}wiki-NS0-${first_month}/eval/pages/ \
+#     --language $lang
 # echo "Downloading it for the time span between $second_month and $third_month..."
 # node crawler/crawl_wiki.js \
 #     --articles ${data_dir}/${lang}wiki-NS0-${second_month}/eval/pages/pages.txt \

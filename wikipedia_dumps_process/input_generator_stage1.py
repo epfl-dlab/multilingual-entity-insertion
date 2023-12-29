@@ -272,8 +272,10 @@ if __name__ == '__main__':
     parser.add_argument('--join_samples', action='store_true',
                         help='Join positive and its negative samples into one row')
     parser.add_argument('--page_limit', type=int, help='Limit the number of pages to process')
+    parser.add_argument('--reduce_memory', action='store_true',
+                        help='Take aggressive to reduce memory usage')
 
-    parser.set_defaults(join_samples=False, add_current_links=False)
+    parser.set_defaults(join_samples=False, add_current_links=False, reduce_memory=False)
     args = parser.parse_args()
 
     strategies_map = {1: 'easy_replace_source', 2: 'hard_replace_source', 3: 'easy_replace_target',
@@ -362,9 +364,12 @@ if __name__ == '__main__':
             if link['target_title'] in page_leads:
                 link['target_lead'] = page_leads[link['target_title']]
                 page_sections_train[title][section]['links'].append(link)
-        if len(page_sections_train) > args.page_limit:
+        if args.page_limit and len(page_sections_train) > args.page_limit:
+            pool.terminate()
             break
     del df_sections_train
+    pool.close()
+    pool.join()
     gc.collect()
 
     print('\tProcessing training links')
@@ -463,12 +468,27 @@ if __name__ == '__main__':
     gc.collect()
 
     print('Processing validation data')
+    print('\tLoading validation links')
+    df_links_val = pd.read_parquet(os.path.join(
+        args.input_dir_val, 'val_links.parquet'))
+    df_links_val['source_title'] = df_links_val['source_title'].apply(
+        unencode_title)
+    df_links_val['target_title'] = df_links_val['target_title'].apply(
+        unencode_title)
+    source_titles = set(df_links_val['source_title'].unique())
+    df_links_val = df_links_val.to_dict(orient='records')
+    random.shuffle(df_links_val)
+    
+    
     print('\tLoading section texts')
-    section_files = glob(os.path.join(args.input_month2_dir, 'sections*'))
+    section_files = glob(os.path.join(args.input_month2_dir, 'sections', 'sections*'))
     section_files.sort()
     dfs = []
     for file in tqdm(section_files):
-        dfs.append(pd.read_parquet(file))
+        df = pd.read_parquet(file)
+        if args.reduce_memory:
+            df = df[df['title'].isin(source_titles)]
+        dfs.append(df)
     df_sections_val = pd.concat(dfs)
     df_sections_val['title'] = df_sections_val['title'].apply(
         unencode_title)
@@ -477,6 +497,7 @@ if __name__ == '__main__':
     print('\tCreating auxiliary data structures')
     print('\t\tProcessing sections')
     page_sections_val = {}
+    pool = Pool(5)
     for output in tqdm(pool.imap_unordered(extract_sections, df_sections_val), total=len(df_sections_val)):
         title = output['title']
         section = output['section']
@@ -494,22 +515,14 @@ if __name__ == '__main__':
             if link['target_title'] in page_leads:
                 link['target_lead'] = page_leads[link['target_title']]
                 page_sections_val[title][section]['links'].append(link)
-        if len(page_sections_val) > args.page_limit:
+        if args.page_limit and len(page_sections_val) > args.page_limit:
+            pool.terminate()
             break
     del df_sections_val
+    print('\t\tSections processed')
     gc.collect()
     pool.close()
     pool.join()
-
-    print('\tLoading validation links')
-    df_links_val = pd.read_parquet(os.path.join(
-        args.input_dir_val, 'val_links.parquet'))
-    df_links_val['source_title'] = df_links_val['source_title'].apply(
-        unencode_title)
-    df_links_val['target_title'] = df_links_val['target_title'].apply(
-        unencode_title)
-    df_links_val = df_links_val.to_dict(orient='records')
-    random.shuffle(df_links_val)
 
     print('\tGenerating validation samples')
     positive_samples_val = []

@@ -73,6 +73,7 @@ if __name__ == '__main__':
         download_url(url_sql_dump_3, output_sql_path_3)
 
     # extract the downloaded files (sql)
+    # extracting now because I was getting some issues extracting and processing at the same time
     if not os.path.exists(output_sql_path_1[:-3]) or args.overwrite:
         print(f'Extracting {output_sql_path_1}')
         with gzip.open(output_sql_path_1, 'rb') as f:
@@ -114,5 +115,3 @@ if __name__ == '__main__':
             paths = [f"{args.output_dir}/{f}" for f in data if args.overwrite or not os.path.exists(f"{args.output_dir}/{f}")]
             with Pool(3) as p:
                 p.starmap(download_url, zip(urls, paths))
-            
-            

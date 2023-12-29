@@ -37,7 +37,7 @@ def process_sql_page(input, language):
 
         # split the line using the following rules:
         # 1. "),(" is the separator between entries
-        # 2. After "),(" there are digits followed by ",", use a positive lookahead to split
+        # 2. After "),(" there are digits followed by ","; use a positive lookahead to split
         elements = re.split("\),\((?=\d+,)", line)
         for element in elements:
             split_data = element.split(",")
@@ -123,10 +123,12 @@ def process_tar_html(data):
     page_info['page_length'] = len(data['article_body']['html'])
     page_info['language'] = data['language']
     page_info['date_modified'] = data['date_modified']
+    # get the abstract if it exists (abstract = lead paragraph)
     if 'abstract' in data:
         page_info['lead_paragraph'] = data['abstract']
     else:
         page_info['lead_paragraph'] = ''
+    # get the QID if it is available
     if 'main_entity' in data:
         page_info['QID'] = data['main_entity']['identifier']
     else:
@@ -180,27 +182,33 @@ if __name__ == '__main__':
     print(f"Parsing SQL redirects information")
     redirects = process_sql_redirects(sql_redirects, redirects)
 
+    # remove redirects that redirect to themselves
     redirects = [redirects[key] for key in redirects if 'redirect' in redirects[key]
                  and redirects[key]['redirect'] != redirects[key]['title']]
-    redirect_map = {redirect['title']: redirect['redirect'] for redirect in redirects}
+    # save into dictionary for faster lookup
+    redirect_map = {redirect['title']: redirect['redirect']
+                    for redirect in redirects}
     # save redirects
     redirects = pd.DataFrame(redirects).set_index('title')
     redirects.to_parquet(f"{args.output_dir}/redirect_map.parquet")
+    # memory management
     del redirects
     gc.collect()
 
     print("Processing SQL page properties information")
     pages = process_sql_page_props(sql_page_props, pages)
-    
+    # create a reduced version of the page data (id, title, qid)
     simple_pages = [{'ID': page['ID'], 'title': page['title'],
                      'QID': page['QID']} for page in pages]
     simple_pages = pd.DataFrame(simple_pages)
     simple_pages = simple_pages.set_index('title')
     simple_pages.to_parquet(f"{args.output_dir}/simple_pages.parquet")
     print(f"{len(simple_pages)} pages found")
+    # memory management
     del simple_pages
     gc.collect()
-    
+
+    # create a dictionary with the pages for faster lookup
     pages = {page['title']: page for page in pages}
 
     print(f'Processing tar HTML data')
@@ -219,16 +227,22 @@ if __name__ == '__main__':
                     entry = json.loads(line)
                     entry['language'] = args.language
                     page = process_tar_html(entry)
+                    # if the page is a redirect, ignore
                     if page['title'] in redirect_map:
                         continue
+                    # if the page has already appeared, ignore
                     if page['title'] in used_titles:
                         continue
                     used_titles.add(page['title'])
                     if page['title'] in pages:
+                        # QID is potentially present in two places, the SQL dump and the HTML dump
+                        # if it was missing from the SQL dump, but present in the HTML dump, add it
                         if page['QID'] is None and pages[page['title']]['QID'] is not None:
                             page['QID'] = pages[page['title']]['QID']
                         del pages[page['title']]
+
                     full_pages.append(page)
+                    # splitting into multiple files for memory management
                     if len(full_pages) >= 10_000:
                         full_pages = pd.DataFrame(full_pages)
                         full_pages.to_parquet(
