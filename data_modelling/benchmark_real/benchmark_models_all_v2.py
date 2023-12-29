@@ -14,8 +14,10 @@ from ast import literal_eval
 
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
+
 def fix_title(title):
     return parse.unquote(title).replace('_', ' ')
+
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -27,14 +29,19 @@ if __name__ == '__main__':
                         required=True, help='Path to mention map file')
     parser.add_argument('--data_limit', type=int, default=None,
                         help='Limit the number of rows to use')
-    parser.add_argument('--column_name', type=str, required=True, help='Name of column to add to dataframe')
+    parser.add_argument('--column_name', type=str, required=True,
+                        help='Name of column to add to dataframe')
     parser.add_argument('--batch_size', type=int, default=1, help='Batch size')
-    parser.add_argument('--model_name', type=str, required=True, help='Name of model to use')
+    parser.add_argument('--model_name', type=str,
+                        required=True, help='Name of model to use')
     parser.add_argument('--loss_function', type=str, required=True, choices=[
                         'ranking', 'indep'], help='Selected loss function used for training')
     parser.add_argument('--use_section_title',
                         action='store_true', help='Use section title in input')
-    parser.add_argument('--use_mentions', action='store_true', help='Use mentions in input')
+    parser.add_argument('--use_mentions', action='store_true',
+                        help='Use mentions in input')
+    parser.add_argument('--encoder_decoder', action='store_true',
+                        help='Use encoder decoder model')
     parser.set_defaults(use_section_title=False, use_mentions=False)
 
     args = parser.parse_args()
@@ -53,6 +60,7 @@ if __name__ == '__main__':
         os.path.join(dir, 'classification_head*'))[0]
     tokenizer_path = os.path.join(dir, 'tokenizer')
     model = AutoModel.from_pretrained(model_path)
+
     model.eval()
     model_size = model.config.hidden_size
 
@@ -105,7 +113,7 @@ if __name__ == '__main__':
             mention_map[title].append(row['mention'])
         else:
             mention_map[title] = [row['mention']]
-    
+
     for title in mention_map:
         if len(mention_map[title]) > 10:
             mention_map[title] = random.sample(mention_map[title], 10)
@@ -131,8 +139,11 @@ if __name__ == '__main__':
                 inputs.append(input)
                 if len(inputs) == args.batch_size:
                     inputs = tokenizer(inputs, return_tensors='pt', padding='max_length',
-                                        truncation=True, max_length=512).to('cuda' if torch.cuda.is_available() else 'cpu')
-                    embeddings = model(**inputs)['last_hidden_state'][:, 0, :]
+                                       truncation=True, max_length=512).to('cuda' if torch.cuda.is_available() else 'cpu')
+                    if not args.encoder_decoder:
+                        embeddings = model(**inputs)['last_hidden_state'][:, 0, :]
+                    else:
+                        embeddings = model.encoder(**inputs)['last_hidden_state'][:, 0, :]
                     if args.loss_function == 'ranking':
                         prediction = classification_head(embeddings).squeeze()
                         if embeddings.shape[0] == 1:
@@ -148,11 +159,14 @@ if __name__ == '__main__':
                             for score in prediction.tolist():
                                 scores.append(score[1])
                     inputs = []
-                    
+
             if len(inputs) > 0:
                 inputs = tokenizer(inputs, return_tensors='pt', padding='max_length',
-                                        truncation=True, max_length=512).to('cuda' if torch.cuda.is_available() else 'cpu')
-                embeddings = model(**inputs)['last_hidden_state'][:, 0, :]
+                                   truncation=True, max_length=512).to('cuda' if torch.cuda.is_available() else 'cpu')
+                if not args.encoder_decoder:
+                    embeddings = model(**inputs)['last_hidden_state'][:, 0, :]
+                else:
+                    embeddings = model.encoder(**inputs)['last_hidden_state'][:, 0, :]
                 if args.loss_function == 'ranking':
                     prediction = classification_head(embeddings).squeeze()
                     if embeddings.shape[0] == 1:
@@ -170,12 +184,14 @@ if __name__ == '__main__':
                 inputs = []
 
             position = 1
-            best_score = {'section': source_section[0], 'score': scores[0], 'context': context[0], 'index': 0}
+            best_score = {
+                'section': source_section[0], 'score': scores[0], 'context': context[0], 'index': 0}
             for i, score in enumerate(scores[1:]):
                 if score > scores[0]:
                     position += 1
                     if score > best_score['score']:
-                        best_score = {'section': source_section[i+1], 'score': score, 'context': context[i+1], 'index': i+1}
+                        best_score = {
+                            'section': source_section[i+1], 'score': score, 'context': context[i+1], 'index': i+1}
             rank.append(position)
 
     df[args.column_name] = rank

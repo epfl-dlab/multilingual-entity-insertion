@@ -11,6 +11,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 from baselines import bm25
 from baselines import exact_match
 from baselines import fuzzy_match
+from baselines import embedding_similarity
 
 def fix_title(title):
     return parse.unquote(title).replace('_', ' ')
@@ -22,7 +23,8 @@ if __name__ == '__main__':
     parser.add_argument('--data_limit', type=int, default=None,
                         help='Limit the number of rows to use')
     parser.add_argument('--method_name', type=str, required=True, choices=[
-                        'random', 'bm25', 'bm25_mentions', 'exact_match', 'fuzzy_match', 'all'], help='Which method to use')
+                        'embedding_similarity', 'random', 'bm25', 'bm25_mentions', 'exact_match', 'fuzzy_match', 'all'], help='Which method to use')
+    parser.add_argument('--model_name', type=str, default='BAAI/bge-base-en-v1.5', help='Which model to use')
     
     args = parser.parse_args()
 
@@ -141,5 +143,20 @@ if __name__ == '__main__':
                     equals += 1
             rank.append(position + random.randint(0, equals))
         df['fuzzy_match_rank'] = rank
+        
+    if 'embedding_similarity' in args.method_name:
+        print('Calculating embedding similarity ranks')
+        rank = []
+        for context, title, lead in tqdm(zip(contexts, target_titles, target_leads), total=len(target_titles)):
+            scores = embedding_similarity.rank_contexts(args.model_name, context, title, lead)
+            position = 1
+            equals = 0
+            for score in scores[1:]:
+                if score > scores[0]:
+                    position += 1
+                if score == scores[0]:
+                    equals += 1
+            rank.append(position + random.randint(0, equals))
+        df['embedding_similarity_rank'] = rank
 
     df.to_parquet('test_ranking_scores_all.parquet')
