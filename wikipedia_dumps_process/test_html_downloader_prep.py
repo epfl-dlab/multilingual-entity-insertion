@@ -25,9 +25,9 @@ if __name__ == '__main__':
         source_ID = row['source_ID']
         first_version = row['first_version']
         second_version = row['second_version']
-        if f"{source_ID}\t{first_version}" not in clean_data:
+        if f"{source_ID}\t{first_version}" not in clean_data and not os.path.exists(os.path.join(args.output_directory, f'{source_ID}_{first_version}.html')):
             clean_data.add(f"{source_ID}\t{first_version}")
-        if f"{source_ID}\t{second_version}" not in clean_data:
+        if f"{source_ID}\t{second_version}" not in clean_data and not os.path.exists(os.path.join(args.output_directory, f'{source_ID}_{second_version}.html')):
             clean_data.add(f"{source_ID}\t{second_version}")
     
     # write output to file

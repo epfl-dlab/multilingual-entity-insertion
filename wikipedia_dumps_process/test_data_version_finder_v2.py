@@ -15,6 +15,7 @@ from multiprocessing import Pool, cpu_count
 import gc
 import math
 import traceback
+from time import perf_counter
 tqdm.pandas()
 
 class DownloadProgressBar(tqdm):
@@ -47,6 +48,7 @@ def fill_version(page_title, old_versions):
 
 
 def clean_xml(text):
+    text = unescape(text)
     text = re.sub(r'<!--.*?-->', '', text, flags=re.DOTALL)
     text = text.replace('\n*', '\n')
     # find all {{...}} elements
@@ -65,149 +67,137 @@ def process_title(title):
 
 def process_revision_history(input):
     file = input['file']
-    # print file size
-    print(f'{file}: {round(os.path.getsize(file) / 1024 / 1024, 2)} MB')
     link_struc = input['link_struc']
-    prev_text = ''
-    links = []
-    processed_pages = 0
+    
+    print(f'Processing {file}')
+    
     first_date = pd.to_datetime(args.first_date)
     second_date = pd.to_datetime(args.second_date)
-    try:
-        with bz2.open(file, 'rb') as f:
-            context = iter(iterparse(f._buffer, events=('start', 'end')))
-            _, root = next(context) # get root element
-            for i, (event, elem) in enumerate(pbar := tqdm(context)):
-            # pbar = tqdm(iterparse(f._buffer, events=('end',)))
-            # for i, (_, elem) in enumerate(pbar):
-                # print size of f in MB
-                # print(f'{file}: {round(f.tell() / 1024 / 1024, 2)} MB')
-                pbar.set_description(f"{len(link_struc)} pages left to process (({processed_pages}/{source_pages} pages processed))")
-                if elem.tag.endswith('page') and event == 'end':
-                    pages = []
-                    current_id = None
-                    skip = False
-                    for child in elem:
-                        if child.tag.endswith('ns'):
-                            if child.text != '0':
-                                skip = True
-                                break
-                        if child.tag.endswith('id'):
-                            current_id = int(child.text)
-                            if current_id not in link_struc:
-                                skip = True
-                            break
-                    if skip:
-                        # remove all references to the element
-                        # dont remove root element
-                        elem.clear()
-                        del elem
-                        root.clear()
-                        continue
-                    # go through all the children of elem in reverse order
-                    skip = False
-                    for i in range(len(elem) - 1, -1, -1):
-                        child = elem[i]
-                        if skip:
-                            elem[i].clear()
-                            del elem[i]
-                            continue
-                        if child.tag.endswith('revision'):
-                            for revision_data in child:
-                                if revision_data.tag.endswith('timestamp'):
-                                    # timestamp has format 2019-01-01T00:00:00Z
-                                    # compare the timestamp with the date of the first dump and the second dump
-                                    timestamp = revision_data.text
-                                    timestamp = pd.to_datetime(
-                                        timestamp).tz_convert(None)
-                                    if timestamp > second_date:
-                                        break
-                                    # if timestamp is more than 7 days before the first date, set leave to True
-                                    if timestamp < first_date:
-                                        skip = True
-                                        
-                                if revision_data.tag.endswith('id') and not revision_data.tag.endswith('parentid'):
-                                    version_id = int(revision_data.text)
-                                if revision_data.tag.endswith('text') and revision_data.text is not None:
-                                    clean_text = unescape(revision_data.text)
-                                    clean_text = clean_xml(clean_text)
-                                    pages.append(
-                                        {'version': version_id, 'text': clean_text})
-                            elem[i].clear()
-                            del elem[i]
-                    if not pages:
-                        elem.clear()
-                        # remove all references to the element
-                        # dont remove root element
-                        del elem
-                        root.clear()
-                        continue
-                    pages = sorted(pages, key=lambda x: x['version'], reverse=True)
-
-                    counts = [{'count': None, 'title': process_title(
-                        link['target_title']).lower()} for link in link_struc[current_id]['links']]
-                    prev_version = None
-                    prev_text = ''
-                    for j, page in enumerate(pages):
-                        if len(page['text']) < min(0.2 * len(prev_text), 200):  # avoids edit wars
-                            continue
-                        # find all elements in brackets
-                        elems_1 = re.findall(r'\[\[.*?\]\]', page['text'])
-                        for i in range(len(elems_1)):
-                            elems_1[i] = elems_1[i].lower()
-                            if '|' in elems_1[i]:
-                                elems_1[i] = elems_1[i].split('|')[0]
-                            elems_1[i] = elems_1[i].replace(
-                                '[[', '').replace(']]', '')
-                            if elems_1[i] in redirect_map_clean:
-                                elems_1[i] = redirect_map_clean[elems_1[i]]
-                            elems_1[i] = elems_1[i].strip()
-                        elems_2 = re.findall(r'\{\{.*?\}\}', page['text'])
-                        for i in range(len(elems_2)):
-                            elems_2[i] = elems_2[i].lower()
-                            if '|' in elems_2[i]:
-                                elems_2[i] = elems_2[i].split('|')[1]
-                            elems_2[i] = elems_2[i].replace(
-                                '{{', '').replace('}}', '')
-                            if elems_2[i] in redirect_map_clean:
-                                elems_2[i] = redirect_map_clean[elems_2[i]]
-                                elems_2[i] = elems_2[i].strip()
-                        elems = elems_1 + elems_2
-                        # send it to a counter
-                        counter = Counter(elems)
-                        if j == 0:
-                            for k, count in enumerate(counts):
-                                counts[k]['count'] = counter.get(
-                                    f"{count['title']}", 0)
-                        else:
-                            for k, count in enumerate(counts):
-                                new_count = counter.get(f"{count['title']}", 0)
-                                if new_count > count['count']:
-                                    counts[k]['count'] = new_count
-                                if new_count < count['count']:
-                                    links.append({'source_title': link_struc[current_id]['page_title'],
-                                                'target_title': link_struc[current_id]['links'][k]['target_title'],
-                                                'source_ID': current_id,
-                                                'target_ID': link_struc[current_id]['links'][k]['target_ID'],
-                                                'first_version': page['version'],
-                                                'second_version': prev_version})
-                                    counts[k]['count'] = new_count
-                        prev_version = page['version']
-                        prev_text = page['text']
-                    processed_pages += 1
-                    elem.clear()
-                    # remove all references to the element
-                    # dont remove root element
-                    del elem
-                    root.clear()
-    except Exception as e:
-        # print the exception and any relevant information
-        # print traceback
-        print(e)
-        print(f'Failed to process file {file}')
-        return {'links': links, 'processed_pages': processed_pages, 'file_name': file}
-    return {'links': links, 'processed_pages': processed_pages, 'file_name': file}
-
+    
+    # get the information for all the pages
+    print('Reading pages')
+    start = perf_counter()
+    with bz2.open(file, 'rb') as f:
+        df_pages = pd.read_xml(f, iterparse={'page': ['title', 'ns', 'id', 'id']}, names=['title', 'ns', 'article_id', 'revision_id'])
+    
+    print('Reading revisions')
+    # get the information about all the revisions
+    with bz2.open(file, 'rb') as f:
+        df_revisions = pd.read_xml(f, iterparse={'revision': ['id', 'timestamp', 'id', 'text']}, names=['revision_id', 'timestamp', 'contributor_id', 'text'])
+    
+    # join the page and revision information
+    df_pages = df_pages.to_dict('records')
+    df_revisions = df_revisions.to_dict('records')
+    
+    print('Joining pages and revisions')
+    curr_page_index = 0
+    for i in range(len(df_revisions)):
+        if curr_page_index < len(df_pages) - 1 and df_revisions[i]['revision_id'] == df_pages[curr_page_index + 1]['revision_id']:
+            curr_page_index += 1
+        df_revisions[i]['title'] = df_pages[curr_page_index]['title']
+        df_revisions[i]['ns'] = df_pages[curr_page_index]['ns']
+        df_revisions[i]['article_id'] = df_pages[curr_page_index]['article_id']
+    
+    del df_pages
+    df_revisions = pd.DataFrame(df_revisions)
+    
+    print(df_revisions)
+    
+    print('Filtering revisions')
+    # filter out all revisions where ns != 0
+    df_revisions = df_revisions[df_revisions['ns'] == 0]
+    
+    # filter out all revisions where timestamp > second_date
+    df_revisions['timestamp'] = pd.to_datetime(df_revisions['timestamp']).dt.tz_localize(None)
+    df_revisions = df_revisions[df_revisions['timestamp'] < second_date]
+    
+    # filter out all revisions where timestamp < first_date
+    df_revisions = df_revisions[df_revisions['timestamp'] > first_date]
+    
+    # filter out all revisions where article_id is not in link_struc
+    df_revisions = df_revisions[df_revisions['article_id'].isin(link_struc)]
+    
+    # clean the xml text
+    df_revisions['text'] = df_revisions['text'].fillna('')
+    df_revisions['text'] = df_revisions['text'].progress_apply(clean_xml)
+    
+    # drop contributor id
+    df_revisions = df_revisions.drop(columns=['contributor_id'])
+    
+    # turn all id columns into integers
+    df_revisions['revision_id'] = df_revisions['revision_id'].astype(int)
+    df_revisions['article_id'] = df_revisions['article_id'].astype(int)
+    
+    print(df_revisions)
+    
+    df_revisions = df_revisions.to_dict('records')
+    grouped_revisions = {}
+    for revision in df_revisions:
+        if revision['article_id'] not in grouped_revisions:
+            grouped_revisions[revision['article_id']] = []
+        grouped_revisions[revision['article_id']].append(revision)
+    
+    del df_revisions
+        
+    for article in grouped_revisions:
+        grouped_revisions[article] = sorted(grouped_revisions[article], key=lambda x: x['revision_id'], reverse=True)
+        print(grouped_revisions)
+        
+    output = []
+    for article_id in tqdm(grouped_revisions, total=len(grouped_revisions)):
+        prev_text = ''
+        counts = [{'count': None, 'title': process_title(
+            link['target_title']).lower()} for link in link_struc[article_id]['links']]
+        prev_version = None
+        for revision in grouped_revisions[article_id]:
+            if len(revision['text']) < min(0.2 * len(prev_text), 200):  # avoids edit wars
+                continue
+            # find all elements in brackets
+            elems_1 = re.findall(r'\[\[.*?\]\]', revision['text'])
+            for i in range(len(elems_1)):
+                elems_1[i] = elems_1[i].lower()
+                if '|' in elems_1[i]:
+                    elems_1[i] = elems_1[i].split('|')[0]
+                elems_1[i] = elems_1[i].replace(
+                    '[[', '').replace(']]', '')
+                if elems_1[i] in redirect_map_clean:
+                    elems_1[i] = redirect_map_clean[elems_1[i]]
+                elems_1[i] = elems_1[i].strip()
+            elems_2 = re.findall(r'\{\{.*?\}\}', revision['text'])
+            for i in range(len(elems_2)):
+                elems_2[i] = elems_2[i].lower()
+                if '|' in elems_2[i]:
+                    elems_2[i] = elems_2[i].split('|')[1]
+                elems_2[i] = elems_2[i].replace(
+                    '{{', '').replace('}}', '')
+                if elems_2[i] in redirect_map_clean:
+                    elems_2[i] = redirect_map_clean[elems_2[i]]
+                    elems_2[i] = elems_2[i].strip()
+            elems = elems_1 + elems_2
+            # send it to a counter
+            counter = Counter(elems)
+            if prev_version is None:
+                for k, count in enumerate(counts):
+                    counts[k]['count'] = counter.get(
+                        f"{count['title']}", 0)
+            else:
+                for k, count in enumerate(counts):
+                    new_count = counter.get(f"{count['title']}", 0)
+                    if new_count > count['count']:
+                        counts[k]['count'] = new_count
+                    if new_count < count['count']:
+                        output.append({'source_title': link_struc[article_id]['page_title'],
+                                        'target_title': link_struc[article_id]['links'][k]['target_title'],
+                                        'source_ID': article_id,
+                                        'target_ID': link_struc[article_id]['links'][k]['target_ID'],
+                                        'first_version': revision['revision_id'],
+                                        'second_version': prev_version})
+                        counts[k]['count'] = new_count
+            prev_version = revision['revision_id']
+            prev_text = revision['text']
+    print(f'Time taken: {perf_counter() - start}')
+    print(len(output))
+    return {'links': output, 'processed_pages': len(grouped_revisions), 'file_name': file}
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -413,10 +403,8 @@ if __name__ == '__main__':
                         p.starmap(download_url, zip(urls, file_names))
 
     input = [{'file': file, 'link_struc': link_struc} for file in files]
-    # remove any file from the input which does not exist
-    input = [file for file in input if os.path.exists(file['file'])]
-    # sort by file size 
-    input = sorted(input, key=lambda x: os.path.getsize(x['file']))
+    # sort input by length of link_struc
+    input = sorted(input, key=lambda x: len(x['link_struc']), reverse=True)
     if args.max_links is None:
         max_links = float('inf')
     else:
@@ -427,7 +415,7 @@ if __name__ == '__main__':
     processed_pages = 0
     counter = 0
     with Pool(min(1, len(input))) as p:
-        for result in (pbar := tqdm(p.imap_unordered(process_revision_history, input), total=len(input))):
+        for result in (pbar := tqdm(p.imap_unordered(process_revision_history, input), total=len(files))):
             output = result['links']
             found_links += len(output)
             processed_pages += result['processed_pages']
