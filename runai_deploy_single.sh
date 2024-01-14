@@ -11,12 +11,12 @@ export NUM_GPUS=1
 export NUM_CPUS=4
 export MEMORY="48G"
 export SLEEP_TIME="24h"
-export BASH_FILE="runai-test-v2.sh"
-export MODEL_NAME="roberta-base"
-export MODEL_ARCHITECTURE="RoBERTa"
-export BATCH_SIZE=15
+export BASH_FILE="benchmark-models.sh"
+export MODEL_NAME="t5-base"
+export MODEL_ARCHITECTURE="T5"
+export BATCH_SIZE=2
 
-EXP_NAME="runai-${IMAGE_NAME}-${IMAGE_TAG}-${SLEEP_TIME}-${NODE_TYPE}-${NUM_GPUS}-${NUM_CPUS}-${MEMORY}-${BASH_FILE}-more-tokens"
+EXP_NAME="runai-${IMAGE_NAME}-${IMAGE_TAG}-${SLEEP_TIME}-${NODE_TYPE}-${NUM_GPUS}-${NUM_CPUS}-${MEMORY}-${MODEL_NAME}-${MODEL_ARCHITECTURE}-${BATCH_SIZE}-${BASH_FILE}"
 # lowercase EXP_NAME, because k8s doesn't allow uppercase letters in the name
 # shellcheck disable=SC2155
 export EXP_NAME=$(echo "$EXP_NAME" | tr '[:upper:]' '[:lower:]')

@@ -8,21 +8,19 @@ export IMAGE_TAG="prod"
 export IMAGE="ic-registry.epfl.ch/dlab/${IMAGE_CREATOR}/${IMAGE_NAME}:${IMAGE_TAG}"
 export NODE_TYPE="G10"
 export NUM_GPUS=1
-export NUM_CPUS=6
-export MEMORY="128G"
+export NUM_CPUS=4
+export MEMORY="64G"
 export SLEEP_TIME="24h"
 export MODEL_NAME="xlm-roberta-base"
 export MODEL_ARCHITECTURE="RoBERTa"
-# export BASH_FILE="runai-multilingual-simple.sh"
-export BASH_FILE="runai-base-plus-second-stage-multilingual.sh"
 export BATCH_SIZE=5
 
-# for LANG in "cs" "cy" "en" "hi" "is" "it" "ja" "kn" "multilingual" "ps" "sw" "ur" "uz"
-# for LANG in "fr" "pt" "ms" "sk" "simple" "kk" "af" "ga" "gu" "multilingual-all"
 
+for LANG in "af" "cs" "cy" "en" "fr" "ga" "gu" "hi" "is" "it" "ja" "kk" "kn" "ms" "ps" "pt" "sk" "simple" "sw" "ur" "uz"
 do
-    export LANGUAGE="${LANG}"
-    EXP_NAME="runai-${IMAGE_NAME}-${IMAGE_TAG}-${SLEEP_TIME}-${NODE_TYPE}-${NUM_GPUS}-${NUM_CPUS}-${MEMORY}-${MODEL_NAME}-${BASH_FILE}-${LANG}"
+    # add the .sh extension to the bash file
+    export LANG="${LANG}"
+    EXP_NAME="runai-${IMAGE_NAME}-${IMAGE_TAG}-${SLEEP_TIME}-${NODE_TYPE}-${NUM_GPUS}-${NUM_CPUS}-${MEMORY}-${MODEL_NAME_ITER}-${BASH_FILE_ITER}-${LANG}"
     # lowercase EXP_NAME, because k8s doesn't allow uppercase letters in the name
     # shellcheck disable=SC2155
     export EXP_NAME=$(echo "$EXP_NAME" | tr '[:upper:]' '[:lower:]')
@@ -34,7 +32,7 @@ do
     envsubst < runai_deploy_conf.yaml > "${OUTPUT_DIR}/config.yaml"
 
     # Save the deploy script in the history directory
-    cat runai_deploy_multiple_lang.sh > "${OUTPUT_DIR}/deploy.sh"
+    cat runai_deploy_multiple.sh > "${OUTPUT_DIR}/deploy.sh"
 
     # Apply the deployment file to the cluster
     kubectl create -f "$OUTPUT_DIR/config.yaml"
@@ -54,4 +52,3 @@ unset OUTPUT_DIR
 unset MODEL_NAME
 unset BASH_FILE
 unset MODEL_ARCHITECTURE
-unset LANGUAGE
