@@ -11,12 +11,19 @@ export NUM_GPUS=1
 export NUM_CPUS=4
 export MEMORY="48G"
 export SLEEP_TIME="24h"
-export BASH_FILE="benchmark-models.sh"
-export MODEL_NAME="t5-base"
-export MODEL_ARCHITECTURE="T5"
-export BATCH_SIZE=2
+export MODEL_NAME="xlm-roberta-base"
+export MODEL_ARCHITECTURE="RoBERTa"
+export BATCH_SIZE=5
 
-EXP_NAME="runai-${IMAGE_NAME}-${IMAGE_TAG}-${SLEEP_TIME}-${NODE_TYPE}-${NUM_GPUS}-${NUM_CPUS}-${MEMORY}-${MODEL_NAME}-${MODEL_ARCHITECTURE}-${BATCH_SIZE}-${BASH_FILE}"
+BASH_FILE_ITER="simple-model-experiments" # write the name of the bash file here
+LANG="af" # write the language here
+MODE="" # write the mode here
+
+# add the .sh extension to the bash file
+export BASH_FILE="${BASH_FILE_ITER}.sh"
+export LANGUAGE="${LANG}"
+export MODE="${MODE}"
+EXP_NAME="runai-${IMAGE_NAME}-${IMAGE_TAG}-${SLEEP_TIME}-${NODE_TYPE}-${NUM_GPUS}-${NUM_CPUS}-${MEMORY}-${MODEL_NAME_ITER}-${BASH_FILE_ITER}-${MODE}-${LANG}"
 # lowercase EXP_NAME, because k8s doesn't allow uppercase letters in the name
 # shellcheck disable=SC2155
 export EXP_NAME=$(echo "$EXP_NAME" | tr '[:upper:]' '[:lower:]')
@@ -46,4 +53,6 @@ unset TIMESTAMP
 unset OUTPUT_DIR
 unset MODEL_NAME
 unset BASH_FILE
-
+unset MODEL_ARCHITECTURE
+unset LANGUAGE
+unset MODE
