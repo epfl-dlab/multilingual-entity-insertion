@@ -1,3 +1,0 @@
-HF_HOME: /dlabdata1/tsoares/.cache/hugging_face/
-New .bashrc loaded
-Conda environment activated
