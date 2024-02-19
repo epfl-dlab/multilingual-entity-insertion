@@ -33,7 +33,9 @@ if __name__ == '__main__':
                         help='Path to the output dir')
     parser.add_argument('--max_samples_per_lang', '-n', type=int,
                         default=1000, help='Maximum number of samples per language')
-
+    parser.add_argument('--ignore_warnings', action='store_true', default=False,
+                        help='Ignore warnings')
+    parser.set_defaults(ignore_warnings=False)
     args = parser.parse_args()
     
     # check if input dir exists
@@ -43,40 +45,76 @@ if __name__ == '__main__':
     # check if all the language specific files exist
     for lang in args.langs:
         if not os.path.exists(os.path.join(args.data_dir, f'{lang}wiki-NS0-20231001', 'eval', 'test_data.parquet')):
-            raise ValueError(f'File for language {lang} does not exist')
+            if lang in args.langs:
+                args.langs.remove(lang)
+            if not args.ignore_warnings:
+                raise ValueError(f'Link file for language {lang} does not exist')
+            else:
+                print(f'Warning: link file for language {lang} does not exist')
         if not os.path.exists(os.path.join(args.data_dir, f'{lang}wiki-NS0-20231001', 'processed_data', 'redirect_map.parquet')):
-            raise ValueError(f'Redirect file 1 for language {lang} does not exist')
+            if lang in args.langs:
+                args.langs.remove(lang)
+            if not args.ignore_warnings:
+                raise ValueError(f'Redirect file 1 for language {lang} does not exist')
+            else:
+                print(f'Warning: redirect file 1 for language {lang} does not exist')
         if not os.path.exists(os.path.join(args.data_dir, f'{lang}wiki-NS0-20231101', 'processed_data', 'redirect_map.parquet')):
-            raise ValueError(f'Redirect file 2 for language {lang} does not exist')
+            if lang in args.langs:
+                args.langs.remove(lang)
+            if not args.ignore_warnings:
+                raise ValueError(f'Redirect file 2 for language {lang} does not exist')
+            else:
+                print(f'Warning: redirect file 2 for language {lang} does not exist')
         if not os.path.exists(os.path.join(args.data_dir, f'{lang}wiki-NS0-20231001', 'processed_data', 'good_pages')):
-            raise ValueError(f'Pages files for language {lang} do not exist')
+            if lang in args.langs:
+                args.langs.remove(lang)
+            if not args.ignore_warnings:
+                raise ValueError(f'Pages files for language {lang} do not exist')
+            else:
+                print(f'Warning: pages files for language {lang} do not exist')
     
     # check if output dir exists
     if not os.path.exists(args.output_dir):
         os.makedirs(args.output_dir)
         
-    print('Saving mention maps')
-    for i, lang in enumerate(args.langs):
-        print(f'Processing language {lang} ({i+1}/{len(args.langs)})')
-        df_mentions = pd.read_parquet(os.path.join(args.data_dir, f'{lang}wiki-NS0-20231001', 'processed_data', 'mention_map.parquet'))
-        df_mentions.to_parquet(os.path.join(args.output_dir, f'{lang}_mention_map.parquet'))
-        df_mentions = None
-        del df_mentions
-        gc.collect()
-        print(f'Finished processing language {lang}')
+    # print('Saving mention maps')
+    # for i, lang in enumerate(args.langs):
+    #     print(f'Processing language {lang} ({i+1}/{len(args.langs)})')
+    #     df_mentions = pd.read_parquet(os.path.join(args.data_dir, f'{lang}wiki-NS0-20231001', 'processed_data', 'mention_map.parquet'))
+    #     df_mentions.to_parquet(os.path.join(args.output_dir, f'{lang}_mention_map.parquet'))
+    #     df_mentions = None
+    #     del df_mentions
+    #     gc.collect()
+    #     print(f'Finished processing language {lang}')
         
     # process each language sequentially
     for i, lang in enumerate(args.langs):
         print(f'Processing language {lang} ({i+1}/{len(args.langs)})')
         
         # load links
-        df_links = pd.read_parquet(os.path.join(args.data_dir, f'{lang}wiki-NS0-20231001', 'eval', 'test_data.parquet'))
+        try:
+            df_links = pd.read_parquet(os.path.join(args.data_dir, f'{lang}wiki-NS0-20231001', 'eval', 'test_data.parquet'))
+        except:
+            print(f'Error reading file {os.path.join(args.data_dir, f"{lang}wiki-NS0-20231001", "eval", "test_data.parquet")}')
+            continue
         print('Loaded links')
         
         # load pages
         files = glob(os.path.join(args.data_dir, f'{lang}wiki-NS0-20231001', 'processed_data', 'good_pages*'))
-        df_pages = pd.concat([pd.read_parquet(file, columns=['title', 'lead_paragraph'])
-                             for file in files]).reset_index(drop=True)
+        try:
+            df_pages = pd.concat([pd.read_parquet(file, columns=['title', 'lead_paragraph'])
+                                for file in files]).reset_index(drop=True)
+        except:
+            files = glob(os.path.join(args.data_dir, f'{lang}wiki-NS0-20231001', 'processed_data', 'good_pages', '*'))
+            dfs = []
+            for file in files:
+                try:
+                    df = pd.read_parquet(file, columns=['title', 'lead_paragraph'])
+                    dfs.append(df)
+                except:
+                    print(f'Error reading file {file}')
+            df_pages = pd.concat(dfs).reset_index(drop=True)
+
         print('Loaded pages')
         
         # load redirects
