@@ -6,12 +6,17 @@ from urllib import parse
 from tqdm import tqdm
 import random
 from ast import literal_eval
+import torch
+from transformers import BertTokenizer, AutoTokenizer, AutoModelForSeq2SeqLM
+
 
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 from baselines import bm25
 from baselines import exact_match
 from baselines import fuzzy_match
 from baselines import embedding_similarity
+from baselines import entqa
+from baselines import get
 
 def fix_title(title):
     return parse.unquote(title).replace('_', ' ')
@@ -21,7 +26,7 @@ if __name__ == '__main__':
     parser.add_argument('--data_dir', type=str, required=True, help='Path to the directory containing the data')
     parser.add_argument('--langs', type=str, nargs='+', required=True, help='Languages to benchmark')
     parser.add_argument('--method_name', type=str, required=True, choices=[
-                        'embedding_similarity', 'random', 'bm25', 'bm25_mentions', 'exact_match', 'fuzzy_match', 'all'], help='Which method to use')
+                        'embedding_similarity', 'random', 'bm25', 'bm25_mentions', 'exact_match', 'fuzzy_match', 'entqa', 'get', 'all'], help='Which method to use')
     parser.add_argument('--model_name', type=str, default='BAAI/bge-base-en-v1.5', help='Which model to use')
     
     args = parser.parse_args()
@@ -31,14 +36,18 @@ if __name__ == '__main__':
         raise ValueError('Data dir does not exist')
     
     if args.method_name == 'all':
-        args.method_name = ['embedding_similarity', 'random', 'bm25', 'bm25_mentions', 'exact_match', 'fuzzy_match',]
+        args.method_name = ['random', 'bm25', 'bm25_mentions', 'exact_match', 'fuzzy_match',]
     else:
         args.method_name = [args.method_name]
     
     # process each language sequentially
     for lang in args.langs:
         print(f'Processing language {lang}')
-        df = pd.read_parquet(os.path.join(args.data_dir, f'{lang}.parquet'))
+        try:
+            df = pd.read_parquet(os.path.join(args.data_dir, f'{lang}.parquet'))
+        except:
+            print(f'No data for language {lang}')
+            continue
         
         source_titles = df['source_title'].apply(fix_title).tolist()
         source_leads = df['source_lead'].tolist()
@@ -139,5 +148,58 @@ if __name__ == '__main__':
                         equals += 1
                 rank.append(position + random.randint(0, equals))
             df['fuzzy_match_rank'] = rank
-    
-        df.to_parquet(os.path.join(args.data_dir, f'{lang}.parquet'))
+        
+        if 'entqa' in args.method_name:
+            print('Calculating EntQA ranks')
+            model = entqa.load_model(True, '../baselines/EntQA/models/biencoder_wiki_large.json', '../baselines/EntQA/retriever.pt', torch.device('cuda'), None, True)
+            tokenizer = BertTokenizer.from_pretrained('bert-large-uncased')
+            model = model.to('cuda')
+            model = model.eval()
+            rank = []
+            mrr = 0
+            mrr_random = 0
+            counter = 0
+            for context, title, lead in tqdm(zip(contexts, target_titles, target_leads), total=len(target_titles)):
+                scores = entqa.rank_contexts(context, title, lead, model, tokenizer)
+                position = 1
+                equals = 0
+                for score in scores[1:]:
+                    if score > scores[0]:
+                        position += 1
+                    if score == scores[0]:
+                        equals += 1
+                rank.append(position + random.randint(0, equals))
+                mrr = mrr * counter / (counter + 1) + 1 / rank[-1] / (counter + 1)
+                mrr_random = mrr_random * counter / (counter + 1) + 1 / random.randint(1, len(scores)) / (counter + 1)
+                counter += 1
+                print(rank[-1], len(scores), mrr, mrr_random)
+            df['entqa_rank'] = rank
+        
+        if 'get' in args.method_name:
+            print('Calculating GET ranks')
+            model = AutoModelForSeq2SeqLM.from_pretrained('../baselines/GROOV/model_checkpoint/model')
+            tokenizer = AutoTokenizer.from_pretrained('t5-base', model_max_length=512)
+            
+            model.to('cuda')
+            model.eval()
+            rank = []
+            mrr = 0
+            mrr_random = 0
+            counter = 0
+            for context, title in tqdm(zip(contexts, target_titles), total=len(target_titles)):
+                scores = get.rank_contexts(context, title, model, tokenizer)
+                position = 1
+                equals = 0
+                for score in scores[1:]:
+                    if score > scores[0]:
+                        position += 1
+                    if score == scores[0]:
+                        equals += 1
+                rank.append(position + random.randint(0, equals))
+                mrr = mrr * counter / (counter + 1) + 1 / rank[-1] / (counter + 1)
+                mrr_random = mrr_random * counter / (counter + 1) + 1 / random.randint(1, len(scores)) / (counter + 1)
+                counter += 1
+                print(rank[-1], len(scores), mrr, mrr_random)
+            df['get_rank'] = rank
+
+        df.to_parquet(os.path.join(args.data_dir, f'{lang}.parquet'))            

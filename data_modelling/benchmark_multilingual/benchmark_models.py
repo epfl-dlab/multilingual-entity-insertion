@@ -39,6 +39,8 @@ if __name__ == '__main__':
                         help='Use cuda if available')
     parser.add_argument('--only_multilingual', action='store_true',
                         help='Only use multilingual model')
+    parser.add_argument('--multilingual_name', type=str, default='multilingual', help='Suffix of multilingual model')
+    parser.add_argument('--pointwise_loss', action='store_true', help='Use model trained with pointwise loss')
     parser.set_defaults(use_section_title=False, use_mentions=False,
                         use_cuda=False, only_multilingual=False)
 
@@ -51,6 +53,8 @@ if __name__ == '__main__':
     if not os.path.exists(args.models_dir):
         raise ValueError('Models directory does not exist')
 
+    output_dimension = 2 if args.pointwise_loss else 1
+
     # process each language sequentially
     for lang in args.langs:
         print('Processing language', lang)
@@ -62,25 +66,25 @@ if __name__ == '__main__':
             models[lang]['model'].eval()
             models[lang]['classification_head'] = nn.Sequential(nn.Linear(models[lang]['model'].config.hidden_size, models[lang]['model'].config.hidden_size),
                                                                 nn.ReLU(),
-                                                                nn.Linear(models[lang]['model'].config.hidden_size, 1))
+                                                                nn.Linear(models[lang]['model'].config.hidden_size, output_dimension))
             models[lang]['classification_head'].load_state_dict(torch.load(
                 os.path.join(args.models_dir, args.models_prefix + '_' + lang, 'classification_head.pth'), map_location='cpu'))
             models[lang]['classification_head'].eval()
             models[lang]['tokenizer'] = AutoTokenizer.from_pretrained(
                 os.path.join(args.models_dir, args.models_prefix + '_' + lang, 'tokenizer'))
-        if os.path.exists(os.path.join(args.models_dir, args.models_prefix + '_' + 'multilingual')):
-            models['multilingual'] = {}
-            models['multilingual']['model'] = AutoModel.from_pretrained(
-                os.path.join(args.models_dir, args.models_prefix + '_' + 'multilingual', 'model'))
-            models['multilingual']['model'].eval()
-            models['multilingual']['classification_head'] = nn.Sequential(nn.Linear(models['multilingual']['model'].config.hidden_size, models['multilingual']['model'].config.hidden_size),
+        if os.path.exists(os.path.join(args.models_dir, args.models_prefix + '_' + args.multilingual_name)):
+            models[args.multilingual_name] = {}
+            models[args.multilingual_name]['model'] = AutoModel.from_pretrained(
+                os.path.join(args.models_dir, args.models_prefix + '_' + args.multilingual_name, 'model'))
+            models[args.multilingual_name]['model'].eval()
+            models[args.multilingual_name]['classification_head'] = nn.Sequential(nn.Linear(models[args.multilingual_name]['model'].config.hidden_size, models[args.multilingual_name]['model'].config.hidden_size),
                                                                           nn.ReLU(),
-                                                                          nn.Linear(models['multilingual']['model'].config.hidden_size, 1))
-            models['multilingual']['classification_head'].load_state_dict(torch.load(
-                os.path.join(args.models_dir, args.models_prefix + '_' + 'multilingual', 'classification_head.pth'), map_location='cpu'))
-            models['multilingual']['classification_head'].eval()
-            models['multilingual']['tokenizer'] = AutoTokenizer.from_pretrained(
-                os.path.join(args.models_dir, args.models_prefix + '_' + 'multilingual', 'tokenizer'))
+                                                                          nn.Linear(models[args.multilingual_name]['model'].config.hidden_size, output_dimension))
+            models[args.multilingual_name]['classification_head'].load_state_dict(torch.load(
+                os.path.join(args.models_dir, args.models_prefix + '_' + args.multilingual_name, 'classification_head.pth'), map_location='cpu'))
+            models[args.multilingual_name]['classification_head'].eval()
+            models[args.multilingual_name]['tokenizer'] = AutoTokenizer.from_pretrained(
+                os.path.join(args.models_dir, args.models_prefix + '_' + args.multilingual_name, 'tokenizer'))
         
         if len(models) == 0:
             raise ValueError('No models found')
@@ -119,9 +123,14 @@ if __name__ == '__main__':
                 mention_map[title] = [row['mention']]
 
         for title in mention_map:
+            mention_map[title] = list(set([mention.lower() for mention in mention_map[title]]))
             if len(mention_map[title]) > 10:
-                mention_map[title] = random.sample(mention_map[title], 10)
-                mention_map[title] = ' '.join(mention_map[title])
+                mention_map[title].sort(key=lambda x: len(x))
+                while len(mention_map[title]) > 10 and len(mention_map[title][0]) < 3:
+                    mention_map[title].pop(0)
+                mention_map[title] = mention_map[title][:10]
+                random.shuffle(mention_map[title])
+            mention_map[title] = ' '.join(mention_map[title])
 
         rank = {model_lang: [] for model_lang in models}
         with torch.no_grad():
@@ -141,17 +150,20 @@ if __name__ == '__main__':
                             input[1] = f"{s}{models[model_lang]['tokenizer'].sep_token}"
                         input[1] += f"{c}"
                         inputs.append(input)
-                        if len(inputs) == 36:
+                        if len(inputs) == 12:
                             input_tokens = models[model_lang]['tokenizer'](inputs, return_tensors='pt', padding='max_length',
                                                                            truncation=True, max_length=512).to('cuda' if torch.cuda.is_available() and args.use_cuda else 'cpu')
                             embeddings = models[model_lang]['model'](
                                 **input_tokens)['last_hidden_state'][:, 0, :]
                             prediction = models[model_lang]['classification_head'](
                                 embeddings).squeeze()
-                            if len(prediction.shape) == 0:
+                            if (len(prediction.shape) == 0 and not args.pointwise_loss) or (len(prediction.shape) == 1 and args.pointwise_loss):
                                 prediction = prediction.unsqueeze(0)
                             for score in prediction:
-                                scores.append(score.item())
+                                if args.pointwise_loss:
+                                    scores.append(score[1].item())
+                                else:                                
+                                    scores.append(score.item())
                             inputs = []
                     if len(inputs) > 0:
                         input_tokens = models[model_lang]['tokenizer'](inputs, return_tensors='pt', padding='max_length',
@@ -160,11 +172,14 @@ if __name__ == '__main__':
                             **input_tokens)['last_hidden_state'][:, 0, :]
                         prediction = models[model_lang]['classification_head'](
                             embeddings).squeeze()
-                        if len(prediction.shape) == 0:
+                        if (len(prediction.shape) == 0 and not args.pointwise_loss) or (len(prediction.shape) == 1 and args.pointwise_loss):
                             prediction = prediction.unsqueeze(0)
                         for score in prediction:
-                            scores.append(score.item())
-
+                            if args.pointwise_loss:
+                                scores.append(score[1].item())
+                            else:
+                                scores.append(score.item())
+                    print(scores)
                     position = 1
                     for i, score in enumerate(scores[1:]):
                         if score > scores[0]:
