@@ -2,6 +2,7 @@ import pandas as pd
 import subprocess
 import argparse
 import os
+from tqdm import tqdm
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -20,16 +21,24 @@ if __name__ == '__main__':
     # read input file
     df = pd.read_parquet(args.input_file).to_dict('records')
     
-    clean_data = set([])
-    for row in df:
+    data = []
+    for row in tqdm(df):
         source_ID = row['source_ID']
         first_version = row['first_version']
         second_version = row['second_version']
-        if f"{source_ID}\t{first_version}" not in clean_data and not os.path.exists(os.path.join(args.output_directory, f'{source_ID}_{first_version}.html')):
-            clean_data.add(f"{source_ID}\t{first_version}")
-        if f"{source_ID}\t{second_version}" not in clean_data and not os.path.exists(os.path.join(args.output_directory, f'{source_ID}_{second_version}.html')):
-            clean_data.add(f"{source_ID}\t{second_version}")
-    
+        data.append(f"{source_ID}\t{first_version}")
+        data.append(f"{source_ID}\t{second_version}")
+    data = list(set(data))
+    clean_data = []
+    print('Finding existing files')
+    existing_files = os.listdir(args.output_directory)
+    existing_files = set(existing_files)
+    for elem in tqdm(data):
+        source_ID, version = elem.split('\t')
+        if f'{source_ID}_{version}.html' in existing_files:
+            continue
+        clean_data.append(elem)
+
     # write output to file
     with open(os.path.join(args.output_directory, 'pages.txt'), 'w') as f:
         for item in clean_data:

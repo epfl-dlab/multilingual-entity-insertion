@@ -66,7 +66,6 @@ def process_title(title):
 def process_revision_history(input):
     file = input['file']
     # print file size
-    print(f'{file}: {round(os.path.getsize(file) / 1024 / 1024, 2)} MB')
     link_struc = input['link_struc']
     prev_text = ''
     links = []
@@ -74,16 +73,18 @@ def process_revision_history(input):
     first_date = pd.to_datetime(args.first_date)
     second_date = pd.to_datetime(args.second_date)
     try:
+        print(f'{file}: {round(os.path.getsize(file) / 1024 / 1024, 2)} MB')
         with bz2.open(file, 'rb') as f:
             context = iter(iterparse(f._buffer, events=('start', 'end')))
             _, root = next(context) # get root element
-            for i, (event, elem) in enumerate(pbar := tqdm(context)):
+            elem_counter = 0
+            for i, (event, elem) in enumerate(pbar := tqdm(context, miniters=1000)):
             # pbar = tqdm(iterparse(f._buffer, events=('end',)))
             # for i, (_, elem) in enumerate(pbar):
                 # print size of f in MB
                 # print(f'{file}: {round(f.tell() / 1024 / 1024, 2)} MB')
-                pbar.set_description(f"{len(link_struc)} pages left to process (({processed_pages}/{source_pages} pages processed))")
                 if elem.tag.endswith('page') and event == 'end':
+                    elem_counter = 0
                     pages = []
                     current_id = None
                     skip = False
@@ -94,6 +95,7 @@ def process_revision_history(input):
                                 break
                         if child.tag.endswith('id'):
                             current_id = int(child.text)
+                            pbar.set_description(f"Processing article with ID {current_id} ({len(links)} links found)")
                             if current_id not in link_struc:
                                 skip = True
                             break
@@ -108,16 +110,14 @@ def process_revision_history(input):
                     skip = False
                     for i in range(len(elem) - 1, -1, -1):
                         child = elem[i]
-                        if skip:
-                            elem[i].clear()
-                            del elem[i]
-                            continue
                         if child.tag.endswith('revision'):
                             for revision_data in child:
+                                # print(len(pages))
                                 if revision_data.tag.endswith('timestamp'):
                                     # timestamp has format 2019-01-01T00:00:00Z
                                     # compare the timestamp with the date of the first dump and the second dump
                                     timestamp = revision_data.text
+                                    # print(timestamp)
                                     timestamp = pd.to_datetime(
                                         timestamp).tz_convert(None)
                                     if timestamp > second_date:
@@ -135,6 +135,8 @@ def process_revision_history(input):
                                         {'version': version_id, 'text': clean_text})
                             elem[i].clear()
                             del elem[i]
+                            if skip:
+                                break
                     if not pages:
                         elem.clear()
                         # remove all references to the element
@@ -200,12 +202,20 @@ def process_revision_history(input):
                     # dont remove root element
                     del elem
                     root.clear()
+                else:
+                    elem_counter += 1
+                    if elem_counter > 1_000_000: # dont keep more than 1_000_000 elements in memory
+                        elem.clear()
+                        # remove all references to the element
+                        # dont remove root element
+                        del elem
+                        root.clear()
     except Exception as e:
         # print the exception and any relevant information
         # print traceback
         print(e)
         print(f'Failed to process file {file}')
-        return {'links': links, 'processed_pages': processed_pages, 'file_name': file}
+        return {'links': links, 'processed_pages': processed_pages, 'file_name': 'dummy_file'}
     return {'links': links, 'processed_pages': processed_pages, 'file_name': file}
 
 
@@ -416,7 +426,7 @@ if __name__ == '__main__':
     # remove any file from the input which does not exist
     input = [file for file in input if os.path.exists(file['file'])]
     # sort by file size 
-    input = sorted(input, key=lambda x: os.path.getsize(x['file']))
+    input = sorted(input, key=lambda x: os.path.getsize(x['file']), reverse=True)
     if args.max_links is None:
         max_links = float('inf')
     else:
@@ -426,7 +436,7 @@ if __name__ == '__main__':
     found_links = 0
     processed_pages = 0
     counter = 0
-    with Pool(min(1, len(input))) as p:
+    with Pool(min(4, len(input))) as p:
         for result in (pbar := tqdm(p.imap_unordered(process_revision_history, input), total=len(input))):
             output = result['links']
             found_links += len(output)
