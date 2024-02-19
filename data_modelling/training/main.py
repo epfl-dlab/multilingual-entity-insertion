@@ -198,8 +198,10 @@ if __name__ == '__main__':
                         default=[0], help='Minimum number of steps to train for')
     parser.add_argument('--use_current_links', action='store_true',
                         help='Whether to use current links')
+    parser.add_argument('--seed', type=int, default=1234, help='Random seed')
+    parser.add_argument('--pointwise_loss', action='store_true', help='Use pointwise loss')
     parser.set_defaults(resume=False, insert_section=False, mask_negatives=False,
-                        two_stage=False, insert_mentions=False, use_current_links=False)
+                        two_stage=False, insert_mentions=False, use_current_links=False, pointwise_loss=False)
 
     args = parser.parse_args()
 
@@ -239,6 +241,11 @@ if __name__ == '__main__':
     accelerator = Accelerator(kwargs_handlers=[ddp_kwargs])
     device = accelerator.device
 
+    # set up random seeds
+    random.seed(args.seed)
+    torch.manual_seed(args.seed)
+    torch.cuda.manual_seed_all(args.seed)
+
     # set-up tensorboard
     if not os.path.exists('runs'):
         os.makedirs('runs', exist_ok=True)
@@ -276,6 +283,11 @@ if __name__ == '__main__':
     for arg in vars(args):
         logger.info(f"\t- {arg}: {getattr(args, arg)}")
 
+    if args.pointwise_loss:
+        output_dimension = 2
+    else:
+        output_dimension = 1
+
     if args.resume:
         logger.info("Loading model")
         try:
@@ -289,7 +301,7 @@ if __name__ == '__main__':
         try:
             classification_head = Sequential(nn.Linear(model_size, model_size),
                                              nn.ReLU(),
-                                             nn.Linear(model_size, 1))
+                                             nn.Linear(model_size, output_dimension))
             classification_head.load_state_dict(torch.load(os.path.join(
                 args.checkpoint_dir, 'classification_head.pth'), map_location='cpu'))
             logger.info("Classification head loaded from checkpoint directory")
@@ -299,7 +311,7 @@ if __name__ == '__main__':
             logger.info("Initializing classification head with random weights")
             classification_head = Sequential(nn.Linear(model_size, model_size),
                                              nn.ReLU(),
-                                             nn.Linear(model_size, 1))
+                                             nn.Linear(model_size, output_dimension))
     else:
         logger.info("Initializing model")
         model = AutoModel.from_pretrained(args.model_name)
@@ -307,8 +319,8 @@ if __name__ == '__main__':
 
         classification_head = Sequential(nn.Linear(model_size, model_size),
                                          nn.ReLU(),
-                                         nn.Linear(model_size, 1))
-        
+                                         nn.Linear(model_size, output_dimension))
+
     if args.model_architecture == 'T5':
         # freeze all the decoder layers
         for param in model.decoder.parameters():
@@ -340,7 +352,7 @@ if __name__ == '__main__':
             noise_types = ['mask_span', 'mask_sentence',
                            'mask_mention', 'no_mask']
             for index, item in enumerate(input):
-                if item['target_title'] not in mention_map:
+                if args.insert_mentions and item['target_title'] not in mention_map:
                     mention_map[item['target_title']] = ''
                 found = False
                 if (item['link_context'][:item['context_span_start_index']] + item['link_context'][item['context_span_end_index']:]).strip() != '':
@@ -428,7 +440,7 @@ if __name__ == '__main__':
                     output['contexts'].append(context_input)
         else:
             for index, item in enumerate(input):
-                if item['target_title'] not in mention_map:
+                if args.insert_mentions and item['target_title'] not in mention_map:
                     mention_map[item['target_title']] = ''
 
                 if args.insert_mentions:
@@ -498,21 +510,22 @@ if __name__ == '__main__':
                             pin_memory=True)
 
     logger.info("Loading mention knowledge")
-    mentions = pd.read_parquet(os.path.join(
-        args.data_dir, 'mentions.parquet')).to_dict('records')
-    mention_map = {}
-    for mention in mentions:
-        target_title = unquote(mention['target_title']).replace('_', ' ')
-        if target_title in mention_map:
-            mention_map[target_title].append(mention['mention'])
-        else:
-            mention_map[target_title] = [mention['mention']]
+    if args.insert_mentions:
+        mentions = pd.read_parquet(os.path.join(
+            args.data_dir, 'mentions.parquet')).to_dict('records')
+        mention_map = {}
+        for mention in mentions:
+            target_title = unquote(mention['target_title']).replace('_', ' ')
+            if target_title in mention_map:
+                mention_map[target_title].append(mention['mention'])
+            else:
+                mention_map[target_title] = [mention['mention']]
 
-    for mention in mention_map:
-        # only keep a random subset of 10 mentions
-        if len(mention_map[mention]) > 10:
-            mention_map[mention] = random.sample(mention_map[mention], 10)
-        mention_map[mention] = ' '.join(mention_map[mention])
+        for mention in mention_map:
+            # only keep a random subset of 10 mentions
+            if len(mention_map[mention]) > 10:
+                mention_map[mention] = random.sample(mention_map[mention], 10)
+            mention_map[mention] = ' '.join(mention_map[mention])
 
     if args.full_freeze_steps > 0:
         logger.info(
@@ -542,22 +555,34 @@ if __name__ == '__main__':
             # source: https://discuss.pytorch.org/t/multiple-model-forward-followed-by-one-loss-backward/20868
             if args.model_architecture != 'T5':
                 embeddings = model(**data['contexts']
-                                )['last_hidden_state'][:, 0, :]
+                                   )['last_hidden_state'][:, 0, :]
             else:
                 embeddings = model.encoder(**data['contexts']
-                                        )['last_hidden_state'][:, 0, :]
+                                           )['last_hidden_state'][:, 0, :]
             logits = classification_head(embeddings)
-            # logits has shape (batch_size * (neg_samples + 1), 1)
-            # we need to reshape it to (batch_size, neg_samples + 1)
-            logits = logits.view(-1, args.neg_samples_train[0] + 1)
-            labels = torch.zeros_like(logits)
-            labels[:, 0] = 1
-            # shuffle logits and labels
-            indices = torch.randperm(logits.shape[1])
-            logits = logits[:, indices]
-            labels = labels[:, indices]
-            loss = loss_fn(
+            if not args.pointwise_loss:
+                # logits has shape (batch_size * (neg_samples + 1), 1)
+                # we need to reshape it to (batch_size, neg_samples + 1)
+                logits = logits.view(-1, args.neg_samples_train[0] + 1)
+                labels = torch.zeros_like(logits)
+                labels[:, 0] = 1
+                # shuffle logits and labels
+                indices = torch.randperm(logits.shape[1])
+                logits = logits[:, indices]
+                labels = labels[:, indices]
+                loss = loss_fn(
                 logits / args.temperature[0], labels) / args.ga_steps[0]
+            else:
+                # logits has shape (batch_size * (neg_samples + 1), 2)
+                labels = torch.zeros(logits.shape[0]).to(device)
+                labels[:logits.shape[0]:args.neg_samples_train[0] + 1] = 1
+                # cast labels to long
+                labels = labels.long()
+                print('LOGITS', logits)
+                print('LABELS', labels)
+                loss = loss_fn(logits, labels) / args.ga_steps[0]
+                print('LOSS', loss)
+
             accelerator.backward(loss)
             if (index + 1) % args.ga_steps[0] == 0:
                 optimizer.step()
@@ -631,11 +656,17 @@ if __name__ == '__main__':
                             embeddings = model.encoder(
                                 **val_data['contexts'])['last_hidden_state'][:, 0, :]
                         val_logits = classification_head(embeddings)
-                        val_logits = val_logits.view(-1,
-                                                     args.neg_samples_eval[0] + 1)
-                        labels = torch.zeros_like(val_logits)
-                        labels[:, 0] = 1
-                        val_loss = loss_fn(val_logits, labels)
+                        if not args.pointwise_loss:
+                            val_logits = val_logits.view(-1,
+                                                        args.neg_samples_eval[0] + 1)
+                            labels = torch.zeros_like(val_logits)
+                            labels[:, 0] = 1
+                            val_loss = loss_fn(val_logits, labels)
+                        else:
+                            labels = torch.zeros(val_logits.shape[0]).to(device)
+                            labels[:val_logits.shape[0]:args.neg_samples_eval[0] + 1] = 1
+                            labels = labels.long()
+                            val_loss = loss_fn(val_logits, labels)
 
                         # gather the results from all processes
                         val_logits = accelerator.pad_across_processes(
@@ -658,70 +689,78 @@ if __name__ == '__main__':
 
                         n_lists += len(labels)
 
-                        # calculate mrr, hits@k, ndcg@k
-                        # sort probabilities in descending order and labels accordingly
-                        val_logits, indices = torch.sort(
-                            val_logits, dim=1, descending=True)
-                        labels = torch.gather(labels, dim=1, index=indices)
-                        # calculate mrr
-                        for k in [1, 5, 10]:
-                            mrr_at_k[str(k)] += torch.sum(
-                                1 / (torch.nonzero(labels[:, :k])[:, 1].float() + 1)).item()
-                        mrr_at_k['max'] += torch.sum(
-                            1 / (torch.nonzero(labels)[:, 1].float() + 1)).item()
-
-                        # calculate hits@k
-                        for k in [1, 5, 10]:
-                            hits_at_k[str(k)] += torch.sum(
-                                torch.sum(labels[:, :k], dim=1)).item()
-                        hits_at_k['max'] += torch.sum(
-                            torch.sum(labels, dim=1)).item()
-
-                        # calculate ndcg@k
-                        for k in [1, 5, 10]:
-                            ndcg_at_k[str(k)] += torch.sum(
-                                torch.sum(labels[:, :k] / torch.log2(torch.arange(2, k + 2).float()), dim=1)).item()
-                        ndcg_at_k['max'] += torch.sum(
-                            torch.sum(labels / torch.log2(torch.arange(2, labels.shape[1] + 2).float()), dim=1)).item()
-
-                        # compute discritized scores for each noise type
-                        for i in range(len(noise_map)):
-                            noise_part = noise == i
-                            labels_part = labels[noise_part]
-
+                        # ranking metrics don't apply to pointwise loss
+                        if not args.pointwise_loss:
+                            # calculate mrr, hits@k, ndcg@k
+                            # sort probabilities in descending order and labels accordingly
+                            val_logits, indices = torch.sort(
+                                val_logits, dim=1, descending=True)
+                            labels = torch.gather(labels, dim=1, index=indices)
+                            # calculate mrr
                             for k in [1, 5, 10]:
-                                noise_perf[i]['mrr'][str(k)] += torch.sum(
-                                    1 / (torch.nonzero(labels_part[:, :k])[:, 1].float() + 1)).item()
-                            noise_perf[i]['mrr']['max'] += torch.sum(
-                                1 / (torch.nonzero(labels_part)[:, 1].float() + 1)).item()
+                                mrr_at_k[str(k)] += torch.sum(
+                                    1 / (torch.nonzero(labels[:, :k])[:, 1].float() + 1)).item()
+                            mrr_at_k['max'] += torch.sum(
+                                1 / (torch.nonzero(labels)[:, 1].float() + 1)).item()
 
+                            # calculate hits@k
                             for k in [1, 5, 10]:
-                                noise_perf[i]['hits'][str(k)] += torch.sum(
-                                    torch.sum(labels_part[:, :k], dim=1)).item()
-                            noise_perf[i]['hits']['max'] += torch.sum(
-                                torch.sum(labels_part, dim=1)).item()
+                                hits_at_k[str(k)] += torch.sum(
+                                    torch.sum(labels[:, :k], dim=1)).item()
+                            hits_at_k['max'] += torch.sum(
+                                torch.sum(labels, dim=1)).item()
 
+                            # calculate ndcg@k
                             for k in [1, 5, 10]:
-                                noise_perf[i]['ndcg'][str(k)] += torch.sum(
-                                    torch.sum(labels_part[:, :k] / torch.log2(torch.arange(2, k + 2).float()), dim=1)).item()
-                            noise_perf[i]['ndcg']['max'] += torch.sum(
-                                torch.sum(labels_part / torch.log2(torch.arange(2, labels_part.shape[1] + 2).float()), dim=1)).item()
+                                ndcg_at_k[str(k)] += torch.sum(
+                                    torch.sum(labels[:, :k] / torch.log2(torch.arange(2, k + 2).float()), dim=1)).item()
+                            ndcg_at_k['max'] += torch.sum(
+                                torch.sum(labels / torch.log2(torch.arange(2, labels.shape[1] + 2).float()), dim=1)).item()
 
-                            noise_perf[i]['n_lists'] += len(labels_part)
+                            # compute discritized scores for each noise type
+                            for i in range(len(noise_map)):
+                                noise_part = noise == i
+                                labels_part = labels[noise_part]
+
+                                for k in [1, 5, 10]:
+                                    noise_perf[i]['mrr'][str(k)] += torch.sum(
+                                        1 / (torch.nonzero(labels_part[:, :k])[:, 1].float() + 1)).item()
+                                noise_perf[i]['mrr']['max'] += torch.sum(
+                                    1 / (torch.nonzero(labels_part)[:, 1].float() + 1)).item()
+
+                                for k in [1, 5, 10]:
+                                    noise_perf[i]['hits'][str(k)] += torch.sum(
+                                        torch.sum(labels_part[:, :k], dim=1)).item()
+                                noise_perf[i]['hits']['max'] += torch.sum(
+                                    torch.sum(labels_part, dim=1)).item()
+
+                                for k in [1, 5, 10]:
+                                    noise_perf[i]['ndcg'][str(k)] += torch.sum(
+                                        torch.sum(labels_part[:, :k] / torch.log2(torch.arange(2, k + 2).float()), dim=1)).item()
+                                noise_perf[i]['ndcg']['max'] += torch.sum(
+                                    torch.sum(labels_part / torch.log2(torch.arange(2, labels_part.shape[1] + 2).float()), dim=1)).item()
+
+                                noise_perf[i]['n_lists'] += len(labels_part)
 
                         probs = torch.softmax(val_logits, dim=1)
                         # predictions are 1 at the index with the highest probability, and 0 otherwise
                         preds = (probs == torch.max(
                             probs, dim=1, keepdim=True)[0]).long()
 
-                        true_pos += torch.sum((preds == 1)
-                                              & (labels == 1)).item()
-                        true_neg += torch.sum((preds == 0)
-                                              & (labels == 0)).item()
-                        false_pos += torch.sum((preds == 1)
-                                               & (labels == 0)).item()
-                        false_neg += torch.sum((preds == 0)
-                                               & (labels == 1)).item()
+                        if not args.pointwise_loss:
+                            true_pos += torch.sum((preds == 1)
+                                                & (labels == 1)).item()
+                            true_neg += torch.sum((preds == 0)
+                                                & (labels == 0)).item()
+                            false_pos += torch.sum((preds == 1)
+                                                & (labels == 0)).item()
+                            false_neg += torch.sum((preds == 0)
+                                                & (labels == 1)).item()
+                        else:
+                            true_pos += torch.sum((preds[:, 1] == 1) & (labels == 1)).item()
+                            true_neg += torch.sum((preds[:, 0] == 1) & (labels == 0)).item()
+                            false_pos += torch.sum((preds[:, 1] == 1) & (labels == 0)).item()
+                            false_neg += torch.sum((preds[:, 0] == 1) & (labels == 1)).item()
                         total = true_pos + true_neg + false_pos + false_neg
 
                         if j == len(val_loader) - 1:
@@ -736,33 +775,35 @@ if __name__ == '__main__':
                         (true_pos + false_neg) if true_pos + false_neg > 0 else 0
                     f1 = 2 * precision * recall / \
                         (precision + recall) if precision + recall > 0 else 0
-                    mrr_at_k = {k: v / n_lists for k, v in mrr_at_k.items()}
-                    hits_at_k = {k: v / n_lists for k, v in hits_at_k.items()}
-                    ndcg_at_k = {k: v / n_lists for k, v in ndcg_at_k.items()}
-                    for i in range(len(noise_map)):
-                        if noise_perf[i]['n_lists'] > 0:
-                            noise_perf[i]['mrr'] = {
-                                k: v / noise_perf[i]['n_lists'] for k, v in noise_perf[i]['mrr'].items()}
-                            noise_perf[i]['hits'] = {
-                                k: v / noise_perf[i]['n_lists'] for k, v in noise_perf[i]['hits'].items()}
-                            noise_perf[i]['ndcg'] = {
-                                k: v / noise_perf[i]['n_lists'] for k, v in noise_perf[i]['ndcg'].items()}
+                    if not args.pointwise_loss:
+                        mrr_at_k = {k: v / n_lists for k, v in mrr_at_k.items()}
+                        hits_at_k = {k: v / n_lists for k, v in hits_at_k.items()}
+                        ndcg_at_k = {k: v / n_lists for k, v in ndcg_at_k.items()}
+                        for i in range(len(noise_map)):
+                            if noise_perf[i]['n_lists'] > 0:
+                                noise_perf[i]['mrr'] = {
+                                    k: v / noise_perf[i]['n_lists'] for k, v in noise_perf[i]['mrr'].items()}
+                                noise_perf[i]['hits'] = {
+                                    k: v / noise_perf[i]['n_lists'] for k, v in noise_perf[i]['hits'].items()}
+                                noise_perf[i]['ndcg'] = {
+                                    k: v / noise_perf[i]['n_lists'] for k, v in noise_perf[i]['ndcg'].items()}
                     running_val_loss /= len(val_loader)
 
-                    for k in ['1', '5', '10', 'max']:
-                        logger.info(f"MRR@{k}: {mrr_at_k[k]}")
-                        logger.info(f"Hits@{k}: {hits_at_k[k]}")
-                        logger.info(f"NDCG@{k}: {ndcg_at_k[k]}")
-                    for i in range(len(noise_map)):
-                        if noise_perf[i]['n_lists'] > 0:
-                            logger.info(f"Noise strategy {noise_map_rev[i]}:")
-                            for k in ['1', '5', '10', 'max']:
-                                logger.info(
-                                    f"\t- MRR@{k}: {noise_perf[i]['mrr'][k]}")
-                                logger.info(
-                                    f"\t- Hits@{k}: {noise_perf[i]['hits'][k]}")
-                                logger.info(
-                                    f"\t- NDCG@{k}: {noise_perf[i]['ndcg'][k]}")
+                    if not args.pointwise_loss:
+                        for k in ['1', '5', '10', 'max']:
+                            logger.info(f"MRR@{k}: {mrr_at_k[k]}")
+                            logger.info(f"Hits@{k}: {hits_at_k[k]}")
+                            logger.info(f"NDCG@{k}: {ndcg_at_k[k]}")
+                        for i in range(len(noise_map)):
+                            if noise_perf[i]['n_lists'] > 0:
+                                logger.info(f"Noise strategy {noise_map_rev[i]}:")
+                                for k in ['1', '5', '10', 'max']:
+                                    logger.info(
+                                        f"\t- MRR@{k}: {noise_perf[i]['mrr'][k]}")
+                                    logger.info(
+                                        f"\t- Hits@{k}: {noise_perf[i]['hits'][k]}")
+                                    logger.info(
+                                        f"\t- NDCG@{k}: {noise_perf[i]['ndcg'][k]}")
                     logger.info(f"Accuracy: {accuracy}")
                     logger.info(f"Precision: {precision}")
                     logger.info(f"Recall: {recall}")
@@ -770,27 +811,28 @@ if __name__ == '__main__':
                     logger.info(f"Validation loss: {running_val_loss}")
 
                     if accelerator.is_main_process:
-                        for k in ['1', '5', '10', 'max']:
-                            writer.add_scalar(
-                                f'val/mrr@{k}', mrr_at_k[k], step)
-                            writer.add_scalar(
-                                f'val/hits@{k}', hits_at_k[k], step)
-                            writer.add_scalar(
-                                f'val/ndcg@{k}', ndcg_at_k[k], step)
+                        if not args.pointwise_loss:
+                            for k in ['1', '5', '10', 'max']:
+                                writer.add_scalar(
+                                    f'val/mrr@{k}', mrr_at_k[k], step)
+                                writer.add_scalar(
+                                    f'val/hits@{k}', hits_at_k[k], step)
+                                writer.add_scalar(
+                                    f'val/ndcg@{k}', ndcg_at_k[k], step)
+                            for i in range(len(noise_map)):
+                                if noise_perf[i]['n_lists'] > 0:
+                                    for k in ['1', '5', '10', 'max']:
+                                        writer.add_scalar(
+                                            f'val_noise/{noise_map_rev[i]}_mrr@{k}', noise_perf[i]['mrr'][k], step)
+                                        writer.add_scalar(
+                                            f'val_noise/{noise_map_rev[i]}_hits@{k}', noise_perf[i]['hits'][k], step)
+                                        writer.add_scalar(
+                                            f'val_noise/{noise_map_rev[i]}_ndcg@{k}', noise_perf[i]['ndcg'][k], step)
                         writer.add_scalar('val/accuracy', accuracy, step)
                         writer.add_scalar('val/precision', precision, step)
                         writer.add_scalar('val/recall', recall, step)
                         writer.add_scalar('val/f1', f1, step)
                         writer.add_scalar('val/loss', running_val_loss, step)
-                        for i in range(len(noise_map)):
-                            if noise_perf[i]['n_lists'] > 0:
-                                for k in ['1', '5', '10', 'max']:
-                                    writer.add_scalar(
-                                        f'val_noise/{noise_map_rev[i]}_mrr@{k}', noise_perf[i]['mrr'][k], step)
-                                    writer.add_scalar(
-                                        f'val_noise/{noise_map_rev[i]}_hits@{k}', noise_perf[i]['hits'][k], step)
-                                    writer.add_scalar(
-                                        f'val_noise/{noise_map_rev[i]}_ndcg@{k}', noise_perf[i]['ndcg'][k], step)
 
                 model.train()
                 torch.cuda.empty_cache()
@@ -824,7 +866,7 @@ if __name__ == '__main__':
         output = {'contexts': [], 'noises': []}
         if input[0]['split'] == 'train':
             for index, item in enumerate(input):
-                if item['target_title'] not in mention_map:
+                if args.insert_mentions and item['target_title'] not in mention_map:
                     mention_map[item['target_title']] = ''
 
                 if args.insert_mentions:
@@ -857,7 +899,7 @@ if __name__ == '__main__':
                     output['contexts'].append(context_input)
         else:
             for index, item in enumerate(input):
-                if item['target_title'] not in mention_map:
+                if args.insert_mentions and item['target_title'] not in mention_map:
                     mention_map[item['target_title']] = ''
                 if args.insert_mentions:
                     context_input = [
@@ -922,22 +964,23 @@ if __name__ == '__main__':
 
     train_loader, val_loader = accelerator.prepare(train_loader, val_loader)
 
-    logger.info("Loading mention knowledge")
-    mentions = pd.read_parquet(os.path.join(
-        args.data_dir_2, 'mentions.parquet')).to_dict('records')
-    mention_map = {}
-    for mention in mentions:
-        target_title = unquote(mention['target_title']).replace('_', ' ')
-        if target_title in mention_map:
-            mention_map[target_title].append(mention['mention'])
-        else:
-            mention_map[target_title] = [mention['mention']]
+    if args.insert_mentions:
+        logger.info("Loading mention knowledge")
+        mentions = pd.read_parquet(os.path.join(
+            args.data_dir_2, 'mentions.parquet')).to_dict('records')
+        mention_map = {}
+        for mention in mentions:
+            target_title = unquote(mention['target_title']).replace('_', ' ')
+            if target_title in mention_map:
+                mention_map[target_title].append(mention['mention'])
+            else:
+                mention_map[target_title] = [mention['mention']]
 
-    for mention in mention_map:
-        # only keep a random subset of 10 mentions
-        if len(mention_map[mention]) > 10:
-            mention_map[mention] = random.sample(mention_map[mention], 10)
-        mention_map[mention] = ' '.join(mention_map[mention])
+        for mention in mention_map:
+            # only keep a random subset of 10 mentions
+            if len(mention_map[mention]) > 10:
+                mention_map[mention] = random.sample(mention_map[mention], 10)
+            mention_map[mention] = ' '.join(mention_map[mention])
 
     logger.info("Starting training")
     running_loss = 0
@@ -951,16 +994,22 @@ if __name__ == '__main__':
             # source: https://discuss.pytorch.org/t/multiple-model-forward-followed-by-one-loss-backward/20868
             if args.model_architecture != 'T5':
                 embeddings = model(**data['contexts']
-                                )['last_hidden_state'][:, 0, :]
+                                   )['last_hidden_state'][:, 0, :]
             else:
                 embeddings = model.encoder(**data['contexts']
-                                        )['last_hidden_state'][:, 0, :]
+                                           )['last_hidden_state'][:, 0, :]
             logits = classification_head(embeddings)
-            logits = logits.view(-1, args.neg_samples_train[1] + 1)
-            labels = torch.zeros_like(logits)
-            labels[:, 0] = 1
-            loss = loss_fn(
-                logits / args.temperature[1], labels) / args.ga_steps[1]
+            if not args.pointwise_loss:
+                logits = logits.view(-1, args.neg_samples_train[1] + 1)
+                labels = torch.zeros_like(logits)
+                labels[:, 0] = 1
+                loss = loss_fn(
+                    logits / args.temperature[1], labels) / args.ga_steps[1]
+            else:
+                labels = torch.zeros(logits.shape[0]).to(device)
+                labels[:logits.shape[0]:args.neg_samples_train[1] + 1] = 1
+                labels = labels.long()
+                loss = loss_fn(logits, labels) / args.ga_steps[1]
             accelerator.backward(loss)
             if (index + 1) % args.ga_steps[1] == 0:
                 optimizer.step()
@@ -1025,11 +1074,17 @@ if __name__ == '__main__':
                             embeddings = model.encoder(
                                 **val_data['contexts'])['last_hidden_state'][:, 0, :]
                         val_logits = classification_head(embeddings)
-                        val_logits = val_logits.view(
-                            -1, args.neg_samples_eval[1] + 1)
-                        labels = torch.zeros_like(val_logits)
-                        labels[:, 0] = 1
-                        val_loss = loss_fn(val_logits, labels)
+                        if not args.pointwise_loss:
+                            val_logits = val_logits.view(
+                                -1, args.neg_samples_eval[1] + 1)
+                            labels = torch.zeros_like(val_logits)
+                            labels[:, 0] = 1
+                            val_loss = loss_fn(val_logits, labels)
+                        else:
+                            labels = torch.zeros(val_logits.shape[0]).to(device)
+                            labels[:val_logits.shape[0]:args.neg_samples_eval[1] + 1] = 1
+                            labels = labels.long()
+                            val_loss = loss_fn(val_logits, labels)
 
                         # gather the results from all processes
                         val_logits = accelerator.pad_across_processes(
@@ -1052,66 +1107,73 @@ if __name__ == '__main__':
 
                         n_lists += len(labels)
 
-                        # calculate mrr, hits@k, ndcg@k
-                        # sort probabilities in descending order and labels accordingly
-                        val_logits, indices = torch.sort(
-                            val_logits, dim=1, descending=True)
-                        labels = torch.gather(labels, dim=1, index=indices)
-                        # calculate mrr
-                        for k in [1, 5, 10]:
-                            mrr_at_k[str(k)] += torch.sum(
-                                1 / (torch.nonzero(labels[:, :k])[:, 1].float() + 1)).item()
-                        mrr_at_k['max'] += torch.sum(
-                            1 / (torch.nonzero(labels)[:, 1].float() + 1)).item()
-
-                        # calculate hits@k
-                        for k in [1, 5, 10]:
-                            hits_at_k[str(k)] += torch.sum(
-                                torch.sum(labels[:, :k], dim=1)).item()
-                        hits_at_k['max'] += torch.sum(
-                            torch.sum(labels, dim=1)).item()
-
-                        # calculate ndcg@k
-                        for k in [1, 5, 10]:
-                            ndcg_at_k[str(k)] += torch.sum(
-                                torch.sum(labels[:, :k] / torch.log2(torch.arange(2, k + 2).float()), dim=1)).item()
-                        ndcg_at_k['max'] += torch.sum(
-                            torch.sum(labels / torch.log2(torch.arange(2, labels.shape[1] + 2).float()), dim=1)).item()
-
-                        # compute discritized scores for each noise type
-                        for i in range(len(missing_map)):
-                            noise_part = noise == i
-                            labels_part = labels[noise_part]
-
+                        if not args.pointwise_loss:
+                            # calculate mrr, hits@k, ndcg@k
+                            # sort probabilities in descending order and labels accordingly
+                            val_logits, indices = torch.sort(
+                                val_logits, dim=1, descending=True)
+                            labels = torch.gather(labels, dim=1, index=indices)
+                            # calculate mrr
                             for k in [1, 5, 10]:
-                                noise_perf[i]['mrr'][str(k)] += torch.sum(
-                                    1 / (torch.nonzero(labels_part[:, :k])[:, 1].float() + 1)).item()
-                                noise_perf[i]['hits'][str(k)] += torch.sum(
-                                    torch.sum(labels_part[:, :k], dim=1)).item()
-                                noise_perf[i]['ndcg'][str(k)] += torch.sum(
-                                    torch.sum(labels_part[:, :k] / torch.log2(torch.arange(2, k + 2).float()), dim=1)).item()
-                            noise_perf[i]['mrr']['max'] += torch.sum(
-                                1 / (torch.nonzero(labels_part)[:, 1].float() + 1)).item()
-                            noise_perf[i]['hits']['max'] += torch.sum(
-                                torch.sum(labels_part, dim=1)).item()
-                            noise_perf[i]['ndcg']['max'] += torch.sum(
-                                torch.sum(labels_part / torch.log2(torch.arange(2, labels_part.shape[1] + 2).float()), dim=1)).item()
+                                mrr_at_k[str(k)] += torch.sum(
+                                    1 / (torch.nonzero(labels[:, :k])[:, 1].float() + 1)).item()
+                            mrr_at_k['max'] += torch.sum(
+                                1 / (torch.nonzero(labels)[:, 1].float() + 1)).item()
 
-                            noise_perf[i]['n_lists'] += len(labels_part)
+                            # calculate hits@k
+                            for k in [1, 5, 10]:
+                                hits_at_k[str(k)] += torch.sum(
+                                    torch.sum(labels[:, :k], dim=1)).item()
+                            hits_at_k['max'] += torch.sum(
+                                torch.sum(labels, dim=1)).item()
+
+                            # calculate ndcg@k
+                            for k in [1, 5, 10]:
+                                ndcg_at_k[str(k)] += torch.sum(
+                                    torch.sum(labels[:, :k] / torch.log2(torch.arange(2, k + 2).float()), dim=1)).item()
+                            ndcg_at_k['max'] += torch.sum(
+                                torch.sum(labels / torch.log2(torch.arange(2, labels.shape[1] + 2).float()), dim=1)).item()
+
+                            # compute discritized scores for each noise type
+                            for i in range(len(missing_map)):
+                                noise_part = noise == i
+                                labels_part = labels[noise_part]
+
+                                for k in [1, 5, 10]:
+                                    noise_perf[i]['mrr'][str(k)] += torch.sum(
+                                        1 / (torch.nonzero(labels_part[:, :k])[:, 1].float() + 1)).item()
+                                    noise_perf[i]['hits'][str(k)] += torch.sum(
+                                        torch.sum(labels_part[:, :k], dim=1)).item()
+                                    noise_perf[i]['ndcg'][str(k)] += torch.sum(
+                                        torch.sum(labels_part[:, :k] / torch.log2(torch.arange(2, k + 2).float()), dim=1)).item()
+                                noise_perf[i]['mrr']['max'] += torch.sum(
+                                    1 / (torch.nonzero(labels_part)[:, 1].float() + 1)).item()
+                                noise_perf[i]['hits']['max'] += torch.sum(
+                                    torch.sum(labels_part, dim=1)).item()
+                                noise_perf[i]['ndcg']['max'] += torch.sum(
+                                    torch.sum(labels_part / torch.log2(torch.arange(2, labels_part.shape[1] + 2).float()), dim=1)).item()
+
+                                noise_perf[i]['n_lists'] += len(labels_part)
 
                         probs = torch.softmax(val_logits, dim=1)
                         # predictions are 1 at the index with the highest probability, and 0 otherwise
                         preds = (probs == torch.max(
                             probs, dim=1, keepdim=True)[0]).long()
 
-                        true_pos += torch.sum((preds == 1)
-                                              & (labels == 1)).item()
-                        true_neg += torch.sum((preds == 0)
-                                              & (labels == 0)).item()
-                        false_pos += torch.sum((preds == 1)
-                                               & (labels == 0)).item()
-                        false_neg += torch.sum((preds == 0)
-                                               & (labels == 1)).item()
+                        if not args.pointwise_loss:
+                            true_pos += torch.sum((preds == 1)
+                                                & (labels == 1)).item()
+                            true_neg += torch.sum((preds == 0)
+                                                & (labels == 0)).item()
+                            false_pos += torch.sum((preds == 1)
+                                                & (labels == 0)).item()
+                            false_neg += torch.sum((preds == 0)
+                                                & (labels == 1)).item()
+                        else:
+                            true_pos += torch.sum((preds[:, 1] == 1) & (labels == 1)).item()
+                            true_neg += torch.sum((preds[:, 0] == 1) & (labels == 0)).item()
+                            false_pos += torch.sum((preds[:, 1] == 1) & (labels == 0)).item()
+                            false_neg += torch.sum((preds[:, 0] == 1) & (labels == 1)).item()
                         total = true_pos + true_neg + false_pos + false_neg
 
                         if j == len(val_loader) - 1:
@@ -1126,34 +1188,36 @@ if __name__ == '__main__':
                         (true_pos + false_neg) if true_pos + false_neg > 0 else 0
                     f1 = 2 * precision * recall / \
                         (precision + recall) if precision + recall > 0 else 0
-                    mrr_at_k = {k: v / n_lists for k, v in mrr_at_k.items()}
-                    hits_at_k = {k: v / n_lists for k, v in hits_at_k.items()}
-                    ndcg_at_k = {k: v / n_lists for k, v in ndcg_at_k.items()}
-                    for i in range(len(missing_map)):
-                        if noise_perf[i]['n_lists'] > 0:
-                            noise_perf[i]['mrr'] = {
-                                k: v / noise_perf[i]['n_lists'] for k, v in noise_perf[i]['mrr'].items()}
-                            noise_perf[i]['hits'] = {
-                                k: v / noise_perf[i]['n_lists'] for k, v in noise_perf[i]['hits'].items()}
-                            noise_perf[i]['ndcg'] = {
-                                k: v / noise_perf[i]['n_lists'] for k, v in noise_perf[i]['ndcg'].items()}
+                    if not args.pointwise_loss:
+                        mrr_at_k = {k: v / n_lists for k, v in mrr_at_k.items()}
+                        hits_at_k = {k: v / n_lists for k, v in hits_at_k.items()}
+                        ndcg_at_k = {k: v / n_lists for k, v in ndcg_at_k.items()}
+                        for i in range(len(missing_map)):
+                            if noise_perf[i]['n_lists'] > 0:
+                                noise_perf[i]['mrr'] = {
+                                    k: v / noise_perf[i]['n_lists'] for k, v in noise_perf[i]['mrr'].items()}
+                                noise_perf[i]['hits'] = {
+                                    k: v / noise_perf[i]['n_lists'] for k, v in noise_perf[i]['hits'].items()}
+                                noise_perf[i]['ndcg'] = {
+                                    k: v / noise_perf[i]['n_lists'] for k, v in noise_perf[i]['ndcg'].items()}
                     running_val_loss /= len(val_loader)
 
-                    for k in ['1', '5', '10', 'max']:
-                        logger.info(f"MRR@{k}: {mrr_at_k[k]}")
-                        logger.info(f"Hits@{k}: {hits_at_k[k]}")
-                        logger.info(f"NDCG@{k}: {ndcg_at_k[k]}")
-                    for i in range(len(missing_map)):
-                        if noise_perf[i]['n_lists'] > 0:
-                            logger.info(
-                                f"Noise strategy {missing_map_rev[i]}:")
-                            for k in ['1', '5', '10', 'max']:
+                    if not args.pointwise_loss:
+                        for k in ['1', '5', '10', 'max']:
+                            logger.info(f"MRR@{k}: {mrr_at_k[k]}")
+                            logger.info(f"Hits@{k}: {hits_at_k[k]}")
+                            logger.info(f"NDCG@{k}: {ndcg_at_k[k]}")
+                        for i in range(len(missing_map)):
+                            if noise_perf[i]['n_lists'] > 0:
                                 logger.info(
-                                    f"\t- MRR@{k}: {noise_perf[i]['mrr'][k]}")
-                                logger.info(
-                                    f"\t- Hits@{k}: {noise_perf[i]['hits'][k]}")
-                                logger.info(
-                                    f"\t- NDCG@{k}: {noise_perf[i]['ndcg'][k]}")
+                                    f"Noise strategy {missing_map_rev[i]}:")
+                                for k in ['1', '5', '10', 'max']:
+                                    logger.info(
+                                        f"\t- MRR@{k}: {noise_perf[i]['mrr'][k]}")
+                                    logger.info(
+                                        f"\t- Hits@{k}: {noise_perf[i]['hits'][k]}")
+                                    logger.info(
+                                        f"\t- NDCG@{k}: {noise_perf[i]['ndcg'][k]}")
                     logger.info(f"Accuracy: {accuracy}")
                     logger.info(f"Precision: {precision}")
                     logger.info(f"Recall: {recall}")
@@ -1161,13 +1225,23 @@ if __name__ == '__main__':
                     logger.info(f"Validation loss: {running_val_loss}")
 
                     if accelerator.is_main_process:
-                        for k in ['1', '5', '10', 'max']:
-                            writer.add_scalar('val_stage2/mrr@' + k,
-                                              mrr_at_k[k], step)
-                            writer.add_scalar('val_stage2/hits@' + k,
-                                              hits_at_k[k], step)
-                            writer.add_scalar('val_stage2/ndcg@' + k,
-                                              ndcg_at_k[k], step)
+                        if not args.pointwise_loss:
+                            for k in ['1', '5', '10', 'max']:
+                                writer.add_scalar('val_stage2/mrr@' + k,
+                                                mrr_at_k[k], step)
+                                writer.add_scalar('val_stage2/hits@' + k,
+                                                hits_at_k[k], step)
+                                writer.add_scalar('val_stage2/ndcg@' + k,
+                                                ndcg_at_k[k], step)
+                            for i in range(len(noise_map)):
+                                if noise_perf[i]['n_lists'] > 0:
+                                    for k in ['1', '5', '10', 'max']:
+                                        writer.add_scalar(
+                                            f'val_noise_stage2/{noise_map_rev[i]}_mrr@' + k, noise_perf[i]['mrr'][k], step)
+                                        writer.add_scalar(
+                                            f'val_noise_stage2/{noise_map_rev[i]}_hits@' + k, noise_perf[i]['hits'][k], step)
+                                        writer.add_scalar(
+                                            f'val_noise_stage2/{noise_map_rev[i]}_ndcg@' + k, noise_perf[i]['ndcg'][k], step)
                         writer.add_scalar(
                             'val_stage2/accuracy', accuracy, step)
                         writer.add_scalar(
@@ -1176,15 +1250,6 @@ if __name__ == '__main__':
                         writer.add_scalar('val_stage2/f1', f1, step)
                         writer.add_scalar('val_stage2/loss',
                                           running_val_loss, step)
-                        for i in range(len(noise_map)):
-                            if noise_perf[i]['n_lists'] > 0:
-                                for k in ['1', '5', '10', 'max']:
-                                    writer.add_scalar(
-                                        f'val_noise_stage2/{noise_map_rev[i]}_mrr@' + k, noise_perf[i]['mrr'][k], step)
-                                    writer.add_scalar(
-                                        f'val_noise_stage2/{noise_map_rev[i]}_hits@' + k, noise_perf[i]['hits'][k], step)
-                                    writer.add_scalar(
-                                        f'val_noise_stage2/{noise_map_rev[i]}_ndcg@' + k, noise_perf[i]['ndcg'][k], step)
 
                 model.train()
                 torch.cuda.empty_cache()

@@ -4,7 +4,7 @@ source .bashrc_wendler \
 && \
 conda activate /dlabdata1/tsoares/conda/envs/runai/ \
 && \
-accelerate launch main_list_softmax_v2.py \
+accelerate launch main.py \
     --model_name $MODEL_NAME \
     --model_architecture $MODEL_ARCHITECTURE \
     --data_dir multilingual_datasets/stage_1/${LANGUAGE} \

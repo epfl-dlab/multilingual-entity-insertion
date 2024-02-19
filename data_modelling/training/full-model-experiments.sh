@@ -4,12 +4,12 @@ source .bashrc_wendler \
 && \
 conda activate /dlabdata1/tsoares/conda/envs/runai/ \
 && \
-accelerate launch main_list_softmax_v2.py \
+accelerate launch main.py \
     --model_name $MODEL_NAME \
     --model_architecture $MODEL_ARCHITECTURE \
     --data_dir multilingual_datasets/stage_1/${LANGUAGE} \
     --data_dir_2 multilingual_datasets/stage_2/${LANGUAGE} \
-    --num_epochs 0 2 \
+    --num_epochs 4 2 \
     --batch_size $BATCH_SIZE \
     --num_workers 52 \
     --lr 0.00001 \

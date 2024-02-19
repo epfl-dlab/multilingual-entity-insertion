@@ -5,7 +5,7 @@ source .bashrc_wendler \
 conda activate /dlabdata1/tsoares/conda/envs/runai/ \
 && \
 if [ $MODE == "dyn-mask" ]; then
-    accelerate launch main_list_softmax_v2.py \
+    accelerate launch main.py \
         --model_name $MODEL_NAME \
         --model_architecture $MODEL_ARCHITECTURE \
         --data_dir multilingual_datasets/stage_1/${LANGUAGE} \
@@ -29,7 +29,7 @@ if [ $MODE == "dyn-mask" ]; then
         --mask_negatives \
         --max_tokens 512
 elif [ $MODE == "dyn-mask-no-neg" ]; then
-    accelerate launch main_list_softmax_v2.py \
+    accelerate launch main.py \
         --model_name $MODEL_NAME \
         --model_architecture $MODEL_ARCHITECTURE \
         --data_dir multilingual_datasets/stage_1/${LANGUAGE} \
@@ -52,7 +52,7 @@ elif [ $MODE == "dyn-mask-no-neg" ]; then
         --temperature 1 \
         --max_tokens 512
 elif [ $MODE == "expansion" ]; then
-    accelerate launch main_list_softmax_v2.py \
+    accelerate launch main.py \
         --model_name $MODEL_NAME \
         --model_architecture $MODEL_ARCHITECTURE \
         --data_dir multilingual_datasets/stage_1/${LANGUAGE} \
