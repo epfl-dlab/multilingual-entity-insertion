@@ -67,6 +67,8 @@ if __name__ == '__main__':
             for context in negative_contexts:
                 negative_context = {'section_title': context['section'],
                                     'link_context': context['context']}
+                # send the pair in both orders
+                # GPT is known to be sensitive to the order of the inputs
                 row_contexts.append([[positive_context, negative_context], [negative_context, positive_context]])
                 counter += 2
             all_contexts.append(row_contexts)
