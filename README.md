@@ -1,16 +1,16 @@
-# linkrec-llms
-Repository for "Multilingual Entity Insertion in Wikipedia" project.
+# multilingual-entity-insertion
+Source code for "Entity Insertion in Multilingual Linked Corpora: The Case of Wikipedia"
 
 ## Code
 
-There are two key parts to the code structure in this repo. The subdirectory `wikipedia_dumps_process` contains code related to the data processing. The subdirectory `data_modelling` contains code related to our data modelling framework.
+There are two key parts to the code structure in this repo. The subdirectory `wikipedia_dumps_process` contains code related to the data processing. The subdirectory `data_modelling` contains code related to our data modeling framework.
 
 ### Data Processing Code
 
 All the scripts needed to process the raw data are in the repo, in the subdirectory `wikipedia_dumps_process`. For the full processing pipeline, the scripts need to be chained in the correct order. The bash script `full_pipeline.sh` abstracts away the interactions between the scripts and can be used to run the entire data processing pipeline.
 
 I leave the following recommendations when processing the data:
- - The script `test_data_version_finder.py` downloads the revision history before processing it. It can be configured to run with two different behaviours
+ - The script `test_data_version_finder.py` downloads the revision history before processing it. It can be configured to run with two different behaviors
    - Download all the missing revision history files: this will start the processing of the revision history from scratch
    - Only use the existing revision history files and don't download any additional ones: this is relevant to resume an interrupted job
  - No more than 3 processes can be used by `test_data_version_finder.py` to download the revision history, as otherwise we get blocked by Wikipedia. Additionally, sometimes the download processes hang. At this point, it is necessary to interrupt the script, delete the partial downloaded file, and resume the processing.
