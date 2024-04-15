@@ -20,7 +20,7 @@ I leave the following recommendations when processing the data:
 
 ### Modelling Code
 
-The training infrastructure is present in `data_modelling/training`. Script `main.py` can be used to train a model for entity insertion, and it has a large number of command line arguments to allow for a versatile and easy training set-up. The training script expects a specific structure from the training data. Several examples of training datasets can be found in `/dlabdata1/tsoares/linkrec-llms/training/multilingual_datasets`. Keep in mind that the columns are not necessarily the same for stage 1 and stage 2.
+The training infrastructure is present in `data_modelling/training`. Script `main.py` can be used to train a model for entity insertion, and it has a large number of command line arguments to allow for a versatile and easy training set-up. The training script expects a specific structure from the training data. Several examples of training datasets can be found in `/XXX/YYY/linkrec-llms/training/multilingual_datasets`. Keep in mind that the columns are not necessarily the same for stage 1 and stage 2.
 
 #### Baselines
 
@@ -47,13 +47,13 @@ Then there are several benchmarking subdirectories, relating to different benchm
 
 ### Data Structure
 
-All data is available in `/dlabdata1/tsoares/wikidumps`. The sub-directories in this directory contain both the raw data and the raw, and they are structured as `{lang}wiki-NS0-{date}`, where `{lang}` is the language code and `{date}` is the dump date. For example, `iswiki-NS0-20231001` is the data for Icelandic corresponding to the dump from 01/10/2023.
+All data is available in `/XXX/YYY/wikidumps`. The sub-directories in this directory contain both the raw data and the raw, and they are structured as `{lang}wiki-NS0-{date}`, where `{lang}` is the language code and `{date}` is the dump date. For example, `iswiki-NS0-20231001` is the data for Icelandic corresponding to the dump from 01/10/2023.
 
 Each subdirectory contains several folders. We have `raw_data` which contains the raw data taken directly from the dumps. The revision history is needed for the full processing pipeline, but due to the large size (several TBs) it is downloaded and deleted during processing. The folder `processed_data` contains all the processed data, including links, pages, mentions, redirects and section texts. The `eval` folder contains all the links added between the dump in question and the next dump, containing also all the needed HTML pages that were crawled directly from Wikipedia. Finally, the `eval_synth` data contains the generated test data that was produced using only the existing links from the dump in question and the next dump. To generate the data in `eval` we need the full revision history, but to generate the data in `eval_synth` we do not.
 
 ## Models
 
-All produced models are available in `/dlabdata1/tsoares/models`. The model naming is as `roberta_{training_regime}_{training_language}`. The following training regimes were used:
+All produced models are available in `/XXX/YYY/models`. The model naming is as `roberta_{training_regime}_{training_language}`. The following training regimes were used:
  - `simple`: simple fine-tuning, only the first training stage (warm-start stage) and no augmentations/injections (see script `data_modelling/training/simple-model-experiments.sh`)
  - `dyn_mask_no_neg`: `simple` + dynamic context removal applied only on the positive candidates (see script `data_modelling/training/novelties-experiments.sh`, mode `dyn-mask-no-neg`)
  - `dyn_mask`: `dyn_mask_no_neg` + dynamic context removal applied also to the negative candidates (see script `data_modelling/training/novelties-experiments.sh`, mode `dyn-mask`)
