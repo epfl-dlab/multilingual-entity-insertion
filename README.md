@@ -22,6 +22,8 @@ I leave the following recommendations when processing the data:
 
 The training infrastructure is present in `data_modelling/training`. Script `main.py` can be used to train a model for entity insertion, and it has a large number of command line arguments to allow for a versatile and easy training set-up. The training script expects a specific structure from the training data. Several examples of training datasets can be found in `/XXX/YYY/linkrec-llms/training/multilingual_datasets`. Keep in mind that the columns are not necessarily the same for stage 1 and stage 2.
 
+The `training` directory contains multiple bash files that can be used to replicate the experiments in the paper.
+
 #### Baselines
 
 Our model is benchmarked against multiple baselines. We use
@@ -37,7 +39,6 @@ The script `benchmark_baselines.py` is used to benchmark all baselines expect GP
 #### Benchmarking
 
 Then there are several benchmarking subdirectories, relating to different benchmarking conditions.
- - `benchmark_synth`: benchmarking done on the generated test data, without real inserted links (**warning** the notebooks and scripts in this subdirectory are very old and they may no longer be consistent with the current data format. They will most likely need significant work.) These benchmarks are much less significant than the other two
  - `benchmark_real`: benchmarking done on the Simple English data. Particularly relevant for the ablations that were only conducted on Simple English.
  - `benchmark_multilingual`: benchmarking done on the full multilingual data. These are the most relevant (and most up-to-date) results.
 
