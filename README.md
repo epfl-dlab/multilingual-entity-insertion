@@ -46,26 +46,11 @@ Then there are several benchmarking subdirectories, relating to different benchm
 
 ## Data
 
-### Data Structure
-
-All data is available in `/XXX/YYY/wikidumps`. The sub-directories in this directory contain both the raw data and the raw, and they are structured as `{lang}wiki-NS0-{date}`, where `{lang}` is the language code and `{date}` is the dump date. For example, `iswiki-NS0-20231001` is the data for Icelandic corresponding to the dump from 01/10/2023.
-
-Each subdirectory contains several folders. We have `raw_data` which contains the raw data taken directly from the dumps. The revision history is needed for the full processing pipeline, but due to the large size (several TBs) it is downloaded and deleted during processing. The folder `processed_data` contains all the processed data, including links, pages, mentions, redirects and section texts. The `eval` folder contains all the links added between the dump in question and the next dump, containing also all the needed HTML pages that were crawled directly from Wikipedia. Finally, the `eval_synth` data contains the generated test data that was produced using only the existing links from the dump in question and the next dump. To generate the data in `eval` we need the full revision history, but to generate the data in `eval_synth` we do not.
+The processed data is available [here](https://zenodo.org/records/13888211). Due to size constraints, we don't publish the full unprocessed dataset. If you are interested, please contact the authors.
 
 ## Models
 
-All produced models are available in `/XXX/YYY/models`. The model naming is as `roberta_{training_regime}_{training_language}`. The following training regimes were used:
- - `simple`: simple fine-tuning, only the first training stage (warm-start stage) and no augmentations/injections (see script `data_modelling/training/simple-model-experiments.sh`)
- - `dyn_mask_no_neg`: `simple` + dynamic context removal applied only on the positive candidates (see script `data_modelling/training/novelties-experiments.sh`, mode `dyn-mask-no-neg`)
- - `dyn_mask`: `dyn_mask_no_neg` + dynamic context removal applied also to the negative candidates (see script `data_modelling/training/novelties-experiments.sh`, mode `dyn-mask`)
- - `expansion`: `dyn_mask` + second stage, called expansion stage (see script `data_modelling/training/novelties-experiments.sh`, mode `expansion`)
- - `full`: `expansion` + knowledge injection (see script `data_modelling/training/full-model-experiments.sh`)
- - `only_expansion`: model trained with only the expansion stage, using knowledge injection (see script `data_modelling/training/expansion-experiments.sh`)
- - `pointwise`: same as `full` but trained with pointwise loss instead of ranking loss (see script `data_modelling/training/pointwise-model-experiments.sh`)
-
-For the training languages, each monolingual model is suffixed by the language code. We have two multilingual model variants:
- - `multilingual`: Model trained with a subset of languages: cs, cy, en, hi, is, it, ja, kn, sw, ur, uz (held-out: af, fr, ga, gu, kk, ms, pt, simple, sk) 
- - `multilingual-all`: Model trained with all languages: af, cs, cy, en, fr, ga, gu, hi, is, it, ja, kk, kn, ms, pt, simple, sk, sw, ur, uz 
+All relevant models will be made available on HuggingFace.
 
 ## Relevant Notebooks
 These are the most important notebooks in this repo.
