@@ -9,18 +9,18 @@ There are two key parts to the code structure in this repo. The subdirectory `wi
 
 All the scripts needed to process the raw data are in the repo, in the subdirectory `wikipedia_dumps_process`. For the full processing pipeline, the scripts need to be chained in the correct order. The bash script `full_pipeline.sh` abstracts away the interactions between the scripts and can be used to run the entire data processing pipeline.
 
-I leave the following recommendations when processing the data:
+We leave the following recommendations when processing the data:
  - The script `test_data_version_finder.py` downloads the revision history before processing it. It can be configured to run with two different behaviors
    - Download all the missing revision history files: this will start the processing of the revision history from scratch
    - Only use the existing revision history files and don't download any additional ones: this is relevant to resume an interrupted job
  - No more than 3 processes can be used by `test_data_version_finder.py` to download the revision history, as otherwise we get blocked by Wikipedia. Additionally, sometimes the download processes hang. At this point, it is necessary to interrupt the script, delete the partial downloaded file, and resume the processing.
  - The crawler in `crawler/crawl_wiki.js` can download HTML pages from Wikipedia using multiple parallel threads. However, no more than 5 should be used. This is **very important** because Wikipedia will not prevent us from downloading the pages and no error will be thrown. However, all the HTML files downloaded will be "Server Error" HTML files, and not the content we want.
- - The script `test_data_generator.py` can be **very** memory-hungry especially for large languages (English, German, French, Spanish). I recommend using no more than 4 processes for the large language, while paying attention to the memory usage to avoid problems. If there is no rush, 2 processes are safe and can be left running unattended.
+ - The script `test_data_generator.py` can be **very** memory-hungry especially for large languages (English, German, French, Spanish). We recommend using no more than 4 processes for the large languages, while paying attention to the memory usage to avoid problems. If there is no rush, 2 processes are safe and can be left running unattended.
  - The script `input_generator_stage1.py` can also be memory-hungry. For the large languages, it is recommended to use the extra arguments provided in the script that significantly reduce the memory usage of the script.
 
 ### Modelling Code
 
-The training infrastructure is present in `data_modelling/training`. Script `main.py` can be used to train a model for entity insertion, and it has a large number of command line arguments to allow for a versatile and easy training set-up. The training script expects a specific structure from the training data. Several examples of training datasets can be found in `/XXX/YYY/linkrec-llms/training/multilingual_datasets`. Keep in mind that the columns are not necessarily the same for stage 1 and stage 2.
+The training infrastructure is present in `data_modelling/training`. Script `main.py` can be used to train a model for entity insertion, and it has a large number of command line arguments to allow for a versatile and easy training set-up. The training script expects a specific structure from the training data. Downloading our published data will provide the correct training data structure. Keep in mind that the columns are not necessarily the same for stage 1 and stage 2.
 
 The `training` directory contains multiple bash files that can be used to replicate the experiments in the paper.
 
